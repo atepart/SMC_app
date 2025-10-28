@@ -1,0 +1,5 @@
+*.tab
+*.ipynb
+*.ipynb_checkpoints
+*.idea
+Some_parameters.txt
