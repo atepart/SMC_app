@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import sys
 from typing import Dict
 
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -26,8 +27,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
 from aocapp.domain.models import StructureParams
+from aocapp.domain.s21_models import S21Config
 
 
 class SvgGraphicsView(QGraphicsView):
@@ -82,13 +85,18 @@ class InputField:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, use_case: GenerateStructureUseCase) -> None:
+    def __init__(self, use_case: GenerateStructureUseCase, s21_use_case: CalculateS21UseCase) -> None:
         super().__init__()
         self._use_case = use_case
+        self._s21_use_case = s21_use_case
         self.setWindowTitle("Structure Calculator")
 
         self._view = SvgGraphicsView()
         self._inputs: Dict[str, QDoubleSpinBox] = {}
+        self._s21_inputs: Dict[str, QDoubleSpinBox] = {}
+        self._s21_output: QLineEdit | None = None
+        self._s21_status: QLabel | None = None
+        self._s21_defaults = S21Config()
 
         self._build_ui()
         self._update_svg()
@@ -147,6 +155,43 @@ class MainWindow(QMainWindow):
         vbox.addLayout(button_row)
         vbox.addStretch(1)
 
+        vbox.addSpacing(8)
+
+        s21_title = QLabel("S21 calculation")
+        s21_title.setStyleSheet("font-weight: bold;")
+        vbox.addWidget(s21_title)
+
+        s21_form = QFormLayout()
+        s21_fields = {
+            "s21_freq_start_ghz": InputField("Start freq", self._s21_defaults.s21_freq_start_ghz, step=5.0),
+            "s21_freq_stop_ghz": InputField("Stop freq", self._s21_defaults.s21_freq_stop_ghz, step=5.0),
+            "s21_freq_step_ghz": InputField("Step", self._s21_defaults.s21_freq_step_ghz, step=5.0),
+        }
+
+        for key, field in s21_fields.items():
+            spin = QDoubleSpinBox()
+            spin.setDecimals(2)
+            spin.setRange(0.01, 10000.0)
+            spin.setSingleStep(field.step)
+            spin.setValue(field.default)
+            spin.setSuffix(" GHz")
+            self._s21_inputs[key] = spin
+            s21_form.addRow(field.label, spin)
+
+        self._s21_output = QLineEdit("S21_dB.tab")
+        s21_form.addRow("Output file", self._s21_output)
+        vbox.addLayout(s21_form)
+
+        s21_button_row = QHBoxLayout()
+        s21_button = QPushButton("Run S21")
+        s21_button.clicked.connect(self._run_s21)
+        s21_button_row.addWidget(s21_button)
+        vbox.addLayout(s21_button_row)
+
+        self._s21_status = QLabel("Uses backend defaults, adjust frequency range only.")
+        self._s21_status.setStyleSheet("color: #555;")
+        vbox.addWidget(self._s21_status)
+
         hint = QLabel("Wheel to zoom, drag to pan")
         hint.setStyleSheet("color: #555;")
         vbox.addWidget(hint)
@@ -164,16 +209,37 @@ class MainWindow(QMainWindow):
                 arm_length_um=self._inputs["arm_length_um"].value(),
             )
             svg = self._use_case.execute(params)
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:
             QMessageBox.warning(self, "Invalid input", str(exc))
             return
 
         self._view.set_svg(svg)
 
+    def _run_s21(self) -> None:
+        if self._s21_output is None or self._s21_status is None:
+            return
+        try:
+            config = replace(
+                self._s21_defaults,
+                s21_freq_start_ghz=self._s21_inputs["s21_freq_start_ghz"].value(),
+                s21_freq_stop_ghz=self._s21_inputs["s21_freq_stop_ghz"].value(),
+                s21_freq_step_ghz=self._s21_inputs["s21_freq_step_ghz"].value(),
+            )
+            output_path = self._s21_output.text().strip()
+            result = self._s21_use_case.execute(config, output_path if output_path else None)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid input", str(exc))
+            return
 
-def run_app(use_case: GenerateStructureUseCase) -> None:
+        if output_path:
+            self._s21_status.setText(f"Computed {result.count} points, saved to {output_path}")
+        else:
+            self._s21_status.setText(f"Computed {result.count} points")
+
+
+def run_app(use_case: GenerateStructureUseCase, s21_use_case: CalculateS21UseCase) -> None:
     app = QApplication(sys.argv)
-    window = MainWindow(use_case)
+    window = MainWindow(use_case, s21_use_case)
     window.resize(1100, 700)
     window.show()
     app.exec()
