@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import pyqtgraph as pg
+
 from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
 from aocapp.domain.models import StructureParams
@@ -92,12 +94,14 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Structure Calculator")
 
         self._view = SvgGraphicsView()
+        self._plot = pg.PlotWidget()
         self._inputs: Dict[str, QDoubleSpinBox] = {}
         self._s21_inputs: Dict[str, QDoubleSpinBox] = {}
         self._s21_output: QLineEdit | None = None
         self._s21_status: QLabel | None = None
         self._s21_defaults = S21Config()
 
+        self._configure_plot()
         self._build_ui()
         self._update_svg()
 
@@ -107,7 +111,7 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Horizontal, container)
         splitter.addWidget(self._build_controls())
-        splitter.addWidget(self._view)
+        splitter.addWidget(self._build_preview())
         splitter.setStretchFactor(1, 1)
 
         layout.addWidget(splitter)
@@ -153,7 +157,6 @@ class MainWindow(QMainWindow):
         button_row.addWidget(reset_button)
 
         vbox.addLayout(button_row)
-        vbox.addStretch(1)
 
         vbox.addSpacing(8)
 
@@ -195,8 +198,29 @@ class MainWindow(QMainWindow):
         hint = QLabel("Wheel to zoom, drag to pan")
         hint.setStyleSheet("color: #555;")
         vbox.addWidget(hint)
+        vbox.addStretch(1)
 
         return panel
+
+    def _build_preview(self) -> QWidget:
+        panel = QWidget(self)
+        vbox = QVBoxLayout(panel)
+        vbox.addWidget(self._view, stretch=3)
+
+        plot_title = QLabel("S21 Response")
+        plot_title.setStyleSheet("font-weight: bold;")
+        vbox.addWidget(plot_title)
+        vbox.addWidget(self._plot, stretch=2)
+        return panel
+
+    def _configure_plot(self) -> None:
+        pg.setConfigOption("background", "#f7f8fb")
+        pg.setConfigOption("foreground", "#1f1f1f")
+        self._plot.setTitle("S21 vs Frequency")
+        self._plot.setLabel("left", "S21", units="dB")
+        self._plot.setLabel("bottom", "Frequency", units="GHz")
+        self._plot.showGrid(x=True, y=True, alpha=0.25)
+        self._plot.setMenuEnabled(False)
 
     def _update_svg(self) -> None:
         try:
@@ -231,10 +255,17 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid input", str(exc))
             return
 
+        self._update_s21_plot(result.frequencies_ghz, result.s21_db)
+
         if output_path:
             self._s21_status.setText(f"Computed {result.count} points, saved to {output_path}")
         else:
             self._s21_status.setText(f"Computed {result.count} points")
+
+    def _update_s21_plot(self, frequencies, s21_db) -> None:
+        self._plot.clear()
+        pen = pg.mkPen(color="#1f77b4", width=2)
+        self._plot.plot(frequencies, s21_db, pen=pen, symbol="o", symbolSize=5, symbolBrush="#1f77b4")
 
 
 def run_app(use_case: GenerateStructureUseCase, s21_use_case: CalculateS21UseCase) -> None:
