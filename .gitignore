@@ -3,3 +3,8 @@
 *.ipynb_checkpoints
 *.idea
 Some_parameters.txt
+*__pycache__
+*.pyc
+*.pyo
+*.DS_Store
+*.log
