@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QVBoxLayout,
@@ -99,6 +100,7 @@ class MainWindow(QMainWindow):
         self._s21_inputs: Dict[str, QDoubleSpinBox] = {}
         self._s21_output: QLineEdit | None = None
         self._s21_status: QLabel | None = None
+        self._log_view: QPlainTextEdit | None = None
         self._s21_defaults = S21Config()
 
         self._configure_plot()
@@ -191,7 +193,7 @@ class MainWindow(QMainWindow):
         s21_button_row.addWidget(s21_button)
         vbox.addLayout(s21_button_row)
 
-        self._s21_status = QLabel("Uses backend defaults, adjust frequency range only.")
+        self._s21_status = QLabel("S21 mirrors backend/main.py. SVG preview is independent from S21 parameters.")
         self._s21_status.setStyleSheet("color: #555;")
         vbox.addWidget(self._s21_status)
 
@@ -211,6 +213,16 @@ class MainWindow(QMainWindow):
         plot_title.setStyleSheet("font-weight: bold;")
         vbox.addWidget(plot_title)
         vbox.addWidget(self._plot, stretch=2)
+
+        log_title = QLabel("Calculation log")
+        log_title.setStyleSheet("font-weight: bold;")
+        vbox.addWidget(log_title)
+
+        self._log_view = QPlainTextEdit()
+        self._log_view.setReadOnly(True)
+        self._log_view.setPlaceholderText("Run S21 to see calculation messages and warnings.")
+        self._log_view.setMinimumHeight(150)
+        vbox.addWidget(self._log_view, stretch=1)
         return panel
 
     def _configure_plot(self) -> None:
@@ -243,6 +255,15 @@ class MainWindow(QMainWindow):
         if self._s21_output is None or self._s21_status is None:
             return
         try:
+            self._s21_status.setText("Computing S21...")
+            self._set_log_messages(
+                [
+                    "Starting S21 calculation.",
+                    "Using backend/main.py defaults.",
+                    "SVG preview parameters do not alter the S21 network.",
+                ]
+            )
+            QApplication.processEvents()
             config = replace(
                 self._s21_defaults,
                 s21_freq_start_ghz=self._s21_inputs["s21_freq_start_ghz"].value(),
@@ -252,10 +273,12 @@ class MainWindow(QMainWindow):
             output_path = self._s21_output.text().strip()
             result = self._s21_use_case.execute(config, output_path if output_path else None)
         except ValueError as exc:
+            self._append_log_message(f"ERROR: {exc}")
             QMessageBox.warning(self, "Invalid input", str(exc))
             return
 
         self._update_s21_plot(result.frequencies_ghz, result.s21_db)
+        self._set_log_messages(result.log_messages)
 
         if output_path:
             self._s21_status.setText(f"Computed {result.count} points, saved to {output_path}")
@@ -266,6 +289,20 @@ class MainWindow(QMainWindow):
         self._plot.clear()
         pen = pg.mkPen(color="#1f77b4", width=2)
         self._plot.plot(frequencies, s21_db, pen=pen, symbol="o", symbolSize=5, symbolBrush="#1f77b4")
+
+    def _set_log_messages(self, messages: list[str]) -> None:
+        if self._log_view is None:
+            return
+        self._log_view.setPlainText("\n".join(messages))
+
+    def _append_log_message(self, message: str) -> None:
+        if self._log_view is None:
+            return
+        current = self._log_view.toPlainText()
+        if current:
+            self._log_view.setPlainText(f"{current}\n{message}")
+        else:
+            self._log_view.setPlainText(message)
 
 
 def run_app(use_case: GenerateStructureUseCase, s21_use_case: CalculateS21UseCase) -> None:

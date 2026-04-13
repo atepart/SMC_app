@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import warnings
 
 from numpy import arange, array
+from scipy.integrate import IntegrationWarning
 
 from aocapp.api import (
     ComplexIntegrator,
@@ -26,7 +28,7 @@ from aocapp.domain.s21_models import S21Config, S21Result
 
 @dataclass
 class S21CalculatorImpl(S21Calculator):
-    """S21 calculator that mirrors backend/Test_ABCD_calc.ipynb."""
+    """S21 calculator that mirrors backend/main.py."""
 
     gap_calc: SuperconductingGapCalculator
     mb_calc: MattisBardeenCalculator
@@ -40,100 +42,52 @@ class S21CalculatorImpl(S21Calculator):
 
     def calculate(self, config: S21Config) -> S21Result:
         config.validate()
+        log_messages: list[str] = []
 
-        delta0_top = config.delta0_top_ev if config.delta0_top_ev is not None else self._delta0_from_tc(config.tc_top_k)
-        delta0_bot = config.delta0_bot_ev if config.delta0_bot_ev is not None else self._delta0_from_tc(config.tc_bot_k)
+        def log(message: str) -> None:
+            log_messages.append(message)
 
-        delta_top = self.gap_calc.delta_bcs_approx(config.temperature_k, config.tc_top_k, delta0_top)
-        delta_bot = self.gap_calc.delta_bcs_approx(config.temperature_k, config.tc_bot_k, delta0_bot)
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always", IntegrationWarning)
 
-        freq_arr = arange(config.film_freq_start_ghz, config.film_freq_stop_ghz, config.film_freq_step_ghz)
+            delta0_top = config.delta0_top_ev if config.delta0_top_ev is not None else self._delta0_from_tc(config.tc_top_k)
+            delta0_bot = config.delta0_bot_ev if config.delta0_bot_ev is not None else self._delta0_from_tc(config.tc_bot_k)
 
-        top_film = self._build_film(freq_arr, config.sigma0_top, config.temperature_k, delta_top)
-        bot_film = self._build_film(freq_arr, config.sigma0_bot, config.temperature_k, delta_bot)
+            log("Mirroring backend/main.py configuration.")
+            log("Using strong-coupling approximation for superconducting gaps.")
 
-        h12 = config.h12_m
-        e12 = config.e12
-        h1 = config.h1_m
-        e1 = config.e1
-        dw = config.dw_m
+            delta_top = self.gap_calc.delta_strong_coupling(config.temperature_k, config.tc_top_k, delta0_top)
+            delta_bot = self.gap_calc.delta_strong_coupling(config.temperature_k, config.tc_bot_k, delta0_bot)
+            log(f"Delta_top = {delta_top:.9e} eV")
+            log(f"Delta_bot = {delta_bot:.9e} eV")
 
-        w_slot = config.w_slot_m - dw
-        w_ms = config.w_ms_m + dw
+            freq_arr = arange(config.film_freq_start_ghz, config.film_freq_stop_ghz, config.film_freq_step_ghz)
+            log(
+                f"Building film conductivity tables on {len(freq_arr)} points "
+                f"from {config.film_freq_start_ghz:g} to {config.film_freq_stop_ghz - config.film_freq_step_ghz:g} GHz."
+            )
 
-        m_dcb = lambda f: self.dcb.matrix(
-            f,
-            w_slot,
-            config.l_slot_m,
-            config.lso_m,
-            w_ms,
-            config.l_ms_m,
-            config.e_sub,
-            config.h_sub_m,
-            e12,
-            h12,
-            top_film,
-            bot_film,
-            config.d_top_m,
-            config.d_bot_m,
-        )
+            top_film = self._build_film(freq_arr, config.sigma0_top, config.temperature_k, delta_top)
+            bot_film = self._build_film(freq_arr, config.sigma0_bot, config.temperature_k, delta_bot)
 
-        zrad1 = lambda f: self.microstrip.transform_impedance(
-            f,
-            config.zrad0_ohm,
-            config.zrad1_len_m,
-            config.zrad1_width_m + dw,
-            e12,
-            h12,
-            top_film,
-            bot_film,
-            config.d_top_m,
-            config.d_bot_m,
-        )
-        y_rad = lambda f: self.radial_stub.admittance(
-            f,
-            config.radial_r_min_m,
-            config.radial_r_max_m,
-            config.radial_angle_deg,
-            e12,
-            h12,
-            top_film,
-            bot_film,
-            config.d_top_m,
-            config.d_bot_m,
-        )
-        zrad2 = lambda f: 1.0 / (2.0 * y_rad(f) + 1.0 / zrad1(f))
-        zrad3 = lambda f: self.microstrip.transform_impedance(
-            f,
-            zrad2(f),
-            config.zrad3_len_m,
-            config.zrad3_width_m + dw,
-            e12,
-            h12,
-            top_film,
-            bot_film,
-            config.d_top_m,
-            config.d_bot_m,
-        )
-        zrad4 = lambda f: self.microstrip.transform_impedance(
-            f,
-            zrad3(f),
-            config.zrad4_len_m,
-            config.zrad4_width_m + dw,
-            e12,
-            h12,
-            top_film,
-            bot_film,
-            config.d_top_m,
-            config.d_bot_m,
-        )
+            h12 = config.h12_m
+            e12 = config.e12
+            h1 = config.h1_m
+            e1 = config.e1
+            dw = config.dw_m
 
-        m_rad = lambda f: array([[1.0, 0.0], [1.0 / zrad4(f), 1.0]])
-        mex4 = lambda f: m_rad(f).dot(
-            self.microstrip.matrix(
-                config.f0_ghz,
-                config.mex4_len_m,
-                config.mex4_width_m + dw,
+            w_slot = config.w_slot_m - dw
+            w_ms = config.w_ms_m + dw
+
+            m_dcb = lambda f: self.dcb.matrix(
+                f,
+                w_slot,
+                config.l_slot_m,
+                config.lso_m,
+                w_ms,
+                config.l_ms_m,
+                config.e_sub,
+                config.h_sub_m,
                 e12,
                 h12,
                 top_film,
@@ -141,98 +95,261 @@ class S21CalculatorImpl(S21Calculator):
                 config.d_top_m,
                 config.d_bot_m,
             )
-        )
 
-        m_transf_1 = lambda f: self._transformer_matrix(top_film, bot_film, config, f, config.transf_1_w_start_m, config.transf_1_w_end_m, config.transf_1_dwdl_um, e12, h12, config.transf_1_dl_m)
-        m_msl_4 = lambda f: self.microstrip.matrix(
-            f,
-            config.msl_4_len_m,
-            config.msl_4_width_m + dw,
-            e12,
-            h12,
-            top_film,
-            bot_film,
-            config.d_top_m,
-            config.d_bot_m,
-        )
-        m_transf_2 = lambda f: self._transformer_matrix(top_film, bot_film, config, f, config.transf_2_w_start_m, config.transf_2_w_end_m, config.transf_2_dwdl_um, e12, h12, config.transf_2_dl_m)
-        m_msl_5 = lambda f: self.microstrip.matrix(
-            f,
-            config.msl_5_len_m,
-            config.msl_5_width_m + dw,
-            e12,
-            h12,
-            top_film,
-            bot_film,
-            config.d_top_m,
-            config.d_bot_m,
-        )
-        m_transf_3 = lambda f: self._transformer_matrix(top_film, bot_film, config, f, config.transf_3_w_start_m, config.transf_3_w_end_m, config.transf_3_dwdl_um, e12, h12, config.transf_3_dl_m)
+            zrad1 = lambda f: self.microstrip.transform_impedance(
+                f,
+                config.zrad0_ohm,
+                config.zrad1_len_m,
+                config.zrad1_width_m + dw,
+                e12,
+                h12,
+                top_film,
+                bot_film,
+                config.d_top_m,
+                config.d_bot_m,
+            )
+            y_rad = lambda f: self.radial_stub.admittance(
+                f,
+                config.radial_r_min_m,
+                config.radial_r_max_m,
+                config.radial_angle_deg,
+                e12,
+                h12,
+                top_film,
+                bot_film,
+                config.d_top_m,
+                config.d_bot_m,
+            )
+            zrad2 = lambda f: 1.0 / (2.0 * y_rad(f) + 1.0 / zrad1(f))
+            zrad3 = lambda f: self.microstrip.transform_impedance(
+                f,
+                zrad2(f),
+                config.zrad3_len_m,
+                config.zrad3_width_m + dw,
+                e12,
+                h12,
+                top_film,
+                bot_film,
+                config.d_top_m,
+                config.d_bot_m,
+            )
+            zrad4 = lambda f: self.microstrip.transform_impedance(
+                f,
+                zrad3(f),
+                config.zrad4_len_m,
+                config.zrad4_width_m + dw,
+                e12,
+                h12,
+                top_film,
+                bot_film,
+                config.d_top_m,
+                config.d_bot_m,
+            )
 
-        mex3 = lambda f: self.results.group(f, (m_transf_1, m_msl_4, m_transf_2, m_msl_5, m_transf_3))
+            m_rad = lambda f: array([[1.0, 0.0], [1.0 / zrad4(f), 1.0]])
+            mex4 = lambda f: m_rad(f).dot(
+                self.microstrip.matrix(
+                    config.f0_ghz,
+                    config.mex4_len_m,
+                    config.mex4_width_m + dw,
+                    e12,
+                    h12,
+                    top_film,
+                    bot_film,
+                    config.d_top_m,
+                    config.d_bot_m,
+                )
+            )
 
-        m_transf_5 = lambda f: self._transformer_matrix(top_film, bot_film, config, f, config.transf_5_w_start_m, config.transf_5_w_end_m, config.transf_5_dwdl_um, e1, h1, config.transf_5_dl_m)
-        m_msl_6 = lambda f: self.microstrip.matrix(
-            f,
-            config.msl_6_len_m,
-            config.msl_6_width_m + dw,
-            e1,
-            h1,
-            top_film,
-            bot_film,
-            config.d_top_m,
-            config.d_bot_m,
-        )
-        m_transf_6 = lambda f: self._transformer_matrix(top_film, bot_film, config, f, config.transf_6_w_start_m, config.transf_6_w_end_m, config.transf_6_dwdl_um, e1, h1, config.transf_6_dl_m)
-        m_msl_7 = lambda f: self.microstrip.matrix(
-            f,
-            config.msl_7_len_m,
-            config.msl_7_width_m + dw,
-            e1,
-            h1,
-            top_film,
-            bot_film,
-            config.d_top_m,
-            config.d_bot_m,
-        )
-        m_transf_7 = lambda f: self._transformer_matrix(top_film, bot_film, config, f, config.transf_7_w_start_m, config.transf_7_w_end_m, config.transf_7_dwdl_um, e1, h1, config.transf_7_dl_m)
-        m_msl_8 = lambda f: self.microstrip.matrix(
-            f,
-            config.msl_8_len_m,
-            config.msl_8_width_m + dw,
-            e1,
-            h1,
-            top_film,
-            bot_film,
-            config.d_top_m,
-            config.d_bot_m,
-        )
-        m_transf_8 = lambda f: self._transformer_matrix(top_film, bot_film, config, f, config.transf_8_w_start_m, config.transf_8_w_end_m, config.transf_8_dwdl_um, e1, h1, config.transf_8_dl_m)
+            m_transf_1 = lambda f: self._transformer_matrix(
+                top_film,
+                bot_film,
+                config,
+                f,
+                config.transf_1_w_start_m,
+                config.transf_1_w_end_m,
+                config.transf_1_dwdl_um,
+                e12,
+                h12,
+                config.transf_1_dl_m,
+            )
+            m_msl_4 = lambda f: self.microstrip.matrix(
+                f,
+                config.msl_4_len_m,
+                config.msl_4_width_m + dw,
+                e12,
+                h12,
+                top_film,
+                bot_film,
+                config.d_top_m,
+                config.d_bot_m,
+            )
+            m_transf_2 = lambda f: self._transformer_matrix(
+                top_film,
+                bot_film,
+                config,
+                f,
+                config.transf_2_w_start_m,
+                config.transf_2_w_end_m,
+                config.transf_2_dwdl_um,
+                e12,
+                h12,
+                config.transf_2_dl_m,
+            )
+            m_msl_5 = lambda f: self.microstrip.matrix(
+                f,
+                config.msl_5_len_m,
+                config.msl_5_width_m + dw,
+                e12,
+                h12,
+                top_film,
+                bot_film,
+                config.d_top_m,
+                config.d_bot_m,
+            )
+            m_transf_3 = lambda f: self._transformer_matrix(
+                top_film,
+                bot_film,
+                config,
+                f,
+                config.transf_3_w_start_m,
+                config.transf_3_w_end_m,
+                config.transf_3_dwdl_um,
+                e12,
+                h12,
+                config.transf_3_dl_m,
+            )
+            mex3 = lambda f: self.results.group(f, (m_transf_1, m_msl_4, m_transf_2, m_msl_5, m_transf_3))
 
-        mex1 = lambda f: self.results.group(f, (m_transf_5, m_msl_6, m_transf_6, m_msl_7, m_transf_7, m_msl_8, m_transf_8))
+            m_transf_4 = lambda f: self._transformer_matrix(
+                top_film,
+                bot_film,
+                config,
+                f,
+                config.transf_4_w_start_m,
+                config.transf_4_w_end_m,
+                config.transf_4_dwdl_um,
+                e12,
+                h12,
+                config.transf_4_dl_m,
+            )
+            m_msl_6 = lambda f: self.microstrip.matrix(
+                f,
+                config.msl_6_len_m,
+                config.msl_6_width_m + dw,
+                e12,
+                h12,
+                top_film,
+                bot_film,
+                config.d_top_m,
+                config.d_bot_m,
+            )
+            m_transf_5 = lambda f: self._transformer_matrix(
+                top_film,
+                bot_film,
+                config,
+                f,
+                config.transf_5_w_start_m,
+                config.transf_5_w_end_m,
+                config.transf_5_dwdl_um,
+                e12,
+                h12,
+                config.transf_5_dl_m,
+            )
+            m_msl_7 = lambda f: self.microstrip.matrix(
+                f,
+                config.msl_7_len_m,
+                config.msl_7_width_m + dw,
+                e12,
+                h12,
+                top_film,
+                bot_film,
+                config.d_top_m,
+                config.d_bot_m,
+            )
+            mex2 = lambda f: self.results.group(f, (m_transf_4, m_msl_6, m_transf_5, m_msl_7))
 
-        m_total = lambda f: self.results.group(f, (mex4, mex3, m_dcb, mex1))
+            m_transf_6 = lambda f: self._transformer_matrix(
+                top_film,
+                bot_film,
+                config,
+                f,
+                config.transf_6_w_start_m,
+                config.transf_6_w_end_m,
+                config.transf_6_dwdl_um,
+                e1,
+                h1,
+                config.transf_6_dl_m,
+            )
+            m_msl_8 = lambda f: self.microstrip.matrix(
+                f,
+                config.msl_8_len_m,
+                config.msl_8_width_m + dw,
+                e1,
+                h1,
+                top_film,
+                bot_film,
+                config.d_top_m,
+                config.d_bot_m,
+            )
+            m_transf_7 = lambda f: self._transformer_matrix(
+                top_film,
+                bot_film,
+                config,
+                f,
+                config.transf_7_w_start_m,
+                config.transf_7_w_end_m,
+                config.transf_7_dwdl_um,
+                e1,
+                h1,
+                config.transf_7_dl_m,
+            )
+            mex1 = lambda f: self.results.group(f, (m_transf_6, m_msl_8, m_transf_7))
 
-        z_sis = lambda f: self.sis.impedance_sis(
-            f,
-            config.sis_area_um2,
-            config.sis_rn_area_ohm_um2,
-            config.sis_cap_f_per_um2,
-            top_film,
-            bot_film,
-            config.d_top_m,
-            config.d_bot_m,
-            h12,
-            width_um=config.sis_width_um,
-        )
-        z_ffo = lambda f: config.z_ffo_ohm
+            log("Assembling network: Mex4 -> Mex3 -> M_DCB -> Mex2 -> Mex1.")
+            m_total = lambda f: self.results.group(f, (mex4, mex3, m_dcb, mex2, mex1))
 
-        s21_db = lambda f: self.results.s21_db(f, z_ffo, z_sis, m_total)
+            z_sis = lambda f: self.sis.impedance_sis(
+                f,
+                config.sis_area_um2,
+                config.sis_rn_area_ohm_um2,
+                config.sis_cap_f_per_um2,
+                top_film,
+                bot_film,
+                config.d_top_m,
+                config.d_bot_m,
+                h12,
+                width_um=config.sis_width_um,
+            )
+            z_ffo = lambda f: config.z_ffo_ohm
+            s21_db = lambda f: self.results.s21_db(f, z_ffo, z_sis, m_total)
 
-        freq_arr2 = arange(config.s21_freq_start_ghz, config.s21_freq_stop_ghz, config.s21_freq_step_ghz)
-        res = [s21_db(freq) for freq in freq_arr2]
+            freq_arr2 = arange(config.s21_freq_start_ghz, config.s21_freq_stop_ghz, config.s21_freq_step_ghz)
+            log(
+                f"Sweeping {len(freq_arr2)} S21 points from "
+                f"{config.s21_freq_start_ghz:g} to {config.s21_freq_stop_ghz - config.s21_freq_step_ghz:g} GHz."
+            )
 
-        return S21Result(frequencies_ghz=list(freq_arr2), s21_db=res)
+            res = []
+            for index, freq in enumerate(freq_arr2, start=1):
+                res.append(s21_db(freq))
+                if index % 5 == 0 or index == len(freq_arr2):
+                    log(f"{index} of {len(freq_arr2)} frequency points completed")
+
+        warning_messages = []
+        for warning_item in caught_warnings:
+            if issubclass(warning_item.category, IntegrationWarning):
+                message = f"IntegrationWarning: {warning_item.message}"
+                if message not in warning_messages:
+                    warning_messages.append(message)
+
+        if warning_messages:
+            log("scipy.integrate emitted warnings during quadrature.")
+            log_messages.extend(warning_messages)
+        else:
+            log("No scipy.integrate warnings were emitted.")
+
+        return S21Result(frequencies_ghz=list(freq_arr2), s21_db=res, log_messages=log_messages)
 
     def _delta0_from_tc(self, critical_temperature_k: float) -> float:
         return 3.67 / 2.0 * 1.38065 / 1.6022 * critical_temperature_k * 1e-4

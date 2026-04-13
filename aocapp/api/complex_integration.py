@@ -7,6 +7,9 @@ from typing import Callable, Tuple
 from numpy import imag, real
 from scipy.integrate import quad
 
+QUAD_ABS_TOL = 1.49e-25
+QUAD_LIMIT = 400
+
 
 class ComplexIntegrator:
     """Numerical integration helpers for complex-valued functions."""
@@ -27,8 +30,8 @@ class ComplexIntegrator:
             start,
             end,
             (args,),
-            epsabs=1.49e-25,
-            limit=100,
+            epsabs=QUAD_ABS_TOL,
+            limit=QUAD_LIMIT,
             maxp1=100,
             limlst=100,
             **kwargs,
@@ -52,8 +55,8 @@ class ComplexIntegrator:
             end,
             (args,),
             full_output=0,
-            epsabs=1.49e-25,
-            limit=100,
+            epsabs=QUAD_ABS_TOL,
+            limit=QUAD_LIMIT,
             maxp1=100,
             limlst=100,
             **kwargs,
