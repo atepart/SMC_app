@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol
 
 from .models import StructureGeometry
@@ -19,7 +20,7 @@ class SvgRenderer(Protocol):
 
 
 class S21Calculator(Protocol):
-    def calculate(self, config: S21Config) -> S21Result:
+    def calculate(self, config: S21Config, progress_callback: Callable[[str], None] | None = None) -> S21Result:
         ...
 
 

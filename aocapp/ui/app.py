@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import sys
+import traceback
 from pathlib import Path
 from typing import Dict
 
-from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtCore import QByteArray, QObject, QThread, Qt, Signal, Slot
 from PySide6.QtGui import QIcon, QPainter, QWheelEvent
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtSvgWidgets import QGraphicsSvgItem
@@ -43,6 +44,35 @@ from aocapp.domain.s21_models import S21Config
 def _resource_path(*parts: str) -> Path:
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
     return base.joinpath(*parts)
+
+
+def _default_s21_output_path() -> Path:
+    return Path.home() / "Documents" / "SMC_app" / "S21_dB.tab"
+
+
+class S21Worker(QObject):
+    log_message = Signal(str)
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, use_case: CalculateS21UseCase, config: S21Config, output_path: str | None) -> None:
+        super().__init__()
+        self._use_case = use_case
+        self._config = config
+        self._output_path = output_path
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            result = self._use_case.execute(
+                self._config,
+                self._output_path,
+                progress_callback=self.log_message.emit,
+            )
+        except Exception:
+            self.failed.emit(traceback.format_exc())
+            return
+        self.finished.emit(result)
 
 
 class SvgGraphicsView(QGraphicsView):
@@ -119,7 +149,10 @@ class MainWindow(QMainWindow):
         self._s21_output: QLineEdit | None = None
         self._s21_status: QLabel | None = None
         self._log_view: QPlainTextEdit | None = None
+        self._run_s21_button: QPushButton | None = None
         self._same_materials_checkbox: QCheckBox | None = None
+        self._s21_thread: QThread | None = None
+        self._s21_worker: S21Worker | None = None
         self._defaults = S21Config()
 
         self._configure_plot()
@@ -191,7 +224,7 @@ class MainWindow(QMainWindow):
         controls_box = QGroupBox("Actions")
         controls_layout = QVBoxLayout(controls_box)
 
-        self._s21_output = QLineEdit("S21_dB.tab")
+        self._s21_output = QLineEdit(str(_default_s21_output_path()))
         self._s21_output.setToolTip("Optional output file for the computed S21 tabulation.")
         output_form = QFormLayout()
         output_form.addRow("Output file", self._s21_output)
@@ -205,6 +238,7 @@ class MainWindow(QMainWindow):
 
         run_button = QPushButton("Run S21")
         run_button.clicked.connect(self._run_s21)
+        self._run_s21_button = run_button
         controls_layout.addWidget(run_button)
 
         self._s21_status = QLabel("The grouped preview mirrors the new backend parameter model.")
@@ -330,31 +364,75 @@ class MainWindow(QMainWindow):
     def _run_s21(self) -> None:
         if self._s21_output is None or self._s21_status is None:
             return
+        if self._s21_thread is not None:
+            self._append_log_message("S21 calculation is already running.")
+            return
         try:
             config = self._build_config()
-            self._s21_status.setText("Computing S21...")
-            self._set_log_messages(
-                [
-                    "Starting grouped S21 calculation.",
-                    "Using the same parameter set as the SVG preview.",
-                    "EL1/EL2 material sync is applied before the backend call when enabled.",
-                ]
-            )
-            QApplication.processEvents()
-            output_path = self._s21_output.text().strip()
-            result = self._s21_use_case.execute(config, output_path if output_path else None)
         except ValueError as exc:
             self._append_log_message(f"ERROR: {exc}")
             QMessageBox.warning(self, "Invalid input", str(exc))
             return
 
+        output_path = self._s21_output.text().strip()
+        self._plot.clear()
+        self._s21_status.setText("Computing S21...")
+        self._set_log_messages(
+            [
+                "Starting grouped S21 calculation.",
+                "Using the same parameter set as the SVG preview.",
+                "EL1/EL2 material sync is applied before the backend call when enabled.",
+            ]
+        )
+        if self._run_s21_button is not None:
+            self._run_s21_button.setEnabled(False)
+
+        self._s21_thread = QThread(self)
+        self._s21_worker = S21Worker(self._s21_use_case, config, output_path if output_path else None)
+        self._s21_worker.moveToThread(self._s21_thread)
+        self._s21_thread.started.connect(self._s21_worker.run)
+        self._s21_worker.log_message.connect(self._on_s21_progress)
+        self._s21_worker.finished.connect(self._on_s21_finished)
+        self._s21_worker.failed.connect(self._on_s21_failed)
+        self._s21_worker.finished.connect(self._s21_thread.quit)
+        self._s21_worker.failed.connect(self._s21_thread.quit)
+        self._s21_worker.finished.connect(self._s21_worker.deleteLater)
+        self._s21_worker.failed.connect(self._s21_worker.deleteLater)
+        self._s21_thread.finished.connect(self._on_s21_thread_finished)
+        self._s21_thread.finished.connect(self._s21_thread.deleteLater)
+        self._s21_thread.start()
+
+    @Slot(object)
+    def _on_s21_finished(self, result) -> None:
         self._update_s21_plot(result.frequencies_ghz, result.s21_db)
         self._set_log_messages(result.log_messages)
 
+        output_path = self._s21_output.text().strip() if self._s21_output is not None else ""
         if output_path:
             self._s21_status.setText(f"Computed {result.count} points, saved to {output_path}")
         else:
             self._s21_status.setText(f"Computed {result.count} points")
+
+    @Slot(str)
+    def _on_s21_progress(self, message: str) -> None:
+        self._append_log_message(message)
+        if self._s21_status is not None:
+            self._s21_status.setText(message)
+
+    @Slot(str)
+    def _on_s21_failed(self, error: str) -> None:
+        self._append_log_message("ERROR: S21 calculation failed.")
+        self._append_log_message(error)
+        if self._s21_status is not None:
+            self._s21_status.setText("S21 calculation failed")
+        QMessageBox.critical(self, "S21 calculation failed", error)
+
+    @Slot()
+    def _on_s21_thread_finished(self) -> None:
+        self._s21_thread = None
+        self._s21_worker = None
+        if self._run_s21_button is not None:
+            self._run_s21_button.setEnabled(True)
 
     def _update_s21_plot(self, frequencies, s21_db) -> None:
         self._plot.clear()

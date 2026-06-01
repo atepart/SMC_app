@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Iterable, Tuple
 
 
@@ -15,7 +16,10 @@ class IOService:
             data: Tuple of x and y sequences.
         """
         x_values, y_values = data
-        with open(filename, "w") as file:
+        output_path = Path(filename).expanduser()
+        if output_path.parent != Path("."):
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("w") as file:
             for x_val, y_val in zip(x_values, y_values):
                 file.write(f"{x_val}\t{y_val}\n")
 
@@ -25,7 +29,7 @@ class IOService:
         Args:
             filename: Input file path.
         """
-        with open(filename, "r") as file:
+        with Path(filename).expanduser().open("r") as file:
             lines = file.readlines()
 
         data0 = []

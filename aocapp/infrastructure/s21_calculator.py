@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import warnings
 
@@ -40,12 +41,14 @@ class S21CalculatorImpl(S21Calculator):
     sis: SISJunctionCalculator
     results: ResultsCalculator
 
-    def calculate(self, config: S21Config) -> S21Result:
+    def calculate(self, config: S21Config, progress_callback: Callable[[str], None] | None = None) -> S21Result:
         config.validate()
         log_messages: list[str] = []
 
         def log(message: str) -> None:
             log_messages.append(message)
+            if progress_callback is not None:
+                progress_callback(message)
 
         with warnings.catch_warnings(record=True) as caught_warnings:
             warnings.simplefilter("always", IntegrationWarning)
@@ -69,8 +72,8 @@ class S21CalculatorImpl(S21Calculator):
                 f"from {config.film_freq_start_ghz:g} to {config.film_freq_stop_ghz - config.film_freq_step_ghz:g} GHz."
             )
 
-            top_film = self._build_film(freq_arr, config.sigma0_top, config.temperature_k, delta_top)
-            bot_film = self._build_film(freq_arr, config.sigma0_bot, config.temperature_k, delta_bot)
+            top_film = self._build_film(freq_arr, config.sigma0_top, config.temperature_k, delta_top, log, "EL1")
+            bot_film = self._build_film(freq_arr, config.sigma0_bot, config.temperature_k, delta_bot, log, "EL2")
 
             h12 = config.h12_m
             e12 = config.e12
@@ -356,12 +359,23 @@ class S21CalculatorImpl(S21Calculator):
     def _delta0_from_alpha_tc(self, alpha: float, critical_temperature_k: float) -> float:
         return alpha / 2.0 * 1.38065 / 1.6022 * critical_temperature_k * 1e-4
 
-    def _build_film(self, frequencies_ghz, sigma0, temperature_k, gap_ev) -> FilmConductivity:
+    def _build_film(
+        self,
+        frequencies_ghz,
+        sigma0,
+        temperature_k,
+        gap_ev,
+        log: Callable[[str], None],
+        label: str,
+    ) -> FilmConductivity:
         sigma1 = []
         sigma2 = []
-        for freq in frequencies_ghz:
+        total = len(frequencies_ghz)
+        for index, freq in enumerate(frequencies_ghz, start=1):
             sigma1.append(self.mb_calc.sigma1(sigma0, freq, temperature_k, gap_ev))
             sigma2.append(self.mb_calc.sigma2(sigma0, freq, temperature_k, gap_ev))
+            if index % 5 == 0 or index == total:
+                log(f"{label} conductivity table: {index} of {total} frequency points completed")
         return FilmConductivity(frequencies_ghz, sigma1, sigma2)
 
     def _transformer_matrix(
