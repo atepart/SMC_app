@@ -1,8 +1,15 @@
+altgraph==0.17.5
 colorama==0.4.6
+macholib==1.16.4
 numpy==2.4.1
+packaging==26.2
+pillow==12.2.0
+pyinstaller==6.20.0
+pyinstaller-hooks-contrib==2026.5
 pyqtgraph==0.14.0
 pyside6==6.10.1
 pyside6-addons==6.10.1
 pyside6-essentials==6.10.1
 scipy==1.17.0
+setuptools==82.0.1
 shiboken6==6.10.1
