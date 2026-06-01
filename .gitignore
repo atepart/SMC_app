@@ -8,3 +8,7 @@ Some_parameters.txt
 *.pyo
 *.DS_Store
 *.log
+build/
+dist/
+*.spec
+tmp/

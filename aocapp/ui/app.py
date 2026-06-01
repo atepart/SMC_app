@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Dict
 
 from PySide6.QtCore import QByteArray, Qt
-from PySide6.QtGui import QPainter, QWheelEvent
+from PySide6.QtGui import QIcon, QPainter, QWheelEvent
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtSvgWidgets import QGraphicsSvgItem
 from PySide6.QtWidgets import (
@@ -35,7 +36,13 @@ import pyqtgraph as pg
 
 from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
+from aocapp.application.version import __version__
 from aocapp.domain.s21_models import S21Config
+
+
+def _resource_path(*parts: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+    return base.joinpath(*parts)
 
 
 class SvgGraphicsView(QGraphicsView):
@@ -103,7 +110,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._use_case = use_case
         self._s21_use_case = s21_use_case
-        self.setWindowTitle("AOC Structure Calculator")
+        self.setWindowTitle(f"AOC Structure Calculator {__version__}")
+        self.setWindowIcon(QIcon(str(_resource_path("assets", "aocapp-icon.png"))))
 
         self._view = SvgGraphicsView()
         self._plot = pg.PlotWidget()
