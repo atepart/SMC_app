@@ -43,7 +43,7 @@ Windows:
 build.bat
 ```
 
-Результат появляется в `dist/AOCapp`. Иконка приложения лежит в `assets/aocapp-icon.png` и `assets/aocapp-icon.ico`.
+Результат появляется в `dist/SMC_app`. Иконка приложения лежит в `assets/aocapp-icon.png` и `assets/aocapp-icon.ico`.
 
 ## Релиз и версии
 

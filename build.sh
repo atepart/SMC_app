@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="AOCapp"
+APP_NAME="SMC_app"
 
 if [ -z "${PYTHON_BIN:-}" ]; then
   if [ -x ".venv/bin/python" ]; then

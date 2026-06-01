@@ -51,26 +51,26 @@ jobs:
 
       - name: Archive Release Asset (Windows)
         if: runner.os == 'Windows'
-        run: Compress-Archive -Path ./dist/AOCapp -DestinationPath ./dist/AOCapp_${{ runner.os }}_${{ matrix.arch }}_${{ github.ref_name }}.zip
+        run: Compress-Archive -Path ./dist/SMC_app -DestinationPath ./dist/SMC_app_${{ runner.os }}_${{ matrix.arch }}_${{ github.ref_name }}.zip
 
       - name: Archive Release Asset (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
           cd dist
-          if [ -d "AOCapp.app" ]; then
-            zip -r AOCapp_${{ runner.os }}_${{ matrix.arch }}_${{ github.ref_name }}.zip AOCapp.app
+          if [ -d "SMC_app.app" ]; then
+            zip -r SMC_app_${{ runner.os }}_${{ matrix.arch }}_${{ github.ref_name }}.zip SMC_app.app
           else
-            zip -r AOCapp_${{ runner.os }}_${{ matrix.arch }}_${{ github.ref_name }}.zip AOCapp
+            zip -r SMC_app_${{ runner.os }}_${{ matrix.arch }}_${{ github.ref_name }}.zip SMC_app
           fi
           ls -l
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
         with:
-          name: AOCapp_${{ runner.os }}_${{ matrix.arch }}_${{ github.ref_name }}
+          name: SMC_app_${{ runner.os }}_${{ matrix.arch }}_${{ github.ref_name }}
           path: |
-            ./dist/AOCapp_${{ runner.os }}_${{ matrix.arch }}_${{ github.ref_name }}.zip
+            ./dist/SMC_app_${{ runner.os }}_${{ matrix.arch }}_${{ github.ref_name }}.zip
 
   release:
     needs: build
@@ -83,7 +83,7 @@ jobs:
       - name: Download Artifacts (all OS)
         uses: actions/download-artifact@v7
         with:
-          pattern: AOCapp_*_${{ github.ref_name }}
+          pattern: SMC_app_*_${{ github.ref_name }}
           merge-multiple: true
 
       - name: List contents
@@ -95,7 +95,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            AOCapp_Windows_x64_${{ github.ref_name }}.zip
-            AOCapp_Windows_x86_${{ github.ref_name }}.zip
-            AOCapp_macOS_arm64_${{ github.ref_name }}.zip
-            AOCapp_macOS_x64_${{ github.ref_name }}.zip
+            SMC_app_Windows_x64_${{ github.ref_name }}.zip
+            SMC_app_Windows_x86_${{ github.ref_name }}.zip
+            SMC_app_macOS_arm64_${{ github.ref_name }}.zip
+            SMC_app_macOS_x64_${{ github.ref_name }}.zip

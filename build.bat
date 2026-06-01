@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set "app_name=AOCapp"
+set "app_name=SMC_app"
 
 if "%PYTHON_BIN%"=="" (
     if exist ".venv\Scripts\python.exe" (
