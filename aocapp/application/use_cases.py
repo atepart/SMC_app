@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from aocapp.domain.models import StructureParams
 from aocapp.domain.ports import StructureCalculator, SvgRenderer
+from aocapp.domain.s21_models import S21Config
 
 
 @dataclass(frozen=True)
@@ -13,7 +13,7 @@ class GenerateStructureUseCase:
     calculator: StructureCalculator
     renderer: SvgRenderer
 
-    def execute(self, params: StructureParams) -> str:
-        params.validate()
-        geometry = self.calculator.calculate(params)
+    def execute(self, config: S21Config) -> str:
+        config.validate()
+        geometry = self.calculator.calculate(config)
         return self.renderer.render(geometry)

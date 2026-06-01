@@ -1,8 +1,7 @@
-"""PySide6 UI for parameter input and SVG preview."""
+"""PySide6 UI for grouped parameter input and SVG preview."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import sys
 from typing import Dict
 
@@ -12,10 +11,12 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtSvgWidgets import QGraphicsSvgItem
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDoubleSpinBox,
     QFormLayout,
     QGraphicsScene,
     QGraphicsView,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -23,16 +24,17 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QVBoxLayout,
     QWidget,
+    QStyle,
 )
 
 import pyqtgraph as pg
 
 from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
-from aocapp.domain.models import StructureParams
 from aocapp.domain.s21_models import S21Config
 
 
@@ -41,9 +43,12 @@ class SvgGraphicsView(QGraphicsView):
         super().__init__()
         self.setScene(QGraphicsScene(self))
         self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setRenderHints(self.renderHints() | QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         self._svg_item: QGraphicsSvgItem | None = None
         self._renderer: QSvgRenderer | None = None
+        self._zoom_level = 0
 
     def set_svg(self, svg_text: str) -> None:
         renderer = QSvgRenderer(QByteArray(svg_text.encode("utf-8")))
@@ -65,46 +70,53 @@ class SvgGraphicsView(QGraphicsView):
     def reset_view(self) -> None:
         if self._svg_item is None:
             return
+        self.resetTransform()
+        self._zoom_level = 0
         self.fitInView(self._svg_item.boundingRect(), Qt.KeepAspectRatio)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         if event.angleDelta().y() == 0:
             return
-        zoom_in = 1.15
+        zoom_in = 1.08
         zoom_out = 1 / zoom_in
-        factor = zoom_in if event.angleDelta().y() > 0 else zoom_out
+        direction = 1 if event.angleDelta().y() > 0 else -1
+        if direction > 0 and self._zoom_level >= 24:
+            event.accept()
+            return
+        if direction < 0 and self._zoom_level <= -12:
+            event.accept()
+            return
+        factor = zoom_in if direction > 0 else zoom_out
         self.scale(factor, factor)
+        self._zoom_level += direction
         event.accept()
 
 
-@dataclass
-class InputField:
-    label: str
-    default: float
-    minimum: float = 0.01
-    maximum: float = 10000.0
-    step: float = 0.5
-    decimals: int = 2
-
-
 class MainWindow(QMainWindow):
+    _material_sync_map = {
+        "sigma0_top": "sigma0_bot",
+        "tc_top_k": "tc_bot_k",
+        "alpha_top": "alpha_bot",
+    }
+
     def __init__(self, use_case: GenerateStructureUseCase, s21_use_case: CalculateS21UseCase) -> None:
         super().__init__()
         self._use_case = use_case
         self._s21_use_case = s21_use_case
-        self.setWindowTitle("Structure Calculator")
+        self.setWindowTitle("AOC Structure Calculator")
 
         self._view = SvgGraphicsView()
         self._plot = pg.PlotWidget()
-        self._inputs: Dict[str, QDoubleSpinBox] = {}
-        self._s21_inputs: Dict[str, QDoubleSpinBox] = {}
+        self._config_inputs: Dict[str, QDoubleSpinBox] = {}
         self._s21_output: QLineEdit | None = None
         self._s21_status: QLabel | None = None
         self._log_view: QPlainTextEdit | None = None
-        self._s21_defaults = S21Config()
+        self._same_materials_checkbox: QCheckBox | None = None
+        self._defaults = S21Config()
 
         self._configure_plot()
         self._build_ui()
+        self._apply_material_sync()
         self._update_svg()
 
     def _build_ui(self) -> None:
@@ -121,92 +133,104 @@ class MainWindow(QMainWindow):
 
     def _build_controls(self) -> QWidget:
         panel = QWidget(self)
-        vbox = QVBoxLayout(panel)
+        outer = QVBoxLayout(panel)
 
-        title = QLabel("Parameters (um)")
-        title.setStyleSheet("font-weight: bold;")
+        scroll = QScrollArea(panel)
+        scroll.setWidgetResizable(True)
+        inner = QWidget(scroll)
+        vbox = QVBoxLayout(inner)
+
+        title = QLabel("Grouped Parameters")
+        title.setStyleSheet("font-weight: bold; font-size: 16px;")
         vbox.addWidget(title)
 
-        form = QFormLayout()
-        fields = {
-            "left_taper_um": InputField("Left taper", 12.0),
-            "center_length_um": InputField("Center length", 30.0),
-            "right_taper_um": InputField("Right taper", 14.0),
-            "body_height_um": InputField("Body height", 60.0),
-            "neck_height_um": InputField("Neck height", 20.0),
-            "arm_length_um": InputField("Arm length", 53.0),
-        }
+        subtitle = QLabel(
+            "Preview and S21 now use the same grouped configuration. Tooltips describe each backend parameter."
+        )
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("color: #555;")
+        vbox.addWidget(subtitle)
 
-        for key, field in fields.items():
-            spin = QDoubleSpinBox()
-            spin.setDecimals(field.decimals)
-            spin.setRange(field.minimum, field.maximum)
-            spin.setSingleStep(field.step)
-            spin.setValue(field.default)
-            spin.setSuffix(" um")
-            self._inputs[key] = spin
-            form.addRow(field.label, spin)
+        fields_by_group = {group: [] for group in S21Config.GROUP_ORDER}
+        for field_info in S21Config.ui_fields():
+            fields_by_group.setdefault(field_info.group, []).append(field_info)
 
-        vbox.addLayout(form)
+        for group_name in S21Config.GROUP_ORDER:
+            group_fields = fields_by_group.get(group_name, [])
+            if not group_fields:
+                continue
+            box = QGroupBox(group_name)
+            form = QFormLayout(box)
+            form.setLabelAlignment(Qt.AlignLeft)
 
-        button_row = QHBoxLayout()
-        calc_button = QPushButton("Calculate")
-        calc_button.clicked.connect(self._update_svg)
-        button_row.addWidget(calc_button)
+            if group_name == "EL2 Material":
+                checkbox = QCheckBox("Use the same material as EL1")
+                checkbox.setChecked(True)
+                checkbox.toggled.connect(self._on_same_materials_toggled)
+                self._same_materials_checkbox = checkbox
+                form.addRow("", checkbox)
 
-        reset_button = QPushButton("Reset view")
-        reset_button.clicked.connect(self._view.reset_view)
-        button_row.addWidget(reset_button)
+            for field_info in group_fields:
+                spin = self._create_spinbox(field_info.name, field_info)
+                label = QLabel(field_info.label)
+                label.setToolTip(field_info.description)
+                spin.setToolTip(field_info.description)
+                self._config_inputs[field_info.name] = spin
+                form.addRow(label, spin)
 
-        vbox.addLayout(button_row)
+            vbox.addWidget(box)
 
-        vbox.addSpacing(8)
-
-        s21_title = QLabel("S21 calculation")
-        s21_title.setStyleSheet("font-weight: bold;")
-        vbox.addWidget(s21_title)
-
-        s21_form = QFormLayout()
-        s21_fields = {
-            "s21_freq_start_ghz": InputField("Start freq", self._s21_defaults.s21_freq_start_ghz, step=5.0),
-            "s21_freq_stop_ghz": InputField("Stop freq", self._s21_defaults.s21_freq_stop_ghz, step=5.0),
-            "s21_freq_step_ghz": InputField("Step", self._s21_defaults.s21_freq_step_ghz, step=5.0),
-        }
-
-        for key, field in s21_fields.items():
-            spin = QDoubleSpinBox()
-            spin.setDecimals(2)
-            spin.setRange(0.01, 10000.0)
-            spin.setSingleStep(field.step)
-            spin.setValue(field.default)
-            spin.setSuffix(" GHz")
-            self._s21_inputs[key] = spin
-            s21_form.addRow(field.label, spin)
+        controls_box = QGroupBox("Actions")
+        controls_layout = QVBoxLayout(controls_box)
 
         self._s21_output = QLineEdit("S21_dB.tab")
-        s21_form.addRow("Output file", self._s21_output)
-        vbox.addLayout(s21_form)
+        self._s21_output.setToolTip("Optional output file for the computed S21 tabulation.")
+        output_form = QFormLayout()
+        output_form.addRow("Output file", self._s21_output)
+        controls_layout.addLayout(output_form)
 
-        s21_button_row = QHBoxLayout()
-        s21_button = QPushButton("Run S21")
-        s21_button.clicked.connect(self._run_s21)
-        s21_button_row.addWidget(s21_button)
-        vbox.addLayout(s21_button_row)
+        button_row = QHBoxLayout()
+        preview_button = QPushButton("Update Preview")
+        preview_button.clicked.connect(self._update_svg)
+        button_row.addWidget(preview_button)
+        controls_layout.addLayout(button_row)
 
-        self._s21_status = QLabel("S21 mirrors backend/main.py. SVG preview is independent from S21 parameters.")
+        run_button = QPushButton("Run S21")
+        run_button.clicked.connect(self._run_s21)
+        controls_layout.addWidget(run_button)
+
+        self._s21_status = QLabel("The grouped preview mirrors the new backend parameter model.")
+        self._s21_status.setWordWrap(True)
         self._s21_status.setStyleSheet("color: #555;")
-        vbox.addWidget(self._s21_status)
+        controls_layout.addWidget(self._s21_status)
 
-        hint = QLabel("Wheel to zoom, drag to pan")
+        hint = QLabel("Wheel to zoom, drag to pan, Home returns to the initial fitted view.")
+        hint.setWordWrap(True)
         hint.setStyleSheet("color: #555;")
-        vbox.addWidget(hint)
+        controls_layout.addWidget(hint)
+
+        vbox.addWidget(controls_box)
         vbox.addStretch(1)
 
+        inner.setLayout(vbox)
+        scroll.setWidget(inner)
+        outer.addWidget(scroll)
         return panel
 
     def _build_preview(self) -> QWidget:
         panel = QWidget(self)
         vbox = QVBoxLayout(panel)
+        toolbar = QHBoxLayout()
+        preview_title = QLabel("SVG Preview")
+        preview_title.setStyleSheet("font-weight: bold;")
+        toolbar.addWidget(preview_title)
+        toolbar.addStretch(1)
+        home_button = QPushButton("Home")
+        home_button.setToolTip("Return the SVG viewer to the initial fitted view.")
+        home_button.setIcon(self.style().standardIcon(QStyle.SP_DirHomeIcon))
+        home_button.clicked.connect(self._view.reset_view)
+        toolbar.addWidget(home_button)
+        vbox.addLayout(toolbar)
         vbox.addWidget(self._view, stretch=3)
 
         plot_title = QLabel("S21 Response")
@@ -220,31 +244,75 @@ class MainWindow(QMainWindow):
 
         self._log_view = QPlainTextEdit()
         self._log_view.setReadOnly(True)
-        self._log_view.setPlaceholderText("Run S21 to see calculation messages and warnings.")
+        self._log_view.setPlaceholderText("Run S21 to inspect intermediate backend messages.")
         self._log_view.setMinimumHeight(150)
         vbox.addWidget(self._log_view, stretch=1)
         return panel
 
+    def _create_spinbox(self, name: str, field_info) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        scale = S21Config.field_scale(name)
+        default_value = getattr(self._defaults, name)
+        if default_value is None:
+            default_value = 0.0
+        spin.setDecimals(field_info.decimals)
+        spin.setRange(field_info.minimum, field_info.maximum)
+        spin.setSingleStep(field_info.step)
+        spin.setValue(default_value * scale)
+        spin.setSuffix(field_info.suffix)
+        if name in self._material_sync_map:
+            spin.valueChanged.connect(self._apply_material_sync)
+        return spin
+
     def _configure_plot(self) -> None:
-        pg.setConfigOption("background", "#f7f8fb")
-        pg.setConfigOption("foreground", "#1f1f1f")
+        pg.setConfigOption("background", "#ffffff")
+        pg.setConfigOption("foreground", "#7f7f7f")
+        self._plot.setBackground("#ffffff")
         self._plot.setTitle("S21 vs Frequency")
         self._plot.setLabel("left", "S21", units="dB")
         self._plot.setLabel("bottom", "Frequency", units="GHz")
-        self._plot.showGrid(x=True, y=True, alpha=0.25)
+        self._plot.showGrid(x=True, y=True, alpha=0.10)
         self._plot.setMenuEnabled(False)
+        self._plot.getPlotItem().setContentsMargins(12, 12, 12, 12)
+        axis_pen = pg.mkPen("#7f7f7f", width=1)
+        for axis_name in ("left", "bottom"):
+            axis = self._plot.getPlotItem().getAxis(axis_name)
+            axis.setPen(axis_pen)
+            axis.setTextPen(axis_pen)
+
+    def _build_config(self) -> S21Config:
+        values = dict(self._defaults.__dict__)
+        for name, spin in self._config_inputs.items():
+            scale = S21Config.field_scale(name)
+            values[name] = spin.value() / scale
+
+        if self._same_materials_checkbox is not None and self._same_materials_checkbox.isChecked():
+            for top_name, bot_name in self._material_sync_map.items():
+                values[bot_name] = values[top_name]
+
+        return S21Config(**values)
+
+    def _apply_material_sync(self) -> None:
+        if self._same_materials_checkbox is None or not self._same_materials_checkbox.isChecked():
+            return
+        for top_name, bot_name in self._material_sync_map.items():
+            top_spin = self._config_inputs[top_name]
+            bot_spin = self._config_inputs[bot_name]
+            blocked = bot_spin.blockSignals(True)
+            bot_spin.setValue(top_spin.value())
+            bot_spin.blockSignals(blocked)
+            bot_spin.setEnabled(False)
+
+    def _on_same_materials_toggled(self, checked: bool) -> None:
+        for bot_name in self._material_sync_map.values():
+            self._config_inputs[bot_name].setEnabled(not checked)
+        if checked:
+            self._apply_material_sync()
 
     def _update_svg(self) -> None:
         try:
-            params = StructureParams(
-                left_taper_um=self._inputs["left_taper_um"].value(),
-                center_length_um=self._inputs["center_length_um"].value(),
-                right_taper_um=self._inputs["right_taper_um"].value(),
-                body_height_um=self._inputs["body_height_um"].value(),
-                neck_height_um=self._inputs["neck_height_um"].value(),
-                arm_length_um=self._inputs["arm_length_um"].value(),
-            )
-            svg = self._use_case.execute(params)
+            config = self._build_config()
+            svg = self._use_case.execute(config)
         except (ValueError, OSError) as exc:
             QMessageBox.warning(self, "Invalid input", str(exc))
             return
@@ -255,21 +323,16 @@ class MainWindow(QMainWindow):
         if self._s21_output is None or self._s21_status is None:
             return
         try:
+            config = self._build_config()
             self._s21_status.setText("Computing S21...")
             self._set_log_messages(
                 [
-                    "Starting S21 calculation.",
-                    "Using backend/main.py defaults.",
-                    "SVG preview parameters do not alter the S21 network.",
+                    "Starting grouped S21 calculation.",
+                    "Using the same parameter set as the SVG preview.",
+                    "EL1/EL2 material sync is applied before the backend call when enabled.",
                 ]
             )
             QApplication.processEvents()
-            config = replace(
-                self._s21_defaults,
-                s21_freq_start_ghz=self._s21_inputs["s21_freq_start_ghz"].value(),
-                s21_freq_stop_ghz=self._s21_inputs["s21_freq_stop_ghz"].value(),
-                s21_freq_step_ghz=self._s21_inputs["s21_freq_step_ghz"].value(),
-            )
             output_path = self._s21_output.text().strip()
             result = self._s21_use_case.execute(config, output_path if output_path else None)
         except ValueError as exc:
@@ -288,7 +351,7 @@ class MainWindow(QMainWindow):
     def _update_s21_plot(self, frequencies, s21_db) -> None:
         self._plot.clear()
         pen = pg.mkPen(color="#1f77b4", width=2)
-        self._plot.plot(frequencies, s21_db, pen=pen, symbol="o", symbolSize=5, symbolBrush="#1f77b4")
+        self._plot.plot(frequencies, s21_db, pen=pen, symbol="o", symbolSize=4, symbolBrush="#ff7f0e", symbolPen="#1f77b4")
 
     def _set_log_messages(self, messages: list[str]) -> None:
         if self._log_view is None:
@@ -308,6 +371,6 @@ class MainWindow(QMainWindow):
 def run_app(use_case: GenerateStructureUseCase, s21_use_case: CalculateS21UseCase) -> None:
     app = QApplication(sys.argv)
     window = MainWindow(use_case, s21_use_case)
-    window.resize(1100, 700)
+    window.resize(1440, 920)
     window.show()
     app.exec()

@@ -50,11 +50,13 @@ class S21CalculatorImpl(S21Calculator):
         with warnings.catch_warnings(record=True) as caught_warnings:
             warnings.simplefilter("always", IntegrationWarning)
 
-            delta0_top = config.delta0_top_ev if config.delta0_top_ev is not None else self._delta0_from_tc(config.tc_top_k)
-            delta0_bot = config.delta0_bot_ev if config.delta0_bot_ev is not None else self._delta0_from_tc(config.tc_bot_k)
+            delta0_top = self._delta0_from_alpha_tc(config.alpha_top, config.tc_top_k)
+            delta0_bot = self._delta0_from_alpha_tc(config.alpha_bot, config.tc_bot_k)
 
             log("Mirroring backend/main.py configuration.")
             log("Using strong-coupling approximation for superconducting gaps.")
+            log(f"EL1 gap inferred from alpha={config.alpha_top:.3f} and Tc={config.tc_top_k:.3f} K.")
+            log(f"EL2 gap inferred from alpha={config.alpha_bot:.3f} and Tc={config.tc_bot_k:.3f} K.")
 
             delta_top = self.gap_calc.delta_strong_coupling(config.temperature_k, config.tc_top_k, delta0_top)
             delta_bot = self.gap_calc.delta_strong_coupling(config.temperature_k, config.tc_bot_k, delta0_bot)
@@ -351,8 +353,8 @@ class S21CalculatorImpl(S21Calculator):
 
         return S21Result(frequencies_ghz=list(freq_arr2), s21_db=res, log_messages=log_messages)
 
-    def _delta0_from_tc(self, critical_temperature_k: float) -> float:
-        return 3.67 / 2.0 * 1.38065 / 1.6022 * critical_temperature_k * 1e-4
+    def _delta0_from_alpha_tc(self, alpha: float, critical_temperature_k: float) -> float:
+        return alpha / 2.0 * 1.38065 / 1.6022 * critical_temperature_k * 1e-4
 
     def _build_film(self, frequencies_ghz, sigma0, temperature_k, gap_ev) -> FilmConductivity:
         sigma1 = []

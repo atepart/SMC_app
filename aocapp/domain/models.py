@@ -1,4 +1,4 @@
-"""Domain models for structure geometry and input parameters."""
+"""Domain models for structure geometry primitives."""
 
 from __future__ import annotations
 
@@ -37,42 +37,57 @@ class DimensionLine:
 
 
 @dataclass(frozen=True)
-class StructureParams:
-    left_taper_um: float
-    center_length_um: float
-    right_taper_um: float
-    body_height_um: float
-    neck_height_um: float
-    arm_length_um: float
+class PolygonShape:
+    points: List[Point]
+    fill: str = "#cfeef5"
+    stroke: str = "#111111"
+    stroke_width: float = 0.8
+    fill_pattern: str | None = None
 
-    def validate(self) -> None:
-        errors: List[str] = []
-        for name, value in (
-            ("left_taper_um", self.left_taper_um),
-            ("center_length_um", self.center_length_um),
-            ("right_taper_um", self.right_taper_um),
-            ("body_height_um", self.body_height_um),
-            ("neck_height_um", self.neck_height_um),
-            ("arm_length_um", self.arm_length_um),
-        ):
-            if value <= 0:
-                errors.append(f"{name} must be > 0")
 
-        if self.neck_height_um > self.body_height_um:
-            errors.append("neck_height_um must be <= body_height_um")
+@dataclass(frozen=True)
+class RectShape:
+    rect: Rect
+    fill: str = "#cfeef5"
+    stroke: str = "#111111"
+    stroke_width: float = 0.8
+    fill_pattern: str | None = None
 
-        if errors:
-            raise ValueError("; ".join(errors))
 
-    @property
-    def body_width_um(self) -> float:
-        return self.left_taper_um + self.center_length_um + self.right_taper_um
+@dataclass(frozen=True)
+class CircleShape:
+    center: Point
+    radius: float
+    fill: str = "none"
+    stroke: str = "#111111"
+    stroke_width: float = 0.8
+
+
+@dataclass(frozen=True)
+class LineShape:
+    start: Point
+    end: Point
+    stroke: str = "#111111"
+    stroke_width: float = 0.8
+
+
+@dataclass(frozen=True)
+class TextLabel:
+    position: Point
+    text: str
+    font_size: float = 8.0
+    anchor: str = "start"
+    fill: str = "#111111"
+    font_weight: str = "normal"
 
 
 @dataclass(frozen=True)
 class StructureGeometry:
-    body_points: List[Point]
-    arm_rect: Rect
+    polygons: List[PolygonShape]
+    rects: List[RectShape]
+    circles: List[CircleShape]
+    lines: List[LineShape]
+    labels: List[TextLabel]
     dimensions: List[DimensionLine]
     bounds: Rect
 

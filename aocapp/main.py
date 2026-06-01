@@ -5,14 +5,14 @@ from __future__ import annotations
 from aocapp.api import IOService
 from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
-from aocapp.infrastructure.geometry import OctagonArmCalculator
+from aocapp.infrastructure.geometry import IntegratedStructureCalculator
 from aocapp.infrastructure.s21_calculator import S21FileWriter, build_default_s21_calculator
 from aocapp.infrastructure.svg_renderer import SvgRendererImpl
 from aocapp.ui.app import run_app
 
 
 def main() -> None:
-    calculator = OctagonArmCalculator()
+    calculator = IntegratedStructureCalculator()
     renderer = SvgRendererImpl()
     use_case = GenerateStructureUseCase(calculator=calculator, renderer=renderer)
     s21_calculator = build_default_s21_calculator()

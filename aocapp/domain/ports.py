@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .models import StructureGeometry, StructureParams
+from .models import StructureGeometry
 from .s21_models import S21Config, S21Result
 
 
 class StructureCalculator(Protocol):
-    def calculate(self, params: StructureParams) -> StructureGeometry:
+    def calculate(self, config: S21Config) -> StructureGeometry:
         ...
 
 
