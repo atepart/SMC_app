@@ -7,8 +7,9 @@ import traceback
 from pathlib import Path
 from typing import Dict
 
+from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import QByteArray, QObject, QThread, Qt, Signal, Slot
-from PySide6.QtGui import QIcon, QPainter, QWheelEvent
+from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPainter, QWheelEvent
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtSvgWidgets import QGraphicsSvgItem
 from PySide6.QtWidgets import (
@@ -37,8 +38,9 @@ import pyqtgraph as pg
 
 from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
-from aocapp.application.version import __version__
+from aocapp.application.version import REPO_SLUG, __version__
 from aocapp.domain.s21_models import S21Config
+from aocapp.ui.update_dialogs import FetchReleasesWorker, ReleasePickerDialog
 
 
 def _resource_path(*parts: str) -> Path:
@@ -48,6 +50,13 @@ def _resource_path(*parts: str) -> Path:
 
 def _default_s21_output_path() -> Path:
     return Path.home() / "Documents" / "SMC_app" / "S21_dB.tab"
+
+
+def _resolve_s21_output_path(path_text: str) -> str:
+    output_path = Path(path_text).expanduser()
+    if not output_path.is_absolute():
+        output_path = Path.home() / "Documents" / "SMC_app" / output_path
+    return str(output_path)
 
 
 class S21Worker(QObject):
@@ -153,12 +162,28 @@ class MainWindow(QMainWindow):
         self._same_materials_checkbox: QCheckBox | None = None
         self._s21_thread: QThread | None = None
         self._s21_worker: S21Worker | None = None
+        self._update_fetch_thread: QThread | None = None
+        self._update_fetch_worker: FetchReleasesWorker | None = None
+        self._update_fetch_timer: QtCore.QTimer | None = None
+        self._update_spinner: QtWidgets.QProgressDialog | None = None
         self._defaults = S21Config()
 
+        self._build_menu()
         self._configure_plot()
         self._build_ui()
         self._apply_material_sync()
         self._update_svg()
+
+    def _build_menu(self) -> None:
+        help_menu = self.menuBar().addMenu("Справка")
+
+        about_action = QAction("О программе", self)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+
+        update_action = QAction("Проверить обновления", self)
+        update_action.triggered.connect(self.check_updates)
+        help_menu.addAction(update_action)
 
     def _build_ui(self) -> None:
         container = QWidget(self)
@@ -375,6 +400,9 @@ class MainWindow(QMainWindow):
             return
 
         output_path = self._s21_output.text().strip()
+        if output_path:
+            output_path = _resolve_s21_output_path(output_path)
+            self._s21_output.setText(output_path)
         self._plot.clear()
         self._s21_status.setText("Computing S21...")
         self._set_log_messages(
@@ -408,6 +436,8 @@ class MainWindow(QMainWindow):
         self._set_log_messages(result.log_messages)
 
         output_path = self._s21_output.text().strip() if self._s21_output is not None else ""
+        if output_path:
+            output_path = _resolve_s21_output_path(output_path)
         if output_path:
             self._s21_status.setText(f"Computed {result.count} points, saved to {output_path}")
         else:
@@ -452,6 +482,150 @@ class MainWindow(QMainWindow):
             self._log_view.setPlainText(f"{current}\n{message}")
         else:
             self._log_view.setPlainText(message)
+
+    def show_about(self) -> None:
+        QMessageBox.information(
+            self,
+            "О программе",
+            (
+                "SMC_app\n"
+                f"Версия: {__version__}\n"
+                f"Репозиторий релизов: {REPO_SLUG}\n\n"
+                "Расчёт и визуализация сверхпроводящей интегральной структуры, SVG preview и S21 response."
+            ),
+        )
+
+    def check_updates(self) -> None:
+        if self._update_fetch_thread is not None:
+            QMessageBox.information(self, "Проверка обновлений", "Загрузка списка релизов уже выполняется.")
+            return
+
+        spinner = QtWidgets.QProgressDialog("Получение списка релизов...", "Отмена", 0, 0, self)
+        spinner.setWindowModality(Qt.WindowModality.ApplicationModal)
+        spinner.setAutoClose(True)
+        spinner.canceled.connect(self._on_update_fetch_timeout)
+        spinner.show()
+        self._update_spinner = spinner
+
+        timer = QtCore.QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(10_000)
+        timer.timeout.connect(self._on_update_fetch_timeout)
+        self._update_fetch_timer = timer
+
+        thread = QThread(self)
+        worker = FetchReleasesWorker(REPO_SLUG, limit=10)
+        worker.moveToThread(thread)
+        self._update_fetch_thread = thread
+        self._update_fetch_worker = worker
+
+        thread.started.connect(worker.run)
+        worker.status.connect(self._on_update_fetch_status)
+        worker.finished.connect(self._on_update_fetch_finished)
+        worker.error.connect(self._on_update_fetch_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.error.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+        timer.start()
+
+    @Slot(list)
+    def _on_update_fetch_finished(self, releases: list) -> None:
+        self._stop_update_timer()
+        self._cleanup_update_thread()
+        spinner = self._update_spinner
+        self._update_spinner = None
+        if spinner:
+            spinner.close()
+
+        dialog = ReleasePickerDialog(releases, parent=self, current_version=__version__)
+        if dialog.exec() != QtWidgets.QDialog.Accepted or not dialog.selected:
+            return
+
+        selected = dialog.selected
+        if not getattr(selected, "asset", None) or not selected.asset.download_url:
+            QMessageBox.information(self, "Нет файла", "В выбранном релизе нет файла для вашей системы.")
+            return
+        self._show_download_link(selected)
+
+    @Slot(str)
+    def _on_update_fetch_error(self, message: str) -> None:
+        self._stop_update_timer()
+        self._cleanup_update_thread()
+        if self._update_spinner:
+            self._update_spinner.close()
+        self._update_spinner = None
+        QMessageBox.critical(self, "Ошибка обновлений", f"Не удалось получить список релизов:\n{message}")
+
+    @Slot(str)
+    def _on_update_fetch_status(self, text: str) -> None:
+        if self._update_spinner:
+            self._update_spinner.setLabelText(text)
+
+    @Slot()
+    def _on_update_fetch_timeout(self) -> None:
+        self._stop_update_timer()
+        self._cleanup_update_thread()
+        if self._update_spinner:
+            self._update_spinner.close()
+        self._update_spinner = None
+        QMessageBox.critical(self, "Ошибка обновлений", "Таймаут: не удалось получить список релизов за 10 секунд.")
+
+    def _stop_update_timer(self) -> None:
+        if self._update_fetch_timer:
+            self._update_fetch_timer.stop()
+        self._update_fetch_timer = None
+
+    def _cleanup_update_thread(self) -> None:
+        thread = self._update_fetch_thread
+        if thread:
+            thread.requestInterruption()
+            thread.quit()
+        self._update_fetch_thread = None
+        self._update_fetch_worker = None
+
+    def _show_download_link(self, release) -> None:
+        url = release.asset.download_url
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Загрузка обновления")
+        dialog.resize(680, 220)
+        layout = QVBoxLayout(dialog)
+
+        info = QLabel(f"Релиз {release.tag}. Подходящий файл для вашей системы: {release.asset.name}")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        link = QLabel(f'<a href="{url}">{url}</a>')
+        link.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        link.setOpenExternalLinks(True)
+        link.setWordWrap(True)
+        layout.addWidget(link)
+
+        buttons = QHBoxLayout()
+        copy_button = QPushButton("Скопировать ссылку")
+        open_button = QPushButton("Открыть в браузере")
+        close_button = QPushButton("Закрыть")
+        buttons.addWidget(copy_button)
+        buttons.addWidget(open_button)
+        buttons.addStretch(1)
+        buttons.addWidget(close_button)
+        layout.addLayout(buttons)
+
+        copy_button.clicked.connect(lambda: QApplication.clipboard().setText(url))
+        open_button.clicked.connect(lambda: QDesktopServices.openUrl(QtCore.QUrl(url)))
+        close_button.clicked.connect(dialog.accept)
+        dialog.exec()
+
+    def closeEvent(self, event) -> None:
+        self._stop_update_timer()
+        self._cleanup_update_thread()
+        if self._s21_thread is not None:
+            self._s21_thread.requestInterruption()
+            self._s21_thread.quit()
+            self._s21_thread.wait(1000)
+        super().closeEvent(event)
 
 
 def run_app(use_case: GenerateStructureUseCase, s21_use_case: CalculateS21UseCase) -> None:

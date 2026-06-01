@@ -17,6 +17,8 @@ class IOService:
         """
         x_values, y_values = data
         output_path = Path(filename).expanduser()
+        if not output_path.is_absolute():
+            output_path = Path.home() / "Documents" / "SMC_app" / output_path
         if output_path.parent != Path("."):
             output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w") as file:
