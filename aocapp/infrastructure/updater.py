@@ -1,18 +1,21 @@
-"""GitHub release lookup and platform asset matching."""
+"""GitHub release lookup and platform asset matching using requests."""
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import re
 import shutil
 import subprocess
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
+from typing import Optional
 
+import requests
 from packaging.version import InvalidVersion, Version
+
+logger = logging.getLogger(__name__)
 
 
 class UpdateError(RuntimeError):
@@ -36,7 +39,9 @@ class UpdateError(RuntimeError):
         if self.status is not None:
             parts.append(f"HTTP: {self.status}")
         if self.body:
-            snippet = self.body[:800] + ("..." if len(self.body) > 800 else "")
+            snippet = self.body
+            if len(snippet) > 800:
+                snippet = snippet[:800] + "..."
             parts.append(f"Body: {snippet}")
         return "\n".join(parts)
 
@@ -61,7 +66,7 @@ def _request_headers() -> dict[str, str]:
     headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "SMC_app",
+        "User-Agent": "AOCapp_Updater",
     }
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if token:
@@ -70,30 +75,37 @@ def _request_headers() -> dict[str, str]:
 
 
 def _http_get_json(url: str) -> list[dict] | dict:
-    request = urllib.request.Request(url, headers=_request_headers())
+    logger.info(f"GET {url}")
+    headers = _request_headers()
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            raw = response.read().decode("utf-8")
-            return json.loads(raw)
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise UpdateError("GitHub API error", url=url, status=exc.code, body=body) from exc
-    except (urllib.error.URLError, TimeoutError) as exc:
+        resp = requests.get(url, headers=headers, timeout=(5, 10))
+        status = resp.status_code
+        logger.debug(f"Response status: {status}")
+        if status >= 400:
+            body = None
+            try:
+                j = resp.json()
+                body = j.get("message") if isinstance(j, dict) else str(j)
+            except Exception:
+                body = resp.text
+            raise UpdateError("GitHub API error", url=url, status=status, body=body)
+        return resp.json()
+    except (requests.RequestException, ValueError) as exc:
         try:
-            return _http_get_json_via_curl(url)
+            return _http_get_json_via_curl(url, headers=headers)
         except Exception as fallback_exc:
+            if isinstance(fallback_exc, UpdateError):
+                raise fallback_exc
             raise UpdateError("GitHub API connection error", url=url, body=str(exc)) from fallback_exc
-    except json.JSONDecodeError as exc:
-        raise UpdateError("GitHub API returned invalid JSON", url=url, body=str(exc)) from exc
 
 
-def _http_get_json_via_curl(url: str) -> list[dict] | dict:
+def _http_get_json_via_curl(url: str, headers: dict[str, str]) -> list[dict] | dict:
     if not shutil.which("curl"):
         raise UpdateError("curl not found for GitHub API fallback", url=url)
 
     cmd = ["curl", "-sSL", "--connect-timeout", "5", "--max-time", "10"]
-    for key, value in _request_headers().items():
-        cmd.extend(["-H", f"{key}: {value}"])
+    for k, v in (headers or {}).items():
+        cmd.extend(["-H", f"{k}: {v}"])
     cmd.extend(["-w", "\n%{http_code}\n", url])
 
     proc = subprocess.run(cmd, capture_output=True, text=True)

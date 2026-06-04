@@ -1,10 +1,79 @@
-"""Dialogs and worker for GitHub release selection."""
+"""Dialogs and worker for GitHub release selection and downloading."""
 
 from __future__ import annotations
 
+import os
+import tempfile
+import zipfile
+import time
+
+import requests
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from aocapp.infrastructure.updater import list_releases
+
+
+class DownloadReleaseWorker(QtCore.QObject):
+    finished = QtCore.Signal(str)  # Returns path to extracted source directory
+    error = QtCore.Signal(str)
+    progress = QtCore.Signal(int, int, float)  # downloaded, total, speed_mbps
+    status = QtCore.Signal(str)
+
+    def __init__(self, url: str) -> None:
+        super().__init__()
+        self._url = url
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        try:
+            self.status.emit("Скачивание обновления...")
+            resp = requests.get(self._url, stream=True, timeout=10)
+            resp.raise_for_status()
+            total = int(resp.headers.get("content-length", 0))
+
+            temp_dir = tempfile.mkdtemp(prefix="aocapp_update_")
+            zip_path = os.path.join(temp_dir, "update.zip")
+
+            downloaded = 0
+            start_time = time.time()
+            last_emit_time = start_time
+
+            with open(zip_path, "wb") as f:
+                # 128KB chunk for faster download
+                for chunk in resp.iter_content(chunk_size=131072):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        now = time.time()
+                        # Update progress every ~0.1s
+                        if (now - last_emit_time > 0.1) or (total > 0 and downloaded >= total):
+                            elapsed = now - start_time
+                            speed_mbps = (downloaded / 1024 / 1024) / elapsed if elapsed > 0 else 0
+                            self.progress.emit(downloaded, total, speed_mbps)
+                            last_emit_time = now
+
+            self.status.emit("Распаковка обновления...")
+            extract_dir = os.path.join(temp_dir, "extracted")
+            os.makedirs(extract_dir, exist_ok=True)
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(extract_dir)
+                # Restore permissions for executable files (specifically for macOS .app bundles)
+                for info in zf.infolist():
+                    extracted_path = os.path.join(extract_dir, info.filename)
+                    mode = info.external_attr >> 16
+                    if mode:
+                        os.chmod(extracted_path, mode)
+
+            # Find the root of the app in the extracted folder
+            items = os.listdir(extract_dir)
+            if len(items) == 1 and os.path.isdir(os.path.join(extract_dir, items[0])):
+                src_dir = os.path.join(extract_dir, items[0])
+            else:
+                src_dir = extract_dir
+
+            self.finished.emit(src_dir)
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class FetchReleasesWorker(QtCore.QObject):
@@ -82,7 +151,7 @@ class ReleasePickerDialog(QtWidgets.QDialog):
 
         if current_version:
             current_label = QtWidgets.QLabel(f"Текущая версия: {current_version}")
-            current_label.setStyleSheet("font-weight: bold;")
+            current_label.setStyleSheet("font-weight: bold; color: #d35400;")
             layout.addWidget(current_label)
 
         self.listw = QtWidgets.QListWidget()
@@ -101,9 +170,13 @@ class ReleasePickerDialog(QtWidgets.QDialog):
         info.setWordWrap(True)
         layout.addWidget(info)
 
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Cancel)
         self.detail_button = buttons.addButton("Подробнее", QtWidgets.QDialogButtonBox.ActionRole)
+        self.manual_button = buttons.addButton("Скачать вручную", QtWidgets.QDialogButtonBox.ActionRole)
+        self.auto_button = buttons.addButton("Обновить автоматически", QtWidgets.QDialogButtonBox.AcceptRole)
+
         self.detail_button.clicked.connect(self._open_detail)
+        self.manual_button.clicked.connect(self._on_manual)
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -136,7 +209,7 @@ class ReleasePickerDialog(QtWidgets.QDialog):
                 font = item.font()
                 font.setBold(True)
                 item.setFont(font)
-                current_row = self.listw.count()
+                current_row = self.listw.count() - 1
             item.setData(QtCore.Qt.UserRole, release)
             self.listw.addItem(item)
 
@@ -150,13 +223,25 @@ class ReleasePickerDialog(QtWidgets.QDialog):
         self.selected = item.data(QtCore.Qt.UserRole)
         self.accept()
 
+    def _on_manual(self) -> None:
+        item = self.listw.currentItem()
+        if not item or not (item.flags() & QtCore.Qt.ItemIsEnabled):
+            return
+        self.selected = item.data(QtCore.Qt.UserRole)
+        self.done(QtWidgets.QDialog.DialogCode.Accepted + 1)  # Custom return code for manual
+
     def _on_selection_changed(self, current, previous) -> None:
         release = current.data(QtCore.Qt.UserRole) if current else None
         if release is None:
             self.desc.setPlainText("")
             self.detail_button.setEnabled(False)
+            self.manual_button.setEnabled(False)
+            self.auto_button.setEnabled(False)
             return
-        self.detail_button.setEnabled(bool(current.flags() & QtCore.Qt.ItemIsEnabled))
+        has_asset = bool(current.flags() & QtCore.Qt.ItemIsEnabled)
+        self.detail_button.setEnabled(has_asset)
+        self.manual_button.setEnabled(has_asset)
+        self.auto_button.setEnabled(has_asset)
         self.desc.setPlainText(getattr(release, "body", "") or "Описание отсутствует.")
         self.desc.moveCursor(QtGui.QTextCursor.Start)
 

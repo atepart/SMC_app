@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 import traceback
 from pathlib import Path
@@ -40,7 +42,7 @@ from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
 from aocapp.application.version import REPO_SLUG, __version__
 from aocapp.domain.s21_models import S21Config
-from aocapp.ui.update_dialogs import FetchReleasesWorker, ReleasePickerDialog
+from aocapp.ui.update_dialogs import FetchReleasesWorker, ReleasePickerDialog, DownloadReleaseWorker
 
 
 def _resource_path(*parts: str) -> Path:
@@ -162,10 +164,15 @@ class MainWindow(QMainWindow):
         self._same_materials_checkbox: QCheckBox | None = None
         self._s21_thread: QThread | None = None
         self._s21_worker: S21Worker | None = None
+
         self._update_fetch_thread: QThread | None = None
         self._update_fetch_worker: FetchReleasesWorker | None = None
         self._update_fetch_timer: QtCore.QTimer | None = None
         self._update_spinner: QtWidgets.QProgressDialog | None = None
+
+        self._update_dl_thread: QThread | None = None
+        self._update_dl_worker: DownloadReleaseWorker | None = None
+
         self._defaults = S21Config()
 
         self._build_menu()
@@ -488,7 +495,7 @@ class MainWindow(QMainWindow):
             self,
             "О программе",
             (
-                "SMC_app\n"
+                "AOCapp\n"
                 f"Версия: {__version__}\n"
                 f"Репозиторий релизов: {REPO_SLUG}\n\n"
                 "Расчёт и визуализация сверхпроводящей интегральной структуры, SVG preview и S21 response."
@@ -541,14 +548,11 @@ class MainWindow(QMainWindow):
             spinner.close()
 
         dialog = ReleasePickerDialog(releases, parent=self, current_version=__version__)
-        if dialog.exec() != QtWidgets.QDialog.Accepted or not dialog.selected:
-            return
-
-        selected = dialog.selected
-        if not getattr(selected, "asset", None) or not selected.asset.download_url:
-            QMessageBox.information(self, "Нет файла", "В выбранном релизе нет файла для вашей системы.")
-            return
-        self._show_download_link(selected)
+        res = dialog.exec()
+        if res == QtWidgets.QDialog.Accepted:
+            self._start_auto_update(dialog.selected)
+        elif res == QtWidgets.QDialog.Accepted + 1:
+            self._show_download_link(dialog.selected)
 
     @Slot(str)
     def _on_update_fetch_error(self, message: str) -> None:
@@ -617,6 +621,119 @@ class MainWindow(QMainWindow):
         open_button.clicked.connect(lambda: QDesktopServices.openUrl(QtCore.QUrl(url)))
         close_button.clicked.connect(dialog.accept)
         dialog.exec()
+
+    def _start_auto_update(self, release):
+        if self._update_dl_thread is not None:
+            return
+
+        pd = QtWidgets.QProgressDialog("Загрузка обновления...", "Отмена", 0, 100, self)
+        pd.setWindowTitle("Обновление")
+        pd.setWindowModality(Qt.WindowModality.ApplicationModal)
+        pd.setAutoClose(False)
+        pd.show()
+        self._update_spinner = pd
+
+        thread = QThread(self)
+        worker = DownloadReleaseWorker(release.asset.download_url)
+        worker.moveToThread(thread)
+        self._update_dl_thread = thread
+        self._update_dl_worker = worker
+
+        thread.started.connect(worker.run)
+        worker.status.connect(pd.setLabelText)
+        worker.progress.connect(lambda d, t, s: self._on_update_dl_progress(d, t, s, pd))
+        worker.error.connect(self._on_update_dl_error)
+        worker.finished.connect(lambda src: self._on_update_dl_finished(src, release))
+        
+        worker.error.connect(thread.quit)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(worker.deleteLater)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_update_dl_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        
+        pd.canceled.connect(thread.requestInterruption)
+        thread.start()
+
+    def _on_update_dl_progress(self, downloaded, total, speed, pd):
+        if total > 0:
+            pd.setValue(int((downloaded / total) * 100))
+            mb = downloaded / 1024 / 1024
+            tot_mb = total / 1024 / 1024
+            pd.setLabelText(f"Загрузка: {mb:.1f} / {tot_mb:.1f} MB ({speed:.1f} MB/s)")
+        else:
+            mb = downloaded / 1024 / 1024
+            pd.setLabelText(f"Загрузка: {mb:.1f} MB ({speed:.1f} MB/s)")
+
+    def _on_update_dl_error(self, message):
+        if self._update_spinner:
+            self._update_spinner.close()
+        QMessageBox.critical(self, "Ошибка загрузки", f"Не удалось загрузить обновление:\n{message}")
+
+    def _on_update_dl_finished(self, src_dir, release):
+        if self._update_spinner:
+            self._update_spinner.close()
+
+        # Determine paths
+        if getattr(sys, "frozen", False):
+            # If running as a bundle (PyInstaller)
+            exe_path = sys.executable
+            install_dir = os.path.dirname(exe_path)
+            
+            if sys.platform == "darwin" and ".app/Contents/MacOS" in exe_path:
+                # For macOS .app bundles
+                app_bundle = exe_path.split(".app/Contents/MacOS")[0] + ".app"
+                dst_dir = app_bundle
+                updater_exe = os.path.join(os.path.dirname(exe_path), "updater")
+            else:
+                # Windows/Linux onedir
+                dst_dir = install_dir
+                updater_exe = os.path.join(install_dir, "updater.exe" if sys.platform == "win32" else "updater")
+
+            if os.path.exists(updater_exe):
+                cmd = [
+                    updater_exe,
+                    "--pid", str(os.getpid()),
+                    "--src", src_dir,
+                    "--dst", dst_dir,
+                    "--exe", exe_path
+                ]
+            else:
+                # Fallback to script if binary not found for some reason
+                updater_script = _resource_path("updater.py")
+                cmd = [
+                    sys.executable,
+                    str(updater_script),
+                    "--pid", str(os.getpid()),
+                    "--src", src_dir,
+                    "--dst", dst_dir,
+                    "--exe", exe_path
+                ]
+        else:
+            # If running from source (development)
+            dst_dir = str(Path(__file__).parents[2])
+            exe_path = sys.executable
+            updater_script = Path(__file__).parents[2] / "updater.py"
+            
+            cmd = [
+                sys.executable,
+                str(updater_script),
+                "--pid", str(os.getpid()),
+                "--src", src_dir,
+                "--dst", dst_dir,
+                "--exe", exe_path
+            ]
+
+        try:
+            subprocess.Popen(cmd)
+            QApplication.quit()
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка запуска обновления", f"Не удалось запустить updater:\n{str(e)}")
+
+    def _on_update_dl_thread_finished(self):
+        self._update_dl_thread = None
+        self._update_dl_worker = None
+        self._update_spinner = None
 
     def closeEvent(self, event) -> None:
         self._stop_update_timer()
