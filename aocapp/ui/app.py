@@ -510,37 +510,40 @@ class MainWindow(QMainWindow):
         spinner = QtWidgets.QProgressDialog("Получение списка релизов...", "Отмена", 0, 0, self)
         spinner.setWindowModality(Qt.WindowModality.ApplicationModal)
         spinner.setAutoClose(True)
-        spinner.canceled.connect(self._on_update_fetch_timeout)
         spinner.show()
         self._update_spinner = spinner
 
-        timer = QtCore.QTimer(self)
-        timer.setSingleShot(True)
-        timer.setInterval(10_000)
-        timer.timeout.connect(self._on_update_fetch_timeout)
-        self._update_fetch_timer = timer
-
-        thread = QThread(self)
-        worker = FetchReleasesWorker(REPO_SLUG, limit=10)
-        worker.moveToThread(thread)
-        self._update_fetch_thread = thread
+        worker = FetchReleasesWorker(REPO_SLUG, limit=10, parent=self)
+        self._update_fetch_thread = worker
         self._update_fetch_worker = worker
 
-        thread.started.connect(worker.run)
-        worker.status.connect(self._on_update_fetch_status)
-        worker.finished.connect(self._on_update_fetch_finished)
-        worker.error.connect(self._on_update_fetch_error)
-        worker.finished.connect(thread.quit)
-        worker.error.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        worker.error.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.start()
-        timer.start()
+        conn = Qt.ConnectionType.QueuedConnection
+        worker.status.connect(self._on_update_fetch_status, conn)
+        worker.finished_fetch.connect(self._on_update_fetch_finished, conn)
+        worker.error.connect(self._on_update_fetch_error, conn)
+        
+        worker.finished_fetch.connect(worker.deleteLater, conn)
+        worker.error.connect(worker.deleteLater, conn)
+        
+        spinner.canceled.connect(self._cancel_update_fetch, conn)
+        
+        worker.start()
+
+    @Slot()
+    def _cancel_update_fetch(self) -> None:
+        thread = self._update_fetch_thread
+        if thread:
+            thread.requestInterruption()
+            thread.terminate()  # Forcefully terminate if blocked
+            thread.wait(100)
+        self._update_fetch_thread = None
+        self._update_fetch_worker = None
+        if self._update_spinner:
+            self._update_spinner.close()
+            self._update_spinner = None
 
     @Slot(list)
     def _on_update_fetch_finished(self, releases: list) -> None:
-        self._stop_update_timer()
         self._cleanup_update_thread()
         spinner = self._update_spinner
         self._update_spinner = None
@@ -556,7 +559,6 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _on_update_fetch_error(self, message: str) -> None:
-        self._stop_update_timer()
         self._cleanup_update_thread()
         if self._update_spinner:
             self._update_spinner.close()
@@ -568,25 +570,12 @@ class MainWindow(QMainWindow):
         if self._update_spinner:
             self._update_spinner.setLabelText(text)
 
-    @Slot()
-    def _on_update_fetch_timeout(self) -> None:
-        self._stop_update_timer()
-        self._cleanup_update_thread()
-        if self._update_spinner:
-            self._update_spinner.close()
-        self._update_spinner = None
-        QMessageBox.critical(self, "Ошибка обновлений", "Таймаут: не удалось получить список релизов за 10 секунд.")
-
-    def _stop_update_timer(self) -> None:
-        if self._update_fetch_timer:
-            self._update_fetch_timer.stop()
-        self._update_fetch_timer = None
-
     def _cleanup_update_thread(self) -> None:
         thread = self._update_fetch_thread
         if thread:
             thread.requestInterruption()
             thread.quit()
+            thread.wait(2000)
         self._update_fetch_thread = None
         self._update_fetch_worker = None
 
@@ -633,27 +622,34 @@ class MainWindow(QMainWindow):
         pd.show()
         self._update_spinner = pd
 
-        thread = QThread(self)
-        worker = DownloadReleaseWorker(release.asset.download_url)
-        worker.moveToThread(thread)
-        self._update_dl_thread = thread
+        worker = DownloadReleaseWorker(release.asset.download_url, parent=self)
+        self._update_dl_thread = worker
         self._update_dl_worker = worker
 
-        thread.started.connect(worker.run)
         worker.status.connect(pd.setLabelText)
         worker.progress.connect(lambda d, t, s: self._on_update_dl_progress(d, t, s, pd))
         worker.error.connect(self._on_update_dl_error)
-        worker.finished.connect(lambda src: self._on_update_dl_finished(src, release))
+        worker.finished_download.connect(lambda src: self._on_update_dl_finished(src, release))
         
-        worker.error.connect(thread.quit)
-        worker.finished.connect(thread.quit)
         worker.error.connect(worker.deleteLater)
-        worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self._on_update_dl_thread_finished)
-        thread.finished.connect(thread.deleteLater)
+        worker.finished_download.connect(worker.deleteLater)
+        worker.finished.connect(self._on_update_dl_thread_finished)
         
-        pd.canceled.connect(thread.requestInterruption)
-        thread.start()
+        pd.canceled.connect(self._cancel_update_dl)
+        worker.start()
+
+    @Slot()
+    def _cancel_update_dl(self) -> None:
+        thread = self._update_dl_thread
+        if thread:
+            thread.requestInterruption()
+            thread.terminate()  # Forcefully terminate if blocked
+            thread.wait(100)
+        self._update_dl_thread = None
+        self._update_dl_worker = None
+        if self._update_spinner:
+            self._update_spinner.close()
+            self._update_spinner = None
 
     def _on_update_dl_progress(self, downloaded, total, speed, pd):
         if total > 0:
@@ -736,7 +732,6 @@ class MainWindow(QMainWindow):
         self._update_spinner = None
 
     def closeEvent(self, event) -> None:
-        self._stop_update_timer()
         self._cleanup_update_thread()
         if self._s21_thread is not None:
             self._s21_thread.requestInterruption()

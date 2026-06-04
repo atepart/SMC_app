@@ -13,17 +13,16 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from aocapp.infrastructure.updater import list_releases
 
 
-class DownloadReleaseWorker(QtCore.QObject):
-    finished = QtCore.Signal(str)  # Returns path to extracted source directory
+class DownloadReleaseWorker(QtCore.QThread):
+    finished_download = QtCore.Signal(str)  # Returns path to extracted source directory
     error = QtCore.Signal(str)
     progress = QtCore.Signal(int, int, float)  # downloaded, total, speed_mbps
     status = QtCore.Signal(str)
 
-    def __init__(self, url: str) -> None:
-        super().__init__()
+    def __init__(self, url: str, parent=None) -> None:
+        super().__init__(parent)
         self._url = url
 
-    @QtCore.Slot()
     def run(self) -> None:
         try:
             self.status.emit("Скачивание обновления...")
@@ -41,6 +40,9 @@ class DownloadReleaseWorker(QtCore.QObject):
             with open(zip_path, "wb") as f:
                 # 128KB chunk for faster download
                 for chunk in resp.iter_content(chunk_size=131072):
+                    if self.isInterruptionRequested():
+                        self.error.emit("Загрузка отменена")
+                        return
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
@@ -71,26 +73,27 @@ class DownloadReleaseWorker(QtCore.QObject):
             else:
                 src_dir = extract_dir
 
-            self.finished.emit(src_dir)
+            self.finished_download.emit(src_dir)
         except Exception as e:
             self.error.emit(str(e))
 
 
-class FetchReleasesWorker(QtCore.QObject):
-    finished = QtCore.Signal(list)
+class FetchReleasesWorker(QtCore.QThread):
+    finished_fetch = QtCore.Signal(list)
     error = QtCore.Signal(str)
     status = QtCore.Signal(str)
 
-    def __init__(self, repo_slug: str, limit: int = 10) -> None:
-        super().__init__()
+    def __init__(self, repo_slug: str, limit: int = 10, parent=None) -> None:
+        super().__init__(parent)
         self._repo_slug = repo_slug
         self._limit = limit
 
-    @QtCore.Slot()
     def run(self) -> None:
         try:
             self.status.emit("Подключение к GitHub API...")
             releases = list_releases(self._repo_slug, self._limit)
+            if self.isInterruptionRequested():
+                return
             if not releases:
                 self.error.emit("Не удалось получить список релизов")
                 return
@@ -98,9 +101,10 @@ class FetchReleasesWorker(QtCore.QObject):
                 1 for release in releases if getattr(release, "asset", None) and release.asset.download_url
             )
             self.status.emit(f"Получено релизов: {len(releases)}; для вашей системы: {available}")
-            self.finished.emit(releases)
+            self.finished_fetch.emit(releases)
         except Exception as exc:
-            self.error.emit(str(exc))
+            if not self.isInterruptionRequested():
+                self.error.emit(str(exc))
 
 
 class ReleaseDetailDialog(QtWidgets.QDialog):
