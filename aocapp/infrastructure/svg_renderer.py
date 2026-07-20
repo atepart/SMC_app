@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from aocapp.domain.models import Point, PolygonShape, StructureGeometry, TextLabel
+from aocapp.domain.models import GroupBoxShape, Point, PolygonShape, StructureGeometry, TextLabel
 from aocapp.domain.ports import SvgRenderer
 
 
@@ -25,6 +25,7 @@ class SvgRendererImpl(SvgRenderer):
         circles = "\n".join(self._render_circle(circle) for circle in geometry.circles)
         lines = "\n".join(self._render_line(line) for line in geometry.lines)
         labels = "\n".join(self._render_label(label) for label in geometry.labels)
+        groups = "\n".join(self._render_group(group) for group in geometry.groups)
 
         svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}" width="100%" height="100%">
   <defs>
@@ -36,6 +37,9 @@ class SvgRendererImpl(SvgRenderer):
     </pattern>
   </defs>
   <rect x="{bounds.x:g}" y="{bounds.y:g}" width="{bounds.width:g}" height="{bounds.height:g}" fill="{self.background}" />
+  <g>
+    {groups}
+  </g>
   <g>
     {polygons}
     {rects}
@@ -50,6 +54,29 @@ class SvgRendererImpl(SvgRenderer):
   </g>
 </svg>"""
         return svg
+
+    def _render_group(self, group: GroupBoxShape) -> str:
+        """Render a matrix boundary behind the electrical structure.
+
+        The dotted frames mirror the decomposition used by
+        :class:`S21CalculatorImpl`: each frame is a visual ABCD sub-network,
+        not an additional physical conductor.
+        """
+        rect = group.rect
+        title = self._escape(group.title)
+        transform = (
+            f' transform="rotate({group.title_rotation_deg:g} '
+            f'{group.title_position.x:g} {group.title_position.y:g})"'
+            if group.title_rotation_deg
+            else ""
+        )
+        return (
+            f'<rect x="{rect.x:g}" y="{rect.y:g}" width="{rect.width:g}" height="{rect.height:g}" '
+            f'fill="none" stroke="{group.stroke}" stroke-width="{group.stroke_width:g}" '
+            f'stroke-dasharray="{group.dash_array}" />\n'
+            f'<text x="{group.title_position.x:g}" y="{group.title_position.y:g}" font-size="11" '
+            f'text-anchor="middle" font-weight="bold" fill="#111827"{transform}>{title}</text>'
+        )
 
     def _render_polygon(self, polygon: PolygonShape) -> str:
         points = " ".join(f"{point.x:g},{point.y:g}" for point in polygon.points)

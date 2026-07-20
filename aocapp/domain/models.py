@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, List
 
 
@@ -55,6 +55,19 @@ class RectShape:
 
 
 @dataclass(frozen=True)
+class GroupBoxShape:
+    """Dotted frame that relates visible geometry to one ABCD matrix group."""
+
+    rect: Rect
+    title: str
+    title_position: Point
+    title_rotation_deg: float = -90.0
+    stroke: str = "#6b7280"
+    stroke_width: float = 0.7
+    dash_array: str = "2 2"
+
+
+@dataclass(frozen=True)
 class CircleShape:
     center: Point
     radius: float
@@ -90,6 +103,7 @@ class StructureGeometry:
     labels: List[TextLabel]
     dimensions: List[DimensionLine]
     bounds: Rect
+    groups: List[GroupBoxShape] = field(default_factory=list)
 
 
 def bounds_from_points(points: Iterable[Point]) -> Rect:
