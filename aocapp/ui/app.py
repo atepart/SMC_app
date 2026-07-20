@@ -44,6 +44,7 @@ from aocapp.application.use_cases import GenerateStructureUseCase
 from aocapp.application.version import REPO_SLUG, __version__
 from aocapp.domain.s21_models import S21Config
 from aocapp.infrastructure.design_files import DesignFileService
+from aocapp.infrastructure.trace_files import ComparisonTrace, TraceFileReader
 from aocapp.ui.update_dialogs import DownloadReleaseWorker, FetchReleasesWorker, ReleasePickerDialog
 
 CURRENT_DOCK_LAYOUT_VERSION = 1
@@ -245,6 +246,9 @@ class MainWindow(QMainWindow):
 
         self._defaults = S21Config()
         self._design_files = DesignFileService()
+        self._trace_reader = TraceFileReader()
+        self._comparison_traces: dict[str, ComparisonTrace] = {}
+        self._theory_trace: tuple[object, object] | None = None
 
         self._build_menu()
         self._configure_plot()
@@ -462,6 +466,22 @@ class MainWindow(QMainWindow):
         toolbar.setObjectName("workspace_toolbar")
         self.addToolBar(toolbar)
 
+        self.open_files_menu = QtWidgets.QMenu("Открыть файл", self)
+        design_action = self.open_files_menu.addAction("Дизайн")
+        design_action.triggered.connect(self._load_design_dialog)
+        hfss_action = self.open_files_menu.addAction("HFSS")
+        hfss_action.triggered.connect(lambda: self._open_trace_dialog("HFSS"))
+        experiment_action = self.open_files_menu.addAction("Experiment")
+        experiment_action.triggered.connect(lambda: self._open_trace_dialog("Experiment"))
+
+        open_files_button = QtWidgets.QToolButton(self)
+        open_files_button.setObjectName("open_files_button")
+        open_files_button.setText("Открыть файл")
+        open_files_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        open_files_button.setMenu(self.open_files_menu)
+        toolbar.addWidget(open_files_button)
+        toolbar.addSeparator()
+
         restore_action = QAction("Восстановить виджеты", self)
         restore_action.setToolTip("Вернуть стандартное расположение панелей")
         restore_action.triggered.connect(self.restore_default_layout)
@@ -592,6 +612,33 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Ошибка открытия дизайна", str(exc))
 
+    def _open_trace_dialog(self, kind: str) -> None:
+        """Select and add one HFSS or experiment comparison table."""
+        selected, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            f"Открыть {kind}",
+            self._last_files_directory(),
+            "Двухколоночный текст (*.txt *.dat *.tab);;Все файлы (*)",
+        )
+        if not selected:
+            return
+        try:
+            self.load_comparison_trace(kind, selected)
+        except (OSError, UnicodeError, ValueError) as exc:
+            QMessageBox.critical(self, f"Ошибка импорта {kind}", str(exc))
+
+    def load_comparison_trace(self, kind: str, path: str | Path) -> ComparisonTrace:
+        """Load a plot-only trace; it never changes calculation parameters."""
+        if kind not in {"HFSS", "Experiment"}:
+            raise ValueError(f"Неизвестный тип сравнительного графика: {kind}.")
+        trace = self._trace_reader.load(path)
+        self._comparison_traces[kind] = trace
+        self._remember_file_directory(path)
+        self._redraw_plot()
+        if self._s21_status is not None:
+            self._s21_status.setText(f"{kind}: загружено {len(trace.frequencies)} точек из {trace.source}")
+        return trace
+
     def save_design_to_path(self, path: str | Path) -> Path:
         """Validate and persist the current configuration for UI and tests."""
         config = self._build_config()
@@ -678,6 +725,7 @@ class MainWindow(QMainWindow):
         self._plot.setLabel("bottom", "Frequency", units="GHz")
         self._plot.showGrid(x=True, y=True, alpha=0.10)
         self._plot.setMenuEnabled(False)
+        self._plot_legend = self._plot.addLegend(offset=(10, 10))
         self._plot.getPlotItem().setContentsMargins(12, 12, 12, 12)
         axis_pen = pg.mkPen("#7f7f7f", width=1)
         for axis_name in ("left", "bottom"):
@@ -742,6 +790,8 @@ class MainWindow(QMainWindow):
             output_path = _resolve_s21_output_path(output_path)
             self._s21_output.setText(output_path)
         self._plot.clear()
+        self._theory_trace = None
+        self._redraw_plot()
         self._s21_status.setText("Computing S21...")
         self._set_log_messages(
             [
@@ -803,11 +853,42 @@ class MainWindow(QMainWindow):
             self._run_s21_button.setEnabled(True)
 
     def _update_s21_plot(self, frequencies, s21_db) -> None:
+        """Store theory separately so imported traces survive recalculation."""
+        self._theory_trace = (frequencies, s21_db)
+        self._redraw_plot()
+
+    def _redraw_plot(self) -> None:
+        """Render theory and all optional comparisons with a shared legend."""
         self._plot.clear()
-        pen = pg.mkPen(color="#1f77b4", width=2)
-        self._plot.plot(
-            frequencies, s21_db, pen=pen, symbol="o", symbolSize=4, symbolBrush="#ff7f0e", symbolPen="#1f77b4"
-        )
+        if self._theory_trace is not None:
+            frequencies, s21_db = self._theory_trace
+            pen = pg.mkPen(color="#1f77b4", width=2)
+            self._plot.plot(
+                frequencies,
+                s21_db,
+                pen=pen,
+                symbol="o",
+                symbolSize=4,
+                symbolBrush="#1f77b4",
+                symbolPen="#1f77b4",
+                name="Theory",
+            )
+
+        styles = {
+            "HFSS": ("#d62728", Qt.PenStyle.DashLine),
+            "Experiment": ("#2ca02c", Qt.PenStyle.DotLine),
+        }
+        for kind in ("HFSS", "Experiment"):
+            trace = self._comparison_traces.get(kind)
+            if trace is None:
+                continue
+            color, style = styles[kind]
+            self._plot.plot(
+                trace.frequencies,
+                trace.coefficients,
+                pen=pg.mkPen(color=color, width=2, style=style),
+                name=kind,
+            )
 
     def _set_log_messages(self, messages: list[str]) -> None:
         if self._log_view is None:

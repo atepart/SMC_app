@@ -91,3 +91,24 @@ def test_greek_labels_fixed_orders_and_design_round_trip(parameter_window: MainW
     assert parameter_window._config_inputs["tc_bot_k"].value() == pytest.approx(8.7)
     assert parameter_window._config_inputs["block_center_length_um"].value() == pytest.approx(42.5)
     assert not parameter_window._same_materials_checkbox.isChecked()
+
+
+def test_open_file_menu_imports_both_comparison_traces(parameter_window: MainWindow, tmp_path) -> None:
+    assert [action.text() for action in parameter_window.open_files_menu.actions()] == [
+        "Дизайн",
+        "HFSS",
+        "Experiment",
+    ]
+    hfss = tmp_path / "hfss.txt"
+    experiment = tmp_path / "experiment.txt"
+    hfss.write_text("100 -12\n110 -9\n", encoding="utf-8")
+    experiment.write_text("100 -13\n110 -10\n", encoding="utf-8")
+
+    parameter_window.load_comparison_trace("HFSS", hfss)
+    parameter_window.load_comparison_trace("Experiment", experiment)
+    parameter_window._update_s21_plot([100.0, 110.0], [-11.5, -9.5])
+
+    assert set(parameter_window._comparison_traces) == {"HFSS", "Experiment"}
+    assert len(parameter_window._plot.listDataItems()) == 3
+    legend_labels = {label.text for _, label in parameter_window._plot_legend.items}
+    assert legend_labels == {"Theory", "HFSS", "Experiment"}
