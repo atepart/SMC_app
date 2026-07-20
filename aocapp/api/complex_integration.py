@@ -13,6 +13,7 @@ QUAD_LIMIT = 400
 
 class ComplexIntegrator:
     """Numerical integration helpers for complex-valued functions."""
+
     def real_integral(
         self,
         func: Callable,
@@ -22,6 +23,7 @@ class ComplexIntegrator:
         **kwargs,
     ) -> float:
         """Integrate the real part of a complex function on [start, end]."""
+
         def real_f(x: float, args: Tuple = ()) -> float:
             return real(func(x, *args))
 
@@ -46,6 +48,7 @@ class ComplexIntegrator:
         **kwargs,
     ) -> float:
         """Integrate the imaginary part of a complex function on [start, end]."""
+
         def imag_f(x: float, args: Tuple = ()) -> float:
             return imag(func(x, *args))
 

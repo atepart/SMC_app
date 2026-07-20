@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from numpy import abs as np_abs
-from numpy import array, cos, cosh, exp, log, pi, sin, sinh, sqrt, tanh
+from numpy import abs as np_abs, array, cos, cosh, exp, log, pi, sin, sinh, sqrt, tanh
 from scipy.integrate import quad
 
 from .complex_integration import ComplexIntegrator
@@ -20,6 +19,7 @@ MU0 = 4.0 * pi * 1e-7
 @dataclass
 class DCBlockCalculator:
     """DC block calculator for slot antenna structures."""
+
     integrator: ComplexIntegrator
     microstrip: MicrostripLineCalculator
 
@@ -131,8 +131,11 @@ class DCBlockCalculator:
         f2 = lambda z: exp(-1j * gamma_dcb * sqrt(base_distance_m**2 + (length_m + z) ** 2)) / sqrt(
             base_distance_m**2 + (length_m + z) ** 2
         )
-        f3 = lambda z: 2.0 * cos(gamma_dcb * length_m) * exp(-1j * gamma_dcb * sqrt(base_distance_m**2 + z * z)) / sqrt(
-            base_distance_m**2 + z * z
+        f3 = (
+            lambda z: 2.0
+            * cos(gamma_dcb * length_m)
+            * exp(-1j * gamma_dcb * sqrt(base_distance_m**2 + z * z))
+            / sqrt(base_distance_m**2 + z * z)
         )
 
         zdm = 1j * 30.0 / sqrt(e_eff)
@@ -163,14 +166,19 @@ class DCBlockCalculator:
             phase: Mutual coupling phase (+/- 1).
         """
         e_eff = 0.5 + dielectric_constant / 2.0
-        return (120.0 * pi) ** 2 / e_eff / 4.0 / self.dipole_impedance(
-            frequency_ghz,
-            width_m,
-            length_m,
-            length_offset_m,
-            dielectric_constant,
-            base_distance_m,
-            phase=phase,
+        return (
+            (120.0 * pi) ** 2
+            / e_eff
+            / 4.0
+            / self.dipole_impedance(
+                frequency_ghz,
+                width_m,
+                length_m,
+                length_offset_m,
+                dielectric_constant,
+                base_distance_m,
+                phase=phase,
+            )
         )
 
     def matrix(
@@ -245,7 +253,14 @@ class DCBlockCalculator:
 
         slot_span = slot_width_m + 2.0 * base_distance
         z_sl, g_sl = self.slot_line(frequency_ghz, slot_width_m, slot_span, substrate_dielectric, substrate_thickness_m)
-        matrices.append(array([[cosh(g_sl * slot_width_m), z_sl * sinh(g_sl * slot_width_m)], [1.0 / z_sl * sinh(g_sl * slot_width_m), cosh(g_sl * slot_width_m)]]))
+        matrices.append(
+            array(
+                [
+                    [cosh(g_sl * slot_width_m), z_sl * sinh(g_sl * slot_width_m)],
+                    [1.0 / z_sl * sinh(g_sl * slot_width_m), cosh(g_sl * slot_width_m)],
+                ]
+            )
+        )
 
         matrices.append(array([[1.0, 0.0], [1.0 / z_sa, 1.0]]))
         matrices.append(array([[1.0, z_ms], [0.0, 1.0]]))

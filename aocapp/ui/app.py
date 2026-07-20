@@ -9,8 +9,9 @@ import traceback
 from pathlib import Path
 from typing import Dict
 
+import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
-from PySide6.QtCore import QByteArray, QObject, QThread, Qt, Signal, Slot
+from PySide6.QtCore import QByteArray, QObject, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPainter, QWheelEvent
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtSvgWidgets import QGraphicsSvgItem
@@ -31,18 +32,16 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QStyle,
     QVBoxLayout,
     QWidget,
-    QStyle,
 )
-
-import pyqtgraph as pg
 
 from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
 from aocapp.application.version import REPO_SLUG, __version__
 from aocapp.domain.s21_models import S21Config
-from aocapp.ui.update_dialogs import FetchReleasesWorker, ReleasePickerDialog, DownloadReleaseWorker
+from aocapp.ui.update_dialogs import DownloadReleaseWorker, FetchReleasesWorker, ReleasePickerDialog
 
 
 def _resource_path(*parts: str) -> Path:
@@ -474,7 +473,9 @@ class MainWindow(QMainWindow):
     def _update_s21_plot(self, frequencies, s21_db) -> None:
         self._plot.clear()
         pen = pg.mkPen(color="#1f77b4", width=2)
-        self._plot.plot(frequencies, s21_db, pen=pen, symbol="o", symbolSize=4, symbolBrush="#ff7f0e", symbolPen="#1f77b4")
+        self._plot.plot(
+            frequencies, s21_db, pen=pen, symbol="o", symbolSize=4, symbolBrush="#ff7f0e", symbolPen="#1f77b4"
+        )
 
     def _set_log_messages(self, messages: list[str]) -> None:
         if self._log_view is None:
@@ -521,12 +522,12 @@ class MainWindow(QMainWindow):
         worker.status.connect(self._on_update_fetch_status, conn)
         worker.finished_fetch.connect(self._on_update_fetch_finished, conn)
         worker.error.connect(self._on_update_fetch_error, conn)
-        
+
         worker.finished_fetch.connect(worker.deleteLater, conn)
         worker.error.connect(worker.deleteLater, conn)
-        
+
         spinner.canceled.connect(self._cancel_update_fetch, conn)
-        
+
         worker.start()
 
     @Slot()
@@ -630,11 +631,11 @@ class MainWindow(QMainWindow):
         worker.progress.connect(lambda d, t, s: self._on_update_dl_progress(d, t, s, pd))
         worker.error.connect(self._on_update_dl_error)
         worker.finished_download.connect(lambda src: self._on_update_dl_finished(src, release))
-        
+
         worker.error.connect(worker.deleteLater)
         worker.finished_download.connect(worker.deleteLater)
         worker.finished.connect(self._on_update_dl_thread_finished)
-        
+
         pd.canceled.connect(self._cancel_update_dl)
         worker.start()
 
@@ -675,7 +676,7 @@ class MainWindow(QMainWindow):
             # If running as a bundle (PyInstaller)
             exe_path = sys.executable
             install_dir = os.path.dirname(exe_path)
-            
+
             if sys.platform == "darwin" and ".app/Contents/MacOS" in exe_path:
                 # For macOS .app bundles
                 app_bundle = exe_path.split(".app/Contents/MacOS")[0] + ".app"
@@ -687,37 +688,39 @@ class MainWindow(QMainWindow):
                 updater_exe = os.path.join(install_dir, "updater.exe" if sys.platform == "win32" else "updater")
 
             if os.path.exists(updater_exe):
-                cmd = [
-                    updater_exe,
-                    "--pid", str(os.getpid()),
-                    "--src", src_dir,
-                    "--dst", dst_dir,
-                    "--exe", exe_path
-                ]
+                cmd = [updater_exe, "--pid", str(os.getpid()), "--src", src_dir, "--dst", dst_dir, "--exe", exe_path]
             else:
                 # Fallback to script if binary not found for some reason
                 updater_script = _resource_path("updater.py")
                 cmd = [
                     sys.executable,
                     str(updater_script),
-                    "--pid", str(os.getpid()),
-                    "--src", src_dir,
-                    "--dst", dst_dir,
-                    "--exe", exe_path
+                    "--pid",
+                    str(os.getpid()),
+                    "--src",
+                    src_dir,
+                    "--dst",
+                    dst_dir,
+                    "--exe",
+                    exe_path,
                 ]
         else:
             # If running from source (development)
             dst_dir = str(Path(__file__).parents[2])
             exe_path = sys.executable
             updater_script = Path(__file__).parents[2] / "updater.py"
-            
+
             cmd = [
                 sys.executable,
                 str(updater_script),
-                "--pid", str(os.getpid()),
-                "--src", src_dir,
-                "--dst", dst_dir,
-                "--exe", exe_path
+                "--pid",
+                str(os.getpid()),
+                "--src",
+                src_dir,
+                "--dst",
+                dst_dir,
+                "--exe",
+                exe_path,
             ]
 
         try:

@@ -15,6 +15,7 @@ MU0 = 4.0 * pi * 1e-7
 @dataclass
 class SISJunctionCalculator:
     """Impedance calculator for SIS junctions."""
+
     impedance: ImpedanceCalculator
 
     def impedance_sis(
@@ -48,8 +49,10 @@ class SISJunctionCalculator:
 
         lambda_f_top = imag(self.impedance.film_impedance(frequency_ghz, top_film, top_thickness_m))
         lambda_f_bot = imag(self.impedance.film_impedance(frequency_ghz, bot_film, bot_thickness_m))
-        l_sis = (lambda_f_top + lambda_f_bot + 2.0 * pi * frequency_ghz * 1e9 * MU0 * insulator_thickness_m / 2.0) * 0.5 * log(
-            width_um * width_um / area_um2
+        l_sis = (
+            (lambda_f_top + lambda_f_bot + 2.0 * pi * frequency_ghz * 1e9 * MU0 * insulator_thickness_m / 2.0)
+            * 0.5
+            * log(width_um * width_um / area_um2)
         )
 
         return 1j * l_sis + z0

@@ -119,7 +119,9 @@ class IntegratedStructureCalculator(StructureCalculator):
             ),
         ]
 
-        label = TextLabel(Point(x + body_width / 2.0, top - 42.0), title, font_size=10.0, anchor="middle", font_weight="bold")
+        label = TextLabel(
+            Point(x + body_width / 2.0, top - 42.0), title, font_size=10.0, anchor="middle", font_weight="bold"
+        )
         return {
             "polygons": [PolygonShape(body_points, fill="#b7dff0")],
             "rects": [RectShape(arm_rect, fill="#b7dff0")],
@@ -231,7 +233,10 @@ class IntegratedStructureCalculator(StructureCalculator):
         angle = config.radial_angle_deg
         output_width = config.msl_8_width_m * 1e6
         output_len = config.msl_8_len_m * 1e6
-        taper_len = self._transformer_length_um(config.transf_7_w_start_m, config.transf_7_w_end_m, config.transf_7_dwdl_um) + 10.0
+        taper_len = (
+            self._transformer_length_um(config.transf_7_w_start_m, config.transf_7_w_end_m, config.transf_7_dwdl_um)
+            + 10.0
+        )
 
         main_line = Rect(x, center_y - line_width / 2.0, pre_stub_len + 46.0, line_width)
         stub_center = Point(x + pre_stub_len, center_y)
@@ -242,8 +247,20 @@ class IntegratedStructureCalculator(StructureCalculator):
         output_line = Rect(connector.right + taper_len, center_y - output_width / 2.0, output_len, output_width)
 
         labels = [
-            TextLabel(Point(stub_center.x, center_y - r_max - 18.0), "Radial stub", font_size=10.0, anchor="middle", font_weight="bold"),
-            TextLabel(Point(output_line.x + output_line.width / 2.0, center_y - output_width / 2.0 - 20.0), "50 um line", font_size=9.0, anchor="middle", font_weight="bold"),
+            TextLabel(
+                Point(stub_center.x, center_y - r_max - 18.0),
+                "Radial stub",
+                font_size=10.0,
+                anchor="middle",
+                font_weight="bold",
+            ),
+            TextLabel(
+                Point(output_line.x + output_line.width / 2.0, center_y - output_width / 2.0 - 20.0),
+                "50 um line",
+                font_size=9.0,
+                anchor="middle",
+                font_weight="bold",
+            ),
         ]
 
         dimensions = [
@@ -331,7 +348,9 @@ class IntegratedStructureCalculator(StructureCalculator):
         for dimension in module["dimensions"]:
             bounds_points.extend([dimension.start, dimension.end, dimension.label_pos])
 
-    def _fan_lobe_points(self, center: Point, r_min: float, r_max: float, angle_deg: float, upward: bool) -> list[Point]:
+    def _fan_lobe_points(
+        self, center: Point, r_min: float, r_max: float, angle_deg: float, upward: bool
+    ) -> list[Point]:
         center_angle = -90.0 if upward else 90.0
         start = center_angle - angle_deg / 2.0
         stop = center_angle + angle_deg / 2.0
@@ -355,7 +374,9 @@ class IntegratedStructureCalculator(StructureCalculator):
         delta_w_um = abs(w_end_m - w_start_m) * 1e6
         return max(2.0, delta_w_um / max(slope_um, 1e-6))
 
-    def _transformer_polygon(self, x: float, center_y: float, w_start: float, w_end: float, length: float) -> list[Point]:
+    def _transformer_polygon(
+        self, x: float, center_y: float, w_start: float, w_end: float, length: float
+    ) -> list[Point]:
         return [
             Point(x, center_y - w_start / 2.0),
             Point(x + length, center_y - w_end / 2.0),

@@ -11,6 +11,7 @@ from numpy import abs, array, log10, real, sqrt
 @dataclass
 class ResultsCalculator:
     """Helpers for combining matrices and computing S-parameters."""
+
     def group(self, frequency_ghz: float, matrices: Iterable[Callable[[float], array]]):
         """Multiply a sequence of ABCD matrices evaluated at a frequency.
 
@@ -23,7 +24,13 @@ class ResultsCalculator:
             result = result.dot(matrix_fn(frequency_ghz))
         return result
 
-    def s21_db(self, frequency_ghz: float, z_gen: Callable[[float], complex], z_load: Callable[[float], complex], matrix_fn: Callable[[float], array]) -> float:
+    def s21_db(
+        self,
+        frequency_ghz: float,
+        z_gen: Callable[[float], complex],
+        z_load: Callable[[float], complex],
+        matrix_fn: Callable[[float], array],
+    ) -> float:
         """Calculate S21 in dB for a two-port network.
 
         Args:

@@ -13,18 +13,20 @@
 
 ## Запуск из исходников
 
-В проекте уже используется локальное окружение `.venv`.
+Проект и его зависимости управляются через `uv`.
 
 ```bash
-.venv/bin/python -m aocapp
+rtk uv sync
+rtk uv run python -m aocapp
 ```
 
-Если окружение нужно пересоздать:
+Тесты и проверки:
 
 ```bash
-python3.11 -m venv .venv
-.venv/bin/python -m ensurepip --upgrade
-.venv/bin/python -m pip install -r requirements.txt
+rtk uv run ruff check .
+rtk uv run black --check .
+rtk uv run isort --check-only .
+rtk uv run pytest
 ```
 
 ## Локальная сборка
@@ -34,13 +36,13 @@ python3.11 -m venv .venv
 macOS/Linux:
 
 ```bash
-bash ./build.sh
+rtk uv run pyinstaller aocapp/__main__.py -n SMC_app --onedir --icon=assets/aocapp-icon.ico --noconsole --windowed -y --add-data="assets:assets"
 ```
 
 Windows:
 
 ```bat
-build.bat
+rtk build.bat
 ```
 
 Результат появляется в `dist/SMC_app`. Иконка приложения лежит в `assets/aocapp-icon.png` и `assets/aocapp-icon.ico`.
@@ -59,13 +61,13 @@ REPO_SLUG = "atepart/SMC_app"
 macOS/Linux:
 
 ```bash
-./release.sh -t v0.1.0
+rtk ./release.sh -t v0.1.0
 ```
 
 Windows:
 
 ```bat
-release.bat v0.1.0
+rtk release.bat v0.1.0
 ```
 
 После push тега GitHub Actions собирает архивы для Windows и macOS и публикует их в GitHub Release.
@@ -98,4 +100,4 @@ Workflow находится в `.github/workflows/build.yml`.
 ## Примечания
 
 - `.tab`, `build/`, `dist/`, `*.spec` и временные файлы игнорируются git.
-- Для локальной сборки можно переопределить интерпретатор переменной `PYTHON_BIN`, например `PYTHON_BIN=.venv/bin/python bash ./build.sh`.
+- Все Python-команды разработки и сборки запускаются через `uv`; подробные правила находятся в `AGENTS.md`.

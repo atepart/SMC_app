@@ -18,6 +18,7 @@ class FilmConductivity:
         sigma2: Imaginary part of conductivity at the frequency points, 1/(Ohm*m).
         Values can be complex if numerical integration introduces small imaginary parts.
     """
+
     frequencies_ghz: Sequence[float]
     sigma1: Sequence[complex]
     sigma2: Sequence[complex]

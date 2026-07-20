@@ -13,6 +13,7 @@ from .models import FilmConductivity
 @dataclass
 class RadialStubCalculator:
     """Admittance calculation for radial stubs."""
+
     microstrip: MicrostripLineCalculator
 
     def admittance(

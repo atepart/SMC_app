@@ -16,6 +16,7 @@ MU0 = 4.0 * pi * 1e-7
 @dataclass
 class ImpedanceCalculator:
     """Surface impedance calculations for superconducting and normal films."""
+
     def film_impedance(self, frequency_ghz: float, film: FilmConductivity, thickness_m: float) -> complex:
         """Calculate surface impedance per square for a superconducting film.
 
@@ -69,7 +70,10 @@ class ImpedanceCalculator:
             res = z1 * (
                 1.0
                 - 1j * pi * freq * 1e9 * MU0 * thickness_m / z1
-                + sqrt(1.0 + (1j * pi * freq * 1e9 * MU0 * thickness_m / z1) * (1j * pi * freq * 1e9 * MU0 * thickness_m / z1))
+                + sqrt(
+                    1.0
+                    + (1j * pi * freq * 1e9 * MU0 * thickness_m / z1) * (1j * pi * freq * 1e9 * MU0 * thickness_m / z1)
+                )
             )
             r_dataset.append(real(res))
             x_dataset.append(imag(res))

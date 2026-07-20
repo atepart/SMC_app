@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
-from numpy import array, arctanh, cosh, exp, log, pi, sinh, sqrt, tanh
+from numpy import arctanh, array, cosh, exp, log, pi, sinh, sqrt, tanh
 
 from .impedance import ImpedanceCalculator
 from .models import FilmConductivity
@@ -17,6 +17,7 @@ EPS0 = 8.8542e-12
 @dataclass
 class MicrostripLineCalculator:
     """Microstrip line calculations for superconducting transmission lines."""
+
     impedance: ImpedanceCalculator
 
     def chi_kf1(self, width_m: float, insulator_thickness_m: float, top_thickness_m: float) -> Tuple[float, float]:
@@ -114,7 +115,21 @@ class MicrostripLineCalculator:
             * pi
             * g1
             / sqrt(dielectric_constant)
-            * sqrt(1.0 - 1j * chi * (z_top + z_bot) / 2.0 / pi / frequency_ghz / 1e9 / 120.0 / pi / insulator_thickness_m / sqrt(EPS0 * MU0) + 0j)
+            * sqrt(
+                1.0
+                - 1j
+                * chi
+                * (z_top + z_bot)
+                / 2.0
+                / pi
+                / frequency_ghz
+                / 1e9
+                / 120.0
+                / pi
+                / insulator_thickness_m
+                / sqrt(EPS0 * MU0)
+                + 0j
+            )
         )
         return res
 
@@ -146,8 +161,27 @@ class MicrostripLineCalculator:
         z_top = self.impedance.film_impedance(frequency_ghz, top_film, top_thickness_m)
         z_bot = self.impedance.film_impedance(frequency_ghz, bot_film, bot_thickness_m)
 
-        res = 1j * 2.0 * pi * frequency_ghz * 1e9 * sqrt(dielectric_constant * EPS0 * MU0) * sqrt(
-            1.0 - 1j * chi * (z_top + z_bot) / 2.0 / pi / frequency_ghz / 1e9 / 120.0 / pi / insulator_thickness_m / sqrt(EPS0 * MU0)
+        res = (
+            1j
+            * 2.0
+            * pi
+            * frequency_ghz
+            * 1e9
+            * sqrt(dielectric_constant * EPS0 * MU0)
+            * sqrt(
+                1.0
+                - 1j
+                * chi
+                * (z_top + z_bot)
+                / 2.0
+                / pi
+                / frequency_ghz
+                / 1e9
+                / 120.0
+                / pi
+                / insulator_thickness_m
+                / sqrt(EPS0 * MU0)
+            )
         )
         return res
 

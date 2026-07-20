@@ -55,37 +55,37 @@ class SvgRendererImpl(SvgRenderer):
         points = " ".join(f"{point.x:g},{point.y:g}" for point in polygon.points)
         fill = f"url(#{polygon.fill_pattern})" if polygon.fill_pattern else polygon.fill
         return (
-            f"<polygon points=\"{points}\" fill=\"{fill}\" stroke=\"{polygon.stroke}\" "
-            f"stroke-width=\"{polygon.stroke_width:g}\" />"
+            f'<polygon points="{points}" fill="{fill}" stroke="{polygon.stroke}" '
+            f'stroke-width="{polygon.stroke_width:g}" />'
         )
 
     def _render_rect(self, rect_shape) -> str:
         rect = rect_shape.rect
         fill = f"url(#{rect_shape.fill_pattern})" if rect_shape.fill_pattern else rect_shape.fill
         return (
-            f"<rect x=\"{rect.x:g}\" y=\"{rect.y:g}\" width=\"{rect.width:g}\" height=\"{rect.height:g}\" "
-            f"fill=\"{fill}\" stroke=\"{rect_shape.stroke}\" stroke-width=\"{rect_shape.stroke_width:g}\" />"
+            f'<rect x="{rect.x:g}" y="{rect.y:g}" width="{rect.width:g}" height="{rect.height:g}" '
+            f'fill="{fill}" stroke="{rect_shape.stroke}" stroke-width="{rect_shape.stroke_width:g}" />'
         )
 
     def _render_circle(self, circle) -> str:
         return (
-            f"<circle cx=\"{circle.center.x:g}\" cy=\"{circle.center.y:g}\" r=\"{circle.radius:g}\" "
-            f"fill=\"{circle.fill}\" stroke=\"{circle.stroke}\" stroke-width=\"{circle.stroke_width:g}\" />"
+            f'<circle cx="{circle.center.x:g}" cy="{circle.center.y:g}" r="{circle.radius:g}" '
+            f'fill="{circle.fill}" stroke="{circle.stroke}" stroke-width="{circle.stroke_width:g}" />'
         )
 
     def _render_line(self, line) -> str:
         return (
-            f"<line x1=\"{line.start.x:g}\" y1=\"{line.start.y:g}\" x2=\"{line.end.x:g}\" y2=\"{line.end.y:g}\" "
-            f"stroke=\"{line.stroke}\" stroke-width=\"{line.stroke_width:g}\" />"
+            f'<line x1="{line.start.x:g}" y1="{line.start.y:g}" x2="{line.end.x:g}" y2="{line.end.y:g}" '
+            f'stroke="{line.stroke}" stroke-width="{line.stroke_width:g}" />'
         )
 
     def _render_dimension(self, dim, font_size: float) -> str:
         label = dim.label.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return (
-            f"<line x1=\"{dim.start.x:g}\" y1=\"{dim.start.y:g}\" x2=\"{dim.end.x:g}\" y2=\"{dim.end.y:g}\" "
-            f"marker-start=\"url(#arrow)\" marker-end=\"url(#arrow)\" />\n"
-            f"<text x=\"{dim.label_pos.x:g}\" y=\"{dim.label_pos.y:g}\" font-size=\"{font_size:g}\" "
-            f"text-anchor=\"middle\" fill=\"{self.dimension_color}\">{label}</text>"
+            f'<line x1="{dim.start.x:g}" y1="{dim.start.y:g}" x2="{dim.end.x:g}" y2="{dim.end.y:g}" '
+            f'marker-start="url(#arrow)" marker-end="url(#arrow)" />\n'
+            f'<text x="{dim.label_pos.x:g}" y="{dim.label_pos.y:g}" font-size="{font_size:g}" '
+            f'text-anchor="middle" fill="{self.dimension_color}">{label}</text>'
         )
 
     def _render_label(self, label: TextLabel) -> str:
@@ -94,11 +94,11 @@ class SvgRendererImpl(SvgRenderer):
         tspan_items = []
         for index, line in enumerate(escaped_lines):
             dy = "0" if index == 0 else "1.2em"
-            tspan_items.append(f"<tspan x=\"{label.position.x:g}\" dy=\"{dy}\">{line}</tspan>")
+            tspan_items.append(f'<tspan x="{label.position.x:g}" dy="{dy}">{line}</tspan>')
         tspan_markup = "".join(tspan_items)
         return (
-            f"<text x=\"{label.position.x:g}\" y=\"{label.position.y:g}\" font-size=\"{label.font_size:g}\" "
-            f"text-anchor=\"{label.anchor}\" fill=\"{label.fill}\" font-weight=\"{label.font_weight}\">{tspan_markup}</text>"
+            f'<text x="{label.position.x:g}" y="{label.position.y:g}" font-size="{label.font_size:g}" '
+            f'text-anchor="{label.anchor}" fill="{label.fill}" font-weight="{label.font_weight}">{tspan_markup}</text>'
         )
 
     def _escape(self, text: str) -> str:

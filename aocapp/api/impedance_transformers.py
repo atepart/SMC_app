@@ -13,6 +13,7 @@ from .models import FilmConductivity
 @dataclass
 class ImpedanceTransformerCalculator:
     """Step impedance transformer calculator."""
+
     microstrip: MicrostripLineCalculator
 
     def transformer_matrix(

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-import warnings
 
 from numpy import arange, array
 from scipy.integrate import IntegrationWarning
@@ -13,9 +13,9 @@ from aocapp.api import (
     ComplexIntegrator,
     DCBlockCalculator,
     FilmConductivity,
-    IOService,
     ImpedanceCalculator,
     ImpedanceTransformerCalculator,
+    IOService,
     MattisBardeenCalculator,
     MicrostripLineCalculator,
     RadialStubCalculator,

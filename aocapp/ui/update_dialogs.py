@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 import tempfile
-import zipfile
 import time
+import zipfile
 
 import requests
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -97,9 +97,7 @@ class FetchReleasesWorker(QtCore.QThread):
             if not releases:
                 self.error.emit("Не удалось получить список релизов")
                 return
-            available = sum(
-                1 for release in releases if getattr(release, "asset", None) and release.asset.download_url
-            )
+            available = sum(1 for release in releases if getattr(release, "asset", None) and release.asset.download_url)
             self.status.emit(f"Получено релизов: {len(releases)}; для вашей системы: {available}")
             self.finished_fetch.emit(releases)
         except Exception as exc:

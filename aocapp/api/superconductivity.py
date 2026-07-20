@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 from numpy import abs, real, sqrt, tanh
 from scipy.integrate import quad
 
@@ -45,7 +46,9 @@ class SuperconductingGapCalculator:
         )
         return res1[0] + res2[0]
 
-    def delta_bcs(self, temperature_k: float, critical_temperature_k: float, energy_cutoff: float = 20 * BOLTZMANN_KB * 15.0) -> float:
+    def delta_bcs(
+        self, temperature_k: float, critical_temperature_k: float, energy_cutoff: float = 20 * BOLTZMANN_KB * 15.0
+    ) -> float:
         """Solve the BCS gap equation iteratively.
 
         Args:
@@ -60,12 +63,16 @@ class SuperconductingGapCalculator:
 
         for _ in range(1, 2000):
             gap = results[-1]
-            res1 = gap / self.n0_v1(critical_temperature_k, energy_cutoff) * quad(
-                func1, 0, gap, args=(temperature_k, gap), limit=50
-            )[0]
-            res2 = gap / self.n0_v1(critical_temperature_k, energy_cutoff) * quad(
-                func1, gap, energy_cutoff, args=(temperature_k, gap), limit=50
-            )[0]
+            res1 = (
+                gap
+                / self.n0_v1(critical_temperature_k, energy_cutoff)
+                * quad(func1, 0, gap, args=(temperature_k, gap), limit=50)[0]
+            )
+            res2 = (
+                gap
+                / self.n0_v1(critical_temperature_k, energy_cutoff)
+                * quad(func1, gap, energy_cutoff, args=(temperature_k, gap), limit=50)[0]
+            )
             results.append(res1 + res2)
             if abs(results[-1] - results[-2]) < 0.0001 * results[-1]:
                 break
@@ -122,19 +129,29 @@ class MattisBardeenCalculator:
         fermi = lambda energy, freq, temp: tanh((energy + PLANCK_H * freq * 1e9) / (2.0 * BOLTZMANN_KB * temp)) - tanh(
             energy / (2.0 * BOLTZMANN_KB * temp)
         )
-        gg = lambda energy, freq, temp, gap: (energy * (energy + PLANCK_H * freq * 1e9) + gap * gap) / sqrt(
-            energy * energy - gap * gap
-        ) / sqrt((energy + PLANCK_H * freq * 1e9) * (energy + PLANCK_H * freq * 1e9) - gap * gap)
+        gg = (
+            lambda energy, freq, temp, gap: (energy * (energy + PLANCK_H * freq * 1e9) + gap * gap)
+            / sqrt(energy * energy - gap * gap)
+            / sqrt((energy + PLANCK_H * freq * 1e9) * (energy + PLANCK_H * freq * 1e9) - gap * gap)
+        )
         func1 = lambda energy, freq, temp, gap: fermi(energy, freq, temp) * gg(energy, freq, temp, gap)
 
-        res1 = self.integrator.complex_integral(func1, gap_ev, 2.0 * gap_ev, args=(frequency_ghz, temperature_k, gap_ev))
-        res2 = self.integrator.complex_integral(func1, 2.0 * gap_ev, 5.0 * gap_ev, args=(frequency_ghz, temperature_k, gap_ev))
-        res3 = self.integrator.complex_integral(func1, 5.0 * gap_ev, 25.0 * gap_ev, args=(frequency_ghz, temperature_k, gap_ev))
-        res4 = self.integrator.complex_integral(func1, 25.0 * gap_ev, 1000.0 * gap_ev, args=(frequency_ghz, temperature_k, gap_ev))
-
-        func2 = lambda energy, freq, temp, gap: tanh((energy + PLANCK_H * freq * 1e9) / (2.0 * BOLTZMANN_KB * temp)) * gg(
-            energy, freq, temp, gap
+        res1 = self.integrator.complex_integral(
+            func1, gap_ev, 2.0 * gap_ev, args=(frequency_ghz, temperature_k, gap_ev)
         )
+        res2 = self.integrator.complex_integral(
+            func1, 2.0 * gap_ev, 5.0 * gap_ev, args=(frequency_ghz, temperature_k, gap_ev)
+        )
+        res3 = self.integrator.complex_integral(
+            func1, 5.0 * gap_ev, 25.0 * gap_ev, args=(frequency_ghz, temperature_k, gap_ev)
+        )
+        res4 = self.integrator.complex_integral(
+            func1, 25.0 * gap_ev, 1000.0 * gap_ev, args=(frequency_ghz, temperature_k, gap_ev)
+        )
+
+        func2 = lambda energy, freq, temp, gap: tanh(
+            (energy + PLANCK_H * freq * 1e9) / (2.0 * BOLTZMANN_KB * temp)
+        ) * gg(energy, freq, temp, gap)
 
         if (gap_ev - PLANCK_H * frequency_ghz * 1e9) >= -gap_ev:
             res5 = res6 = 0.0
@@ -163,12 +180,14 @@ class MattisBardeenCalculator:
             temperature_k: Temperature in Kelvin.
             gap_ev: Superconducting gap in eV.
         """
-        gg = lambda energy, freq, temp, gap: (energy * (energy + PLANCK_H * freq * 1e9) + gap * gap) / sqrt(
-            gap * gap - energy * energy
-        ) / sqrt((energy + PLANCK_H * freq * 1e9) * (energy + PLANCK_H * freq * 1e9) - gap * gap)
-        func2 = lambda energy, freq, temp, gap: tanh((energy + PLANCK_H * freq * 1e9) / (2.0 * BOLTZMANN_KB * temp)) * gg(
-            energy, freq, temp, gap
+        gg = (
+            lambda energy, freq, temp, gap: (energy * (energy + PLANCK_H * freq * 1e9) + gap * gap)
+            / sqrt(gap * gap - energy * energy)
+            / sqrt((energy + PLANCK_H * freq * 1e9) * (energy + PLANCK_H * freq * 1e9) - gap * gap)
         )
+        func2 = lambda energy, freq, temp, gap: tanh(
+            (energy + PLANCK_H * freq * 1e9) / (2.0 * BOLTZMANN_KB * temp)
+        ) * gg(energy, freq, temp, gap)
 
         if (gap_ev - PLANCK_H * frequency_ghz * 1e9) < -gap_ev:
             res1 = self.integrator.complex_integral(func2, -gap_ev, 0.0, args=(frequency_ghz, temperature_k, gap_ev))

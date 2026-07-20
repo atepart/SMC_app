@@ -622,50 +622,585 @@ class S21Config:
         },
     )
 
-    transf_1_w_start_m: float = field(default=6.0e-6, metadata={"label": "T1 Wstart", "group": "Block SIS", "description": "Transformer 1 start width.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_1_w_end_m: float = field(default=18.0e-6, metadata={"label": "T1 Wend", "group": "Block SIS", "description": "Transformer 1 end width.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_1_dwdl_um: float = field(default=6.0, metadata={"label": "T1 dW/dL", "group": "Block SIS", "description": "Width slope of transformer 1, used to infer its transition length.", "suffix": " um/um", "minimum": 0.01, "maximum": 100.0, "step": 0.1, "decimals": 3})
-    transf_1_dl_m: float = field(default=0.9e-6, metadata={"label": "T1 dL", "group": "Block SIS", "description": "Internal discretization step for transformer 1 in the calculator.", "suffix": " um", "minimum": 0.001, "maximum": 100.0, "step": 0.01, "decimals": 4, "scale": 1e6})
-    msl_4_len_m: float = field(default=27.0e-6, metadata={"label": "MSL4 L", "group": "Block SIS", "description": "Length of microstrip line section 4.", "suffix": " um", "minimum": 0.1, "maximum": 10000.0, "step": 0.5, "decimals": 3, "scale": 1e6})
-    msl_4_width_m: float = field(default=18.0e-6, metadata={"label": "MSL4 W", "group": "Block SIS", "description": "Width of microstrip line section 4.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_2_w_start_m: float = field(default=18.0e-6, metadata={"label": "T2 Wstart", "group": "Block SIS", "description": "Transformer 2 start width.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_2_w_end_m: float = field(default=4.0e-6, metadata={"label": "T2 Wend", "group": "Block SIS", "description": "Transformer 2 end width.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_2_dwdl_um: float = field(default=2.0, metadata={"label": "T2 dW/dL", "group": "Block SIS", "description": "Width slope of transformer 2, used to infer its transition length.", "suffix": " um/um", "minimum": 0.01, "maximum": 100.0, "step": 0.1, "decimals": 3})
-    transf_2_dl_m: float = field(default=0.9e-6, metadata={"label": "T2 dL", "group": "Block SIS", "description": "Internal discretization step for transformer 2 in the calculator.", "suffix": " um", "minimum": 0.001, "maximum": 100.0, "step": 0.01, "decimals": 4, "scale": 1e6})
-    msl_5_len_m: float = field(default=10.0e-6, metadata={"label": "MSL5 L", "group": "Block SIS", "description": "Length of microstrip line section 5.", "suffix": " um", "minimum": 0.1, "maximum": 10000.0, "step": 0.5, "decimals": 3, "scale": 1e6})
-    msl_5_width_m: float = field(default=4.0e-6, metadata={"label": "MSL5 W", "group": "Block SIS", "description": "Width of microstrip line section 5.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_3_w_start_m: float = field(default=6.0e-6, metadata={"label": "T3 Wstart", "group": "Block SIS", "description": "Transformer 3 start width.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_3_w_end_m: float = field(default=10.0e-6, metadata={"label": "T3 Wend", "group": "Block SIS", "description": "Transformer 3 end width.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_3_dwdl_um: float = field(default=1.0, metadata={"label": "T3 dW/dL", "group": "Block SIS", "description": "Width slope of transformer 3, used to infer its transition length.", "suffix": " um/um", "minimum": 0.01, "maximum": 100.0, "step": 0.1, "decimals": 3})
-    transf_3_dl_m: float = field(default=1.2e-6, metadata={"label": "T3 dL", "group": "Block SIS", "description": "Internal discretization step for transformer 3 in the calculator.", "suffix": " um", "minimum": 0.001, "maximum": 100.0, "step": 0.01, "decimals": 4, "scale": 1e6})
+    transf_1_w_start_m: float = field(
+        default=6.0e-6,
+        metadata={
+            "label": "T1 Wstart",
+            "group": "Block SIS",
+            "description": "Transformer 1 start width.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_1_w_end_m: float = field(
+        default=18.0e-6,
+        metadata={
+            "label": "T1 Wend",
+            "group": "Block SIS",
+            "description": "Transformer 1 end width.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_1_dwdl_um: float = field(
+        default=6.0,
+        metadata={
+            "label": "T1 dW/dL",
+            "group": "Block SIS",
+            "description": "Width slope of transformer 1, used to infer its transition length.",
+            "suffix": " um/um",
+            "minimum": 0.01,
+            "maximum": 100.0,
+            "step": 0.1,
+            "decimals": 3,
+        },
+    )
+    transf_1_dl_m: float = field(
+        default=0.9e-6,
+        metadata={
+            "label": "T1 dL",
+            "group": "Block SIS",
+            "description": "Internal discretization step for transformer 1 in the calculator.",
+            "suffix": " um",
+            "minimum": 0.001,
+            "maximum": 100.0,
+            "step": 0.01,
+            "decimals": 4,
+            "scale": 1e6,
+        },
+    )
+    msl_4_len_m: float = field(
+        default=27.0e-6,
+        metadata={
+            "label": "MSL4 L",
+            "group": "Block SIS",
+            "description": "Length of microstrip line section 4.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 10000.0,
+            "step": 0.5,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    msl_4_width_m: float = field(
+        default=18.0e-6,
+        metadata={
+            "label": "MSL4 W",
+            "group": "Block SIS",
+            "description": "Width of microstrip line section 4.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_2_w_start_m: float = field(
+        default=18.0e-6,
+        metadata={
+            "label": "T2 Wstart",
+            "group": "Block SIS",
+            "description": "Transformer 2 start width.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_2_w_end_m: float = field(
+        default=4.0e-6,
+        metadata={
+            "label": "T2 Wend",
+            "group": "Block SIS",
+            "description": "Transformer 2 end width.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_2_dwdl_um: float = field(
+        default=2.0,
+        metadata={
+            "label": "T2 dW/dL",
+            "group": "Block SIS",
+            "description": "Width slope of transformer 2, used to infer its transition length.",
+            "suffix": " um/um",
+            "minimum": 0.01,
+            "maximum": 100.0,
+            "step": 0.1,
+            "decimals": 3,
+        },
+    )
+    transf_2_dl_m: float = field(
+        default=0.9e-6,
+        metadata={
+            "label": "T2 dL",
+            "group": "Block SIS",
+            "description": "Internal discretization step for transformer 2 in the calculator.",
+            "suffix": " um",
+            "minimum": 0.001,
+            "maximum": 100.0,
+            "step": 0.01,
+            "decimals": 4,
+            "scale": 1e6,
+        },
+    )
+    msl_5_len_m: float = field(
+        default=10.0e-6,
+        metadata={
+            "label": "MSL5 L",
+            "group": "Block SIS",
+            "description": "Length of microstrip line section 5.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 10000.0,
+            "step": 0.5,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    msl_5_width_m: float = field(
+        default=4.0e-6,
+        metadata={
+            "label": "MSL5 W",
+            "group": "Block SIS",
+            "description": "Width of microstrip line section 5.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_3_w_start_m: float = field(
+        default=6.0e-6,
+        metadata={
+            "label": "T3 Wstart",
+            "group": "Block SIS",
+            "description": "Transformer 3 start width.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_3_w_end_m: float = field(
+        default=10.0e-6,
+        metadata={
+            "label": "T3 Wend",
+            "group": "Block SIS",
+            "description": "Transformer 3 end width.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_3_dwdl_um: float = field(
+        default=1.0,
+        metadata={
+            "label": "T3 dW/dL",
+            "group": "Block SIS",
+            "description": "Width slope of transformer 3, used to infer its transition length.",
+            "suffix": " um/um",
+            "minimum": 0.01,
+            "maximum": 100.0,
+            "step": 0.1,
+            "decimals": 3,
+        },
+    )
+    transf_3_dl_m: float = field(
+        default=1.2e-6,
+        metadata={
+            "label": "T3 dL",
+            "group": "Block SIS",
+            "description": "Internal discretization step for transformer 3 in the calculator.",
+            "suffix": " um",
+            "minimum": 0.001,
+            "maximum": 100.0,
+            "step": 0.01,
+            "decimals": 4,
+            "scale": 1e6,
+        },
+    )
 
-    transf_4_w_start_m: float = field(default=10.0e-6, metadata={"label": "T4 Wstart", "group": "Block SIS", "description": "Transformer 4 start width.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_4_w_end_m: float = field(default=6.0e-6, metadata={"label": "T4 Wend", "group": "Block SIS", "description": "Transformer 4 end width.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_4_dwdl_um: float = field(default=1.0, metadata={"label": "T4 dW/dL", "group": "Block SIS", "description": "Width slope of transformer 4, used to infer its transition length.", "suffix": " um/um", "minimum": 0.01, "maximum": 100.0, "step": 0.1, "decimals": 3})
-    transf_4_dl_m: float = field(default=1.2e-6, metadata={"label": "T4 dL", "group": "Block SIS", "description": "Internal discretization step for transformer 4 in the calculator.", "suffix": " um", "minimum": 0.001, "maximum": 100.0, "step": 0.01, "decimals": 4, "scale": 1e6})
-    msl_6_len_m: float = field(default=25.0e-6, metadata={"label": "MSL6 L", "group": "Block SIS", "description": "Length of microstrip line section 6.", "suffix": " um", "minimum": 0.1, "maximum": 10000.0, "step": 0.5, "decimals": 3, "scale": 1e6})
-    msl_6_width_m: float = field(default=4.0e-6, metadata={"label": "MSL6 W", "group": "Block SIS", "description": "Width of microstrip line section 6.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_5_w_start_m: float = field(default=6.0e-6, metadata={"label": "T5 Wstart", "group": "Block SIS", "description": "Transformer 5 start width.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_5_w_end_m: float = field(default=18.0e-6, metadata={"label": "T5 Wend", "group": "Block SIS", "description": "Transformer 5 end width.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_5_dwdl_um: float = field(default=3.0, metadata={"label": "T5 dW/dL", "group": "Block SIS", "description": "Width slope of transformer 5, used to infer its transition length.", "suffix": " um/um", "minimum": 0.01, "maximum": 100.0, "step": 0.1, "decimals": 3})
-    transf_5_dl_m: float = field(default=1.2e-6, metadata={"label": "T5 dL", "group": "Block SIS", "description": "Internal discretization step for transformer 5 in the calculator.", "suffix": " um", "minimum": 0.001, "maximum": 100.0, "step": 0.01, "decimals": 4, "scale": 1e6})
-    msl_7_len_m: float = field(default=24.0e-6, metadata={"label": "MSL7 L", "group": "Block SIS", "description": "Length of microstrip line section 7.", "suffix": " um", "minimum": 0.1, "maximum": 10000.0, "step": 0.5, "decimals": 3, "scale": 1e6})
-    msl_7_width_m: float = field(default=18.0e-6, metadata={"label": "MSL7 W", "group": "Block SIS", "description": "Width of microstrip line section 7.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_6_w_start_m: float = field(default=18.0e-6, metadata={"label": "T6 Wstart", "group": "Block SIS", "description": "Transformer 6 start width, leading into the 50 Ohm wide section.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_6_w_end_m: float = field(default=48.0e-6, metadata={"label": "T6 Wend", "group": "Block SIS", "description": "Transformer 6 end width, leading into the 50 Ohm wide section.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_6_dwdl_um: float = field(default=3.0, metadata={"label": "T6 dW/dL", "group": "Block SIS", "description": "Width slope of transformer 6, used to infer its transition length.", "suffix": " um/um", "minimum": 0.01, "maximum": 100.0, "step": 0.1, "decimals": 3})
-    transf_6_dl_m: float = field(default=1.2e-6, metadata={"label": "T6 dL", "group": "Block SIS", "description": "Internal discretization step for transformer 6 in the calculator.", "suffix": " um", "minimum": 0.001, "maximum": 100.0, "step": 0.01, "decimals": 4, "scale": 1e6})
-    msl_8_len_m: float = field(default=13.0e-6, metadata={"label": "MSL8 L", "group": "Block SIS", "description": "Length of the wide 50 Ohm line near the SIS block.", "suffix": " um", "minimum": 0.1, "maximum": 10000.0, "step": 0.5, "decimals": 3, "scale": 1e6})
-    msl_8_width_m: float = field(default=50.0e-6, metadata={"label": "MSL8 W", "group": "Block SIS", "description": "Width of the wide 50 Ohm line near the SIS block.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_7_w_start_m: float = field(default=49.0e-6, metadata={"label": "T7 Wstart", "group": "Block SIS", "description": "Transformer 7 start width from the 50 Ohm line toward the SIS connection.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_7_w_end_m: float = field(default=14.0e-6, metadata={"label": "T7 Wend", "group": "Block SIS", "description": "Transformer 7 end width from the 50 Ohm line toward the SIS connection.", "suffix": " um", "minimum": 0.1, "maximum": 1000.0, "step": 0.1, "decimals": 3, "scale": 1e6})
-    transf_7_dwdl_um: float = field(default=5.0, metadata={"label": "T7 dW/dL", "group": "Block SIS", "description": "Width slope of transformer 7, used to infer its transition length.", "suffix": " um/um", "minimum": 0.01, "maximum": 100.0, "step": 0.1, "decimals": 3})
-    transf_7_dl_m: float = field(default=1.2e-6, metadata={"label": "T7 dL", "group": "Block SIS", "description": "Internal discretization step for transformer 7 in the calculator.", "suffix": " um", "minimum": 0.001, "maximum": 100.0, "step": 0.01, "decimals": 4, "scale": 1e6})
+    transf_4_w_start_m: float = field(
+        default=10.0e-6,
+        metadata={
+            "label": "T4 Wstart",
+            "group": "Block SIS",
+            "description": "Transformer 4 start width.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_4_w_end_m: float = field(
+        default=6.0e-6,
+        metadata={
+            "label": "T4 Wend",
+            "group": "Block SIS",
+            "description": "Transformer 4 end width.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_4_dwdl_um: float = field(
+        default=1.0,
+        metadata={
+            "label": "T4 dW/dL",
+            "group": "Block SIS",
+            "description": "Width slope of transformer 4, used to infer its transition length.",
+            "suffix": " um/um",
+            "minimum": 0.01,
+            "maximum": 100.0,
+            "step": 0.1,
+            "decimals": 3,
+        },
+    )
+    transf_4_dl_m: float = field(
+        default=1.2e-6,
+        metadata={
+            "label": "T4 dL",
+            "group": "Block SIS",
+            "description": "Internal discretization step for transformer 4 in the calculator.",
+            "suffix": " um",
+            "minimum": 0.001,
+            "maximum": 100.0,
+            "step": 0.01,
+            "decimals": 4,
+            "scale": 1e6,
+        },
+    )
+    msl_6_len_m: float = field(
+        default=25.0e-6,
+        metadata={
+            "label": "MSL6 L",
+            "group": "Block SIS",
+            "description": "Length of microstrip line section 6.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 10000.0,
+            "step": 0.5,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    msl_6_width_m: float = field(
+        default=4.0e-6,
+        metadata={
+            "label": "MSL6 W",
+            "group": "Block SIS",
+            "description": "Width of microstrip line section 6.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_5_w_start_m: float = field(
+        default=6.0e-6,
+        metadata={
+            "label": "T5 Wstart",
+            "group": "Block SIS",
+            "description": "Transformer 5 start width.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_5_w_end_m: float = field(
+        default=18.0e-6,
+        metadata={
+            "label": "T5 Wend",
+            "group": "Block SIS",
+            "description": "Transformer 5 end width.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_5_dwdl_um: float = field(
+        default=3.0,
+        metadata={
+            "label": "T5 dW/dL",
+            "group": "Block SIS",
+            "description": "Width slope of transformer 5, used to infer its transition length.",
+            "suffix": " um/um",
+            "minimum": 0.01,
+            "maximum": 100.0,
+            "step": 0.1,
+            "decimals": 3,
+        },
+    )
+    transf_5_dl_m: float = field(
+        default=1.2e-6,
+        metadata={
+            "label": "T5 dL",
+            "group": "Block SIS",
+            "description": "Internal discretization step for transformer 5 in the calculator.",
+            "suffix": " um",
+            "minimum": 0.001,
+            "maximum": 100.0,
+            "step": 0.01,
+            "decimals": 4,
+            "scale": 1e6,
+        },
+    )
+    msl_7_len_m: float = field(
+        default=24.0e-6,
+        metadata={
+            "label": "MSL7 L",
+            "group": "Block SIS",
+            "description": "Length of microstrip line section 7.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 10000.0,
+            "step": 0.5,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    msl_7_width_m: float = field(
+        default=18.0e-6,
+        metadata={
+            "label": "MSL7 W",
+            "group": "Block SIS",
+            "description": "Width of microstrip line section 7.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_6_w_start_m: float = field(
+        default=18.0e-6,
+        metadata={
+            "label": "T6 Wstart",
+            "group": "Block SIS",
+            "description": "Transformer 6 start width, leading into the 50 Ohm wide section.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_6_w_end_m: float = field(
+        default=48.0e-6,
+        metadata={
+            "label": "T6 Wend",
+            "group": "Block SIS",
+            "description": "Transformer 6 end width, leading into the 50 Ohm wide section.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_6_dwdl_um: float = field(
+        default=3.0,
+        metadata={
+            "label": "T6 dW/dL",
+            "group": "Block SIS",
+            "description": "Width slope of transformer 6, used to infer its transition length.",
+            "suffix": " um/um",
+            "minimum": 0.01,
+            "maximum": 100.0,
+            "step": 0.1,
+            "decimals": 3,
+        },
+    )
+    transf_6_dl_m: float = field(
+        default=1.2e-6,
+        metadata={
+            "label": "T6 dL",
+            "group": "Block SIS",
+            "description": "Internal discretization step for transformer 6 in the calculator.",
+            "suffix": " um",
+            "minimum": 0.001,
+            "maximum": 100.0,
+            "step": 0.01,
+            "decimals": 4,
+            "scale": 1e6,
+        },
+    )
+    msl_8_len_m: float = field(
+        default=13.0e-6,
+        metadata={
+            "label": "MSL8 L",
+            "group": "Block SIS",
+            "description": "Length of the wide 50 Ohm line near the SIS block.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 10000.0,
+            "step": 0.5,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    msl_8_width_m: float = field(
+        default=50.0e-6,
+        metadata={
+            "label": "MSL8 W",
+            "group": "Block SIS",
+            "description": "Width of the wide 50 Ohm line near the SIS block.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_7_w_start_m: float = field(
+        default=49.0e-6,
+        metadata={
+            "label": "T7 Wstart",
+            "group": "Block SIS",
+            "description": "Transformer 7 start width from the 50 Ohm line toward the SIS connection.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_7_w_end_m: float = field(
+        default=14.0e-6,
+        metadata={
+            "label": "T7 Wend",
+            "group": "Block SIS",
+            "description": "Transformer 7 end width from the 50 Ohm line toward the SIS connection.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    transf_7_dwdl_um: float = field(
+        default=5.0,
+        metadata={
+            "label": "T7 dW/dL",
+            "group": "Block SIS",
+            "description": "Width slope of transformer 7, used to infer its transition length.",
+            "suffix": " um/um",
+            "minimum": 0.01,
+            "maximum": 100.0,
+            "step": 0.1,
+            "decimals": 3,
+        },
+    )
+    transf_7_dl_m: float = field(
+        default=1.2e-6,
+        metadata={
+            "label": "T7 dL",
+            "group": "Block SIS",
+            "description": "Internal discretization step for transformer 7 in the calculator.",
+            "suffix": " um",
+            "minimum": 0.001,
+            "maximum": 100.0,
+            "step": 0.01,
+            "decimals": 4,
+            "scale": 1e6,
+        },
+    )
 
-    s21_freq_start_ghz: float = field(default=100.0, metadata={"label": "Sweep start", "group": "Sweep / Source", "description": "Start frequency for the S21 sweep.", "suffix": " GHz", "minimum": 0.01, "maximum": 10000.0, "step": 1.0, "decimals": 2})
-    s21_freq_stop_ghz: float = field(default=900.0, metadata={"label": "Sweep stop", "group": "Sweep / Source", "description": "Stop frequency for the S21 sweep.", "suffix": " GHz", "minimum": 0.01, "maximum": 10000.0, "step": 1.0, "decimals": 2})
-    s21_freq_step_ghz: float = field(default=5.0, metadata={"label": "Sweep step", "group": "Sweep / Source", "description": "Frequency step for the S21 sweep.", "suffix": " GHz", "minimum": 0.01, "maximum": 10000.0, "step": 1.0, "decimals": 2})
-    z_ffo_ohm: float = field(default=0.15, metadata={"label": "Z FFO", "group": "Sweep / Source", "description": "Source impedance used on the FFO side in the S21 computation.", "suffix": " Ohm", "minimum": 0.001, "maximum": 1000.0, "step": 0.01, "decimals": 3})
+    s21_freq_start_ghz: float = field(
+        default=100.0,
+        metadata={
+            "label": "Sweep start",
+            "group": "Sweep / Source",
+            "description": "Start frequency for the S21 sweep.",
+            "suffix": " GHz",
+            "minimum": 0.01,
+            "maximum": 10000.0,
+            "step": 1.0,
+            "decimals": 2,
+        },
+    )
+    s21_freq_stop_ghz: float = field(
+        default=900.0,
+        metadata={
+            "label": "Sweep stop",
+            "group": "Sweep / Source",
+            "description": "Stop frequency for the S21 sweep.",
+            "suffix": " GHz",
+            "minimum": 0.01,
+            "maximum": 10000.0,
+            "step": 1.0,
+            "decimals": 2,
+        },
+    )
+    s21_freq_step_ghz: float = field(
+        default=5.0,
+        metadata={
+            "label": "Sweep step",
+            "group": "Sweep / Source",
+            "description": "Frequency step for the S21 sweep.",
+            "suffix": " GHz",
+            "minimum": 0.01,
+            "maximum": 10000.0,
+            "step": 1.0,
+            "decimals": 2,
+        },
+    )
+    z_ffo_ohm: float = field(
+        default=0.15,
+        metadata={
+            "label": "Z FFO",
+            "group": "Sweep / Source",
+            "description": "Source impedance used on the FFO side in the S21 computation.",
+            "suffix": " Ohm",
+            "minimum": 0.001,
+            "maximum": 1000.0,
+            "step": 0.01,
+            "decimals": 3,
+        },
+    )
 
     sis_area_um2: float = field(
         default=0.8,
@@ -720,9 +1255,45 @@ class S21Config:
         },
     )
 
-    film_freq_start_ghz: float = field(default=20.0, metadata={"label": "Film grid start", "group": "Backend Grid", "description": "Start frequency for the precomputed conductivity table.", "suffix": " GHz", "minimum": 0.01, "maximum": 10000.0, "step": 1.0, "decimals": 2})
-    film_freq_stop_ghz: float = field(default=1110.0, metadata={"label": "Film grid stop", "group": "Backend Grid", "description": "Stop frequency for the precomputed conductivity table.", "suffix": " GHz", "minimum": 0.01, "maximum": 10000.0, "step": 1.0, "decimals": 2})
-    film_freq_step_ghz: float = field(default=20.0, metadata={"label": "Film grid step", "group": "Backend Grid", "description": "Frequency step for the precomputed conductivity table.", "suffix": " GHz", "minimum": 0.01, "maximum": 10000.0, "step": 1.0, "decimals": 2})
+    film_freq_start_ghz: float = field(
+        default=20.0,
+        metadata={
+            "label": "Film grid start",
+            "group": "Backend Grid",
+            "description": "Start frequency for the precomputed conductivity table.",
+            "suffix": " GHz",
+            "minimum": 0.01,
+            "maximum": 10000.0,
+            "step": 1.0,
+            "decimals": 2,
+        },
+    )
+    film_freq_stop_ghz: float = field(
+        default=1110.0,
+        metadata={
+            "label": "Film grid stop",
+            "group": "Backend Grid",
+            "description": "Stop frequency for the precomputed conductivity table.",
+            "suffix": " GHz",
+            "minimum": 0.01,
+            "maximum": 10000.0,
+            "step": 1.0,
+            "decimals": 2,
+        },
+    )
+    film_freq_step_ghz: float = field(
+        default=20.0,
+        metadata={
+            "label": "Film grid step",
+            "group": "Backend Grid",
+            "description": "Frequency step for the precomputed conductivity table.",
+            "suffix": " GHz",
+            "minimum": 0.01,
+            "maximum": 10000.0,
+            "step": 1.0,
+            "decimals": 2,
+        },
+    )
 
     def validate(self) -> None:
         """Validate core configuration values."""

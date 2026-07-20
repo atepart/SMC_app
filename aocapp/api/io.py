@@ -8,6 +8,7 @@ from typing import Iterable, Tuple
 
 class IOService:
     """Simple IO helpers for tab-separated datasets."""
+
     def write(self, filename: str, data: Tuple[Iterable[float], Iterable[float]]) -> None:
         """Write two-column data to a tab-separated file.
 

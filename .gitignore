@@ -4,6 +4,7 @@
 *.idea
 Some_parameters.txt
 *__pycache__
+*.egg-info/
 *.pyc
 *.pyo
 *.DS_Store
