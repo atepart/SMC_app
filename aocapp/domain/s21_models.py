@@ -87,7 +87,7 @@ class S21Config:
     alpha_top: float = field(
         default=3.54,
         metadata={
-            "label": "alpha EL1",
+            "label": "α EL1",
             "group": "EL1 Material",
             "description": "Strong-coupling coefficient alpha_1 from the relation 2*Delta = alpha*kB*Tc for electrode EL1.",
             "suffix": "",
@@ -100,7 +100,7 @@ class S21Config:
     alpha_bot: float = field(
         default=3.54,
         metadata={
-            "label": "alpha EL2",
+            "label": "α EL2",
             "group": "EL2 Material",
             "description": "Strong-coupling coefficient alpha_2 from the relation 2*Delta = alpha*kB*Tc for electrode EL2.",
             "suffix": "",
@@ -113,7 +113,7 @@ class S21Config:
     delta0_top_ev: float | None = field(
         default=1.45e-3,
         metadata={
-            "label": "Delta0 EL1",
+            "label": "Δ₀ EL1",
             "group": "EL1 Material",
             "description": "Explicit superconducting gap at 0 K for EL1. Kept for compatibility with the legacy backend; hidden in the UI.",
             "suffix": " eV",
@@ -127,7 +127,7 @@ class S21Config:
     delta0_bot_ev: float | None = field(
         default=1.45e-3,
         metadata={
-            "label": "Delta0 EL2",
+            "label": "Δ₀ EL2",
             "group": "EL2 Material",
             "description": "Explicit superconducting gap at 0 K for EL2. Kept for compatibility with the legacy backend; hidden in the UI.",
             "suffix": " eV",
@@ -141,7 +141,7 @@ class S21Config:
     sigma0_top: float = field(
         default=18.0e6,
         metadata={
-            "label": "sigma EL1",
+            "label": "σ EL1",
             "group": "EL1 Material",
             "description": "Normal-state conductivity sigma_1 of electrode EL1.",
             "suffix": " 1/(Ohm*m)",
@@ -154,7 +154,7 @@ class S21Config:
     sigma0_bot: float = field(
         default=18.0e6,
         metadata={
-            "label": "sigma EL2",
+            "label": "σ EL2",
             "group": "EL2 Material",
             "description": "Normal-state conductivity sigma_2 of electrode EL2.",
             "suffix": " 1/(Ohm*m)",
@@ -211,7 +211,7 @@ class S21Config:
     e12: float = field(
         default=4.28265,
         metadata={
-            "label": "eps12",
+            "label": "ε₁₂",
             "group": "Dielectrics",
             "description": "Relative permittivity of the inter-electrode dielectric.",
             "suffix": "",
@@ -238,7 +238,7 @@ class S21Config:
     e1: float = field(
         default=4.44084,
         metadata={
-            "label": "eps1",
+            "label": "ε₁",
             "group": "Dielectrics",
             "description": "Relative permittivity of the dielectric in the SIS-side matching section.",
             "suffix": "",
@@ -251,7 +251,7 @@ class S21Config:
     e_sub: float = field(
         default=11.7,
         metadata={
-            "label": "eps sub",
+            "label": "ε sub",
             "group": "Dielectrics",
             "description": "Relative permittivity of the substrate used for the slot/DC-break model.",
             "suffix": "",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import math
 import os
 import subprocess
 import sys
@@ -42,6 +43,7 @@ from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
 from aocapp.application.version import REPO_SLUG, __version__
 from aocapp.domain.s21_models import S21Config
+from aocapp.infrastructure.design_files import DesignFileService
 from aocapp.ui.update_dialogs import DownloadReleaseWorker, FetchReleasesWorker, ReleasePickerDialog
 
 CURRENT_DOCK_LAYOUT_VERSION = 1
@@ -153,6 +155,56 @@ class SvgGraphicsView(QGraphicsView):
         event.accept()
 
 
+class SafeDoubleSpinBox(QDoubleSpinBox):
+    """Spin box whose wheel is armed only by an explicit mouse click.
+
+    Merely moving the cursor over a long parameter form must keep scrolling the
+    form.  A click arms wheel editing for this field until focus leaves it;
+    arrow buttons and keyboard input continue to work as normal.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._wheel_armed = False
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._wheel_armed = True
+        super().mousePressEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        self._wheel_armed = False
+        super().focusOutEvent(event)
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        if self._wheel_armed and self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
+class CollapsibleParameterGroup(QGroupBox):
+    """Checkable group box that actually removes its form from the layout."""
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(title, parent)
+        self.setCheckable(True)
+        self.setChecked(True)
+        layout = QVBoxLayout(self)
+        self.content = QWidget(self)
+        self.form_layout = QFormLayout(self.content)
+        self.form_layout.setLabelAlignment(Qt.AlignLeft)
+        layout.addWidget(self.content)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Maximum)
+        self.toggled.connect(self._set_expanded)
+
+    def _set_expanded(self, expanded: bool) -> None:
+        """Hide the form and release its height back to the scroll layout."""
+        self.content.setVisible(expanded)
+        self.setMaximumHeight(16777215 if expanded else self.fontMetrics().height() + 18)
+        self.updateGeometry()
+
+
 class MainWindow(QMainWindow):
     _material_sync_map = {
         "sigma0_top": "sigma0_bot",
@@ -173,6 +225,8 @@ class MainWindow(QMainWindow):
         self._view = SvgGraphicsView()
         self._plot = pg.PlotWidget()
         self._config_inputs: Dict[str, QDoubleSpinBox] = {}
+        self._parameter_groups: Dict[str, CollapsibleParameterGroup] = {}
+        self._engineering_orders: Dict[str, QLineEdit] = {}
         self._s21_output: QLineEdit | None = None
         self._s21_status: QLabel | None = None
         self._log_view: QPlainTextEdit | None = None
@@ -190,6 +244,7 @@ class MainWindow(QMainWindow):
         self._update_dl_worker: DownloadReleaseWorker | None = None
 
         self._defaults = S21Config()
+        self._design_files = DesignFileService()
 
         self._build_menu()
         self._configure_plot()
@@ -283,9 +338,9 @@ class MainWindow(QMainWindow):
             group_fields = fields_by_group.get(group_name, [])
             if not group_fields:
                 continue
-            box = QGroupBox(group_name)
-            form = QFormLayout(box)
-            form.setLabelAlignment(Qt.AlignLeft)
+            box = CollapsibleParameterGroup(group_name)
+            self._parameter_groups[group_name] = box
+            form = box.form_layout
 
             if group_name == "EL2 Material":
                 checkbox = QCheckBox("Use the same material as EL1")
@@ -300,12 +355,23 @@ class MainWindow(QMainWindow):
                 label.setToolTip(field_info.description)
                 spin.setToolTip(field_info.description)
                 self._config_inputs[field_info.name] = spin
-                form.addRow(label, spin)
+                form.addRow(label, self._build_parameter_editor(field_info.name, spin))
 
             vbox.addWidget(box)
 
         controls_box = QGroupBox("Actions")
+        controls_box.setObjectName("actions_box")
+        self.actions_box = controls_box
         controls_layout = QVBoxLayout(controls_box)
+
+        design_row = QHBoxLayout()
+        load_design_button = QPushButton("Загрузить дизайн")
+        load_design_button.clicked.connect(self._load_design_dialog)
+        design_row.addWidget(load_design_button)
+        save_design_button = QPushButton("Сохранить дизайн")
+        save_design_button.clicked.connect(self._save_design_dialog)
+        design_row.addWidget(save_design_button)
+        controls_layout.addLayout(design_row)
 
         self._s21_output = QLineEdit(str(_default_s21_output_path()))
         self._s21_output.setToolTip("Optional output file for the computed S21 tabulation.")
@@ -334,12 +400,15 @@ class MainWindow(QMainWindow):
         hint.setStyleSheet("color: #555;")
         controls_layout.addWidget(hint)
 
-        vbox.addWidget(controls_box)
         vbox.addStretch(1)
 
         inner.setLayout(vbox)
         scroll.setWidget(inner)
-        outer.addWidget(scroll)
+        self.parameters_scroll = scroll
+        outer.addWidget(scroll, stretch=1)
+        # Actions deliberately lives outside the scroll area so preview,
+        # calculation and design persistence are always reachable.
+        outer.addWidget(controls_box, stretch=0)
         return panel
 
     def _build_schematic_panel(self) -> QWidget:
@@ -480,8 +549,89 @@ class MainWindow(QMainWindow):
         self._apply_default_dock_sizes()
         self.save_settings()
 
-    def _create_spinbox(self, name: str, field_info) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
+    def _last_files_directory(self) -> str:
+        """Return the last successful design directory or a useful default."""
+        value = QSettings().value("Files/last_directory", "", type=str)
+        candidate = Path(value).expanduser() if value else Path.home() / "Documents" / "SMC_app"
+        return str(candidate if candidate.exists() else Path.home())
+
+    @staticmethod
+    def _remember_file_directory(path: str | Path) -> None:
+        QSettings().setValue("Files/last_directory", str(Path(path).expanduser().parent))
+
+    def _save_design_dialog(self) -> None:
+        """Ask for a friendly target and save the current backend parameters."""
+        selected, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Сохранить дизайн",
+            str(Path(self._last_files_directory()) / "design.aocdesign"),
+            "Дизайн AOCapp (*.aocdesign);;JSON (*.json)",
+        )
+        if not selected:
+            return
+        path = Path(selected)
+        if not path.suffix:
+            path = path.with_suffix(".aocdesign")
+        try:
+            self.save_design_to_path(path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Ошибка сохранения дизайна", str(exc))
+
+    def _load_design_dialog(self) -> None:
+        """Select a design and apply it to every visible parameter editor."""
+        selected, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Открыть дизайн",
+            self._last_files_directory(),
+            "Дизайн AOCapp (*.aocdesign *.json)",
+        )
+        if not selected:
+            return
+        try:
+            self.load_design_from_path(selected)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Ошибка открытия дизайна", str(exc))
+
+    def save_design_to_path(self, path: str | Path) -> Path:
+        """Validate and persist the current configuration for UI and tests."""
+        config = self._build_config()
+        config.validate()
+        destination = self._design_files.save(path, config)
+        self._remember_file_directory(destination)
+        if self._s21_status is not None:
+            self._s21_status.setText(f"Дизайн сохранён: {destination}")
+        return destination
+
+    def load_design_from_path(self, path: str | Path) -> S21Config:
+        """Load SI values, convert them to presentation units and refresh SVG."""
+        config = self._design_files.load(path)
+        config.validate()
+
+        same_material = all(
+            math.isclose(getattr(config, top), getattr(config, bottom), rel_tol=1e-12, abs_tol=0.0)
+            for top, bottom in self._material_sync_map.items()
+        )
+        if self._same_materials_checkbox is not None:
+            self._same_materials_checkbox.setChecked(same_material)
+
+        for name, spin in self._config_inputs.items():
+            blocked = spin.blockSignals(True)
+            spin.setValue(getattr(config, name) * S21Config.field_scale(name))
+            spin.blockSignals(blocked)
+        if same_material:
+            self._apply_material_sync()
+        else:
+            for bottom_name in self._material_sync_map.values():
+                self._config_inputs[bottom_name].setEnabled(True)
+
+        self._remember_file_directory(path)
+        self._update_svg()
+        if self._s21_status is not None:
+            self._s21_status.setText(f"Дизайн загружен: {Path(path).expanduser()}")
+        return config
+
+    def _create_spinbox(self, name: str, field_info) -> SafeDoubleSpinBox:
+        spin = SafeDoubleSpinBox()
         scale = S21Config.field_scale(name)
         default_value = getattr(self._defaults, name)
         if default_value is None:
@@ -490,10 +640,34 @@ class MainWindow(QMainWindow):
         spin.setRange(field_info.minimum, field_info.maximum)
         spin.setSingleStep(field_info.step)
         spin.setValue(default_value * scale)
-        spin.setSuffix(field_info.suffix)
+        # Scaled metric dimensions get a separate immutable engineering-order
+        # field, so the editable number remains uncluttered and unambiguous.
+        if scale == 1.0:
+            spin.setSuffix(field_info.suffix)
         if name in self._material_sync_map:
             spin.valueChanged.connect(self._apply_material_sync)
         return spin
+
+    def _build_parameter_editor(self, name: str, spin: SafeDoubleSpinBox) -> QWidget:
+        """Add an immutable ``×10^n`` field for SI values shown with a scale."""
+        scale = S21Config.field_scale(name)
+        if scale == 1.0:
+            return spin
+
+        exponent = -round(math.log10(scale))
+        editor = QWidget(self)
+        layout = QHBoxLayout(editor)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(spin, stretch=1)
+        order = QLineEdit(f"×10^{exponent} m", editor)
+        order.setReadOnly(True)
+        order.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        order.setFixedWidth(78)
+        order.setToolTip("Фиксированный инженерный порядок; показатель всегда кратен 3.")
+        self._engineering_orders[name] = order
+        layout.addWidget(order)
+        return editor
 
     def _configure_plot(self) -> None:
         pg.setConfigOption("background", "#ffffff")
