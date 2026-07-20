@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Dict
 
 import pyqtgraph as pg
+import pyqtgraph.exporters
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import QByteArray, QObject, QSettings, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPainter, QWheelEvent
@@ -439,6 +440,36 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(self._plot)
+
+        controls = QHBoxLayout()
+        self._plot_scale_inputs: dict[str, QDoubleSpinBox] = {}
+        for name, label, value in (
+            ("x_min", "X min", 80.0),
+            ("x_max", "X max", 800.0),
+            ("y_min", "Y min", -60.0),
+            ("y_max", "Y max", 5.0),
+        ):
+            controls.addWidget(QLabel(label))
+            spin = SafeDoubleSpinBox(panel)
+            spin.setRange(-1_000_000.0, 1_000_000.0)
+            spin.setDecimals(2)
+            spin.setValue(value)
+            spin.setFixedWidth(90)
+            self._plot_scale_inputs[name] = spin
+            controls.addWidget(spin)
+        apply_scale = QPushButton("Задать Home", panel)
+        apply_scale.clicked.connect(self._apply_plot_scale)
+        controls.addWidget(apply_scale)
+        home = QPushButton(panel)
+        home.setIcon(self.style().standardIcon(QStyle.SP_DirHomeIcon))
+        home.setToolTip("Вернуть заданный исходный масштаб графика")
+        home.clicked.connect(self._restore_plot_scale)
+        controls.addWidget(home)
+        export = QPushButton("Экспорт PNG", panel)
+        export.clicked.connect(self._export_plot_dialog)
+        controls.addWidget(export)
+        controls.addStretch(1)
+        layout.addLayout(controls)
         return panel
 
     def _build_log_panel(self) -> QWidget:
@@ -732,6 +763,72 @@ class MainWindow(QMainWindow):
             axis = self._plot.getPlotItem().getAxis(axis_name)
             axis.setPen(axis_pen)
             axis.setTextPen(axis_pen)
+        self._plot_initial_range = (80.0, 800.0, -60.0, 5.0)
+        self._plot_hover_label = QLabel(self._plot)
+        self._plot_hover_label.setStyleSheet(
+            "QLabel { background: rgba(30, 30, 30, 150); color: white; padding: 3px 6px; border-radius: 3px; }"
+        )
+        self._plot_hover_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._plot_hover_label.hide()
+        self._plot.scene().sigMouseMoved.connect(self._on_plot_mouse_moved)
+
+    def _apply_plot_scale(self) -> None:
+        """Validate editors and make their range the new Home position."""
+        x_min = self._plot_scale_inputs["x_min"].value()
+        x_max = self._plot_scale_inputs["x_max"].value()
+        y_min = self._plot_scale_inputs["y_min"].value()
+        y_max = self._plot_scale_inputs["y_max"].value()
+        if x_min >= x_max or y_min >= y_max:
+            QMessageBox.warning(self, "Некорректный масштаб", "Минимум должен быть меньше максимума.")
+            return
+        self._plot_initial_range = (x_min, x_max, y_min, y_max)
+        self._restore_plot_scale()
+
+    def _restore_plot_scale(self) -> None:
+        """Return the plot to the user-defined initial X/Y range."""
+        x_min, x_max, y_min, y_max = self._plot_initial_range
+        self._plot.setXRange(x_min, x_max, padding=0)
+        self._plot.setYRange(y_min, y_max, padding=0)
+
+    def _on_plot_mouse_moved(self, scene_position) -> None:
+        """Show frequency next to the cursor without obscuring the curve."""
+        plot_item = self._plot.getPlotItem()
+        if not plot_item.sceneBoundingRect().contains(scene_position):
+            self._plot_hover_label.hide()
+            return
+        frequency = plot_item.vb.mapSceneToView(scene_position).x()
+        self._plot_hover_label.setText(f"f = {frequency:.3f} GHz")
+        self._plot_hover_label.adjustSize()
+        local = self._plot.mapFromScene(scene_position)
+        self._plot_hover_label.move(local.x() + 12, local.y() + 12)
+        self._plot_hover_label.show()
+
+    def _export_plot_dialog(self) -> None:
+        selected, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Экспорт графика",
+            str(Path(self._last_files_directory()) / "s21.png"),
+            "PNG (*.png)",
+        )
+        if not selected:
+            return
+        path = Path(selected)
+        if path.suffix.lower() != ".png":
+            path = path.with_suffix(".png")
+        try:
+            self.export_plot_to_path(path)
+        except OSError as exc:
+            QMessageBox.critical(self, "Ошибка экспорта графика", str(exc))
+
+    def export_plot_to_path(self, path: str | Path) -> Path:
+        """Export the current plot item at twice its on-screen width."""
+        destination = Path(path).expanduser()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        exporter = pyqtgraph.exporters.ImageExporter(self._plot.getPlotItem())
+        exporter.parameters()["width"] = max(1200, self._plot.width() * 2)
+        exporter.export(str(destination))
+        self._remember_file_directory(destination)
+        return destination
 
     def _build_config(self) -> S21Config:
         values = dict(self._defaults.__dict__)

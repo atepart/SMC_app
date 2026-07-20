@@ -112,3 +112,24 @@ def test_open_file_menu_imports_both_comparison_traces(parameter_window: MainWin
     assert len(parameter_window._plot.listDataItems()) == 3
     legend_labels = {label.text for _, label in parameter_window._plot_legend.items}
     assert legend_labels == {"Theory", "HFSS", "Experiment"}
+
+
+def test_plot_home_hover_and_png_export(parameter_window: MainWindow, tmp_path) -> None:
+    parameter_window._plot_scale_inputs["x_min"].setValue(95.0)
+    parameter_window._plot_scale_inputs["x_max"].setValue(145.0)
+    parameter_window._plot_scale_inputs["y_min"].setValue(-25.0)
+    parameter_window._plot_scale_inputs["y_max"].setValue(0.0)
+    parameter_window._apply_plot_scale()
+
+    x_range, y_range = parameter_window._plot.getPlotItem().vb.viewRange()
+    assert x_range == pytest.approx([95.0, 145.0])
+    assert y_range == pytest.approx([-25.0, 0.0])
+
+    scene_position = parameter_window._plot.getPlotItem().vb.sceneBoundingRect().center()
+    parameter_window._on_plot_mouse_moved(scene_position)
+    assert parameter_window._plot_hover_label.isVisible()
+    assert "GHz" in parameter_window._plot_hover_label.text()
+
+    destination = tmp_path / "plot.png"
+    assert parameter_window.export_plot_to_path(destination) == destination
+    assert destination.read_bytes().startswith(b"\x89PNG")
