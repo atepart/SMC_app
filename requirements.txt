@@ -7,10 +7,11 @@ pillow==12.2.0
 pyinstaller==6.20.0
 pyinstaller-hooks-contrib==2026.5
 pyqtgraph==0.14.0
-pyside6==6.10.1
-pyside6-addons==6.10.1
-pyside6-essentials==6.10.1
+pyside6==6.8.2.1
+pyside6-addons==6.8.2.1
+pyside6-essentials==6.8.2.1
+pyside6-qtads==4.3.1.4
 requests==2.32.3
 scipy==1.17.0
 setuptools==82.0.1
-shiboken6==6.10.1
+shiboken6==6.8.2.1

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -11,7 +12,7 @@ from typing import Dict
 
 import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
-from PySide6.QtCore import QByteArray, QObject, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QByteArray, QObject, QSettings, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPainter, QWheelEvent
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtSvgWidgets import QGraphicsSvgItem
@@ -31,17 +32,19 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
-    QSplitter,
     QStyle,
     QVBoxLayout,
     QWidget,
 )
+from PySide6QtAds import CDockManager, CDockWidget, DockWidgetArea
 
 from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
 from aocapp.application.version import REPO_SLUG, __version__
 from aocapp.domain.s21_models import S21Config
 from aocapp.ui.update_dialogs import DownloadReleaseWorker, FetchReleasesWorker, ReleasePickerDialog
+
+CURRENT_DOCK_LAYOUT_VERSION = 1
 
 
 def _resource_path(*parts: str) -> Path:
@@ -121,6 +124,17 @@ class SvgGraphicsView(QGraphicsView):
         self._zoom_level = 0
         self.fitInView(self._svg_item.boundingRect(), Qt.KeepAspectRatio)
 
+    def resizeEvent(self, event) -> None:
+        """Keep the initial drawing fitted while QtAds settles dock sizes.
+
+        QtAds performs several resizes after the SVG is first loaded.  Refitting
+        only while ``_zoom_level == 0`` handles those layout changes without
+        destroying a scale explicitly chosen by the user with the wheel.
+        """
+        super().resizeEvent(event)
+        if self._svg_item is not None and self._zoom_level == 0:
+            self.fitInView(self._svg_item.boundingRect(), Qt.KeepAspectRatio)
+
     def wheelEvent(self, event: QWheelEvent) -> None:
         if event.angleDelta().y() == 0:
             return
@@ -152,6 +166,9 @@ class MainWindow(QMainWindow):
         self._s21_use_case = s21_use_case
         self.setWindowTitle(f"AOC Structure Calculator {__version__}")
         self.setWindowIcon(QIcon(str(_resource_path("assets", "aocapp-icon.png"))))
+        # QtAds calculates initial splitter ratios while docks are inserted, so
+        # establish the reference size before building the workspace.
+        self.resize(1440, 920)
 
         self._view = SvgGraphicsView()
         self._plot = pg.PlotWidget()
@@ -192,16 +209,51 @@ class MainWindow(QMainWindow):
         help_menu.addAction(update_action)
 
     def _build_ui(self) -> None:
-        container = QWidget(self)
-        layout = QHBoxLayout(container)
+        """Create the same movable dock workspace pattern used by RnSApp."""
+        self._configure_dock_manager_features()
+        self.dock_manager = CDockManager(self)
 
-        splitter = QSplitter(Qt.Horizontal, container)
-        splitter.addWidget(self._build_controls())
-        splitter.addWidget(self._build_preview())
-        splitter.setStretchFactor(1, 1)
+        self.parameters_dock = CDockWidget("Параметры")
+        self.parameters_dock.setObjectName("parameters_dock")
+        self.parameters_dock.setWidget(self._build_controls())
 
-        layout.addWidget(splitter)
-        self.setCentralWidget(container)
+        self.schematic_dock = CDockWidget("Схема")
+        self.schematic_dock.setObjectName("schematic_dock")
+        self.schematic_dock.setWidget(self._build_schematic_panel())
+
+        self.plot_dock = CDockWidget("График")
+        self.plot_dock.setObjectName("plot_dock")
+        self.plot_dock.setWidget(self._build_plot_panel())
+
+        self.log_dock = CDockWidget("Лог расчёта")
+        self.log_dock.setObjectName("log_dock")
+        self.log_dock.setWidget(self._build_log_panel())
+
+        left_area = self.dock_manager.addDockWidget(DockWidgetArea.LeftDockWidgetArea, self.parameters_dock)
+        right_area = self.dock_manager.addDockWidget(DockWidgetArea.RightDockWidgetArea, self.schematic_dock)
+        plot_area = self.dock_manager.addDockWidget(DockWidgetArea.BottomDockWidgetArea, self.plot_dock, right_area)
+        self.dock_manager.addDockWidget(DockWidgetArea.BottomDockWidgetArea, self.log_dock, plot_area)
+
+        self.dock_widgets = (
+            self.parameters_dock,
+            self.schematic_dock,
+            self.plot_dock,
+            self.log_dock,
+        )
+        for dock in self.dock_widgets:
+            # Match RnSApp: panels are movable, resizable and closable, but do
+            # not detach into hard-to-find native floating windows.
+            features = dock.features()
+            features |= CDockWidget.DockWidgetFeature.DockWidgetClosable
+            features &= ~CDockWidget.DockWidgetFeature.DockWidgetFloatable
+            features &= ~CDockWidget.DockWidgetFeature.DockWidgetPinnable
+            dock.setFeatures(features)
+
+        self._apply_default_dock_sizes()
+        self.default_dock_state = self.dock_manager.saveState()
+        self._build_workspace_toolbar()
+        with contextlib.suppress(Exception):
+            self.restore_settings()
 
     def _build_controls(self) -> QWidget:
         panel = QWidget(self)
@@ -290,37 +342,143 @@ class MainWindow(QMainWindow):
         outer.addWidget(scroll)
         return panel
 
-    def _build_preview(self) -> QWidget:
+    def _build_schematic_panel(self) -> QWidget:
+        """Build the SVG panel; its Home control sits at the lower left."""
         panel = QWidget(self)
         vbox = QVBoxLayout(panel)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.addWidget(self._view, stretch=1)
+
         toolbar = QHBoxLayout()
-        preview_title = QLabel("SVG Preview")
-        preview_title.setStyleSheet("font-weight: bold;")
-        toolbar.addWidget(preview_title)
-        toolbar.addStretch(1)
-        home_button = QPushButton("Home")
+        home_button = QPushButton()
         home_button.setToolTip("Return the SVG viewer to the initial fitted view.")
         home_button.setIcon(self.style().standardIcon(QStyle.SP_DirHomeIcon))
+        home_button.setFixedSize(30, 28)
         home_button.clicked.connect(self._view.reset_view)
         toolbar.addWidget(home_button)
+        toolbar.addStretch(1)
         vbox.addLayout(toolbar)
-        vbox.addWidget(self._view, stretch=3)
+        return panel
 
-        plot_title = QLabel("S21 Response")
-        plot_title.setStyleSheet("font-weight: bold;")
-        vbox.addWidget(plot_title)
-        vbox.addWidget(self._plot, stretch=2)
+    def _build_plot_panel(self) -> QWidget:
+        """Wrap the pyqtgraph widget for ownership by a QtAds dock."""
+        panel = QWidget(self)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.addWidget(self._plot)
+        return panel
 
-        log_title = QLabel("Calculation log")
-        log_title.setStyleSheet("font-weight: bold;")
-        vbox.addWidget(log_title)
-
+    def _build_log_panel(self) -> QWidget:
+        """Create the calculation log as an independent dock panel."""
+        panel = QWidget(self)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(4, 4, 4, 4)
         self._log_view = QPlainTextEdit()
         self._log_view.setReadOnly(True)
         self._log_view.setPlaceholderText("Run S21 to inspect intermediate backend messages.")
-        self._log_view.setMinimumHeight(150)
-        vbox.addWidget(self._log_view, stretch=1)
+        layout.addWidget(self._log_view)
         return panel
+
+    @staticmethod
+    def _configure_dock_manager_features() -> None:
+        """Disable QtAds auto-hide exactly as in the RnSApp workspace."""
+        with contextlib.suppress(Exception):
+            CDockManager.setAutoHideConfigFlag(CDockManager.eAutoHideFlag.AutoHideFeatureEnabled, False)
+            CDockManager.setAutoHideConfigFlag(CDockManager.eAutoHideFlag.DockAreaHasAutoHideButton, False)
+            CDockManager.setAutoHideConfigFlag(CDockManager.eAutoHideFlag.AutoHideButtonTogglesArea, False)
+
+    def _build_workspace_toolbar(self) -> None:
+        """Add layout recovery and a live checklist of dock panels."""
+        toolbar = QtWidgets.QToolBar("Вид", self)
+        toolbar.setObjectName("workspace_toolbar")
+        self.addToolBar(toolbar)
+
+        restore_action = QAction("Восстановить виджеты", self)
+        restore_action.setToolTip("Вернуть стандартное расположение панелей")
+        restore_action.triggered.connect(self.restore_default_layout)
+        toolbar.addAction(restore_action)
+
+        self.dock_widgets_menu = QtWidgets.QMenu("Виджеты", self)
+        self.dock_widgets_menu.aboutToShow.connect(self._refresh_dock_widgets_menu)
+        dock_widgets_button = QtWidgets.QToolButton(self)
+        dock_widgets_button.setText("Виджеты")
+        dock_widgets_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        dock_widgets_button.setMenu(self.dock_widgets_menu)
+        toolbar.addWidget(dock_widgets_button)
+
+    def _refresh_dock_widgets_menu(self) -> None:
+        """Rebuild the panel checklist from the actual QtAds state."""
+        self.dock_widgets_menu.clear()
+        for dock in self.dock_widgets:
+            action = self.dock_widgets_menu.addAction(dock.windowTitle())
+            action.setCheckable(True)
+            action.setChecked(not dock.isClosed())
+            action.setToolTip("Отмечено = панель показана")
+            action.triggered.connect(lambda checked, current=dock: self._set_dock_visible(current, checked))
+
+    def _set_dock_visible(self, dock: CDockWidget, visible: bool) -> None:
+        """Show or close one dock and persist the resulting workspace."""
+        dock.toggleView(visible)
+        self.save_settings()
+
+    def _apply_default_dock_sizes(self) -> None:
+        """Approximate the original 1440×920 composition with splitter ratios."""
+        with contextlib.suppress(Exception):
+            containers = self.dock_manager.dockContainers()
+            if containers:
+                root_splitter = containers[0].rootSplitter()
+                total_width = max(sum(root_splitter.sizes()), self.width() - 4)
+                parameters_width = max(280, total_width // 4)
+                root_splitter.setSizes([parameters_width, total_width - parameters_width])
+        with contextlib.suppress(Exception):
+            right_splitter = self.schematic_dock.dockAreaWidget().parentSplitter()
+            total_height = max(sum(right_splitter.sizes()), self.height() - 80)
+            right_splitter.setSizes(
+                [
+                    total_height * 5 // 10,
+                    total_height * 3 // 10,
+                    total_height * 2 // 10,
+                ]
+            )
+
+    def save_settings(self) -> None:
+        """Persist window geometry and the versioned QtAds layout."""
+        settings = QSettings()
+        settings.beginGroup("MainWindow")
+        settings.setValue("geometry", self.saveGeometry())
+        settings.endGroup()
+
+        settings.beginGroup("DockManager")
+        settings.setValue("state", self.dock_manager.saveState())
+        settings.setValue("layout_version", CURRENT_DOCK_LAYOUT_VERSION)
+        settings.endGroup()
+
+    def restore_settings(self) -> bool:
+        """Restore compatible settings and ignore stale layout versions."""
+        settings = QSettings()
+        settings.beginGroup("MainWindow")
+        geometry = settings.value("geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+        settings.endGroup()
+
+        settings.beginGroup("DockManager")
+        state = settings.value("state")
+        layout_version = settings.value("layout_version", 0, type=int)
+        restored = bool(state and layout_version == CURRENT_DOCK_LAYOUT_VERSION)
+        if restored:
+            restored = bool(self.dock_manager.restoreState(state))
+        settings.endGroup()
+        return restored
+
+    def restore_default_layout(self) -> None:
+        """Restore the captured default layout and reopen every panel."""
+        self.dock_manager.restoreState(self.default_dock_state)
+        for dock in self.dock_widgets:
+            if dock.isClosed():
+                dock.toggleView(True)
+        self._apply_default_dock_sizes()
+        self.save_settings()
 
     def _create_spinbox(self, name: str, field_info) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
@@ -735,6 +893,8 @@ class MainWindow(QMainWindow):
         self._update_spinner = None
 
     def closeEvent(self, event) -> None:
+        with contextlib.suppress(Exception):
+            self.save_settings()
         self._cleanup_update_thread()
         if self._s21_thread is not None:
             self._s21_thread.requestInterruption()
@@ -744,6 +904,8 @@ class MainWindow(QMainWindow):
 
 
 def run_app(use_case: GenerateStructureUseCase, s21_use_case: CalculateS21UseCase) -> None:
+    QtCore.QCoreApplication.setOrganizationName("AOCapp")
+    QtCore.QCoreApplication.setApplicationName("AOCapp")
     app = QApplication(sys.argv)
     window = MainWindow(use_case, s21_use_case)
     window.resize(1440, 920)
