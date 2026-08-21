@@ -33,7 +33,7 @@ class S21CalculatorImpl(S21Calculator):
 
     The matrix is multiplied detector-to-FFO as
     ``Mex4 · Mex3 · M_DCB · Mex2 · Mex1``.  ``Mex1``/``Mex2`` match the
-    low-impedance FFO to the folded-slot DC block, ``Mex3`` continues the
+    low-impedance FFO to the slot-antenna DC break, ``Mex3`` continues the
     transformation after the galvanic break, and ``Mex4`` contains the radial
     shunt and SIS-side tuning line.  The terminal impedances are the FFO source
     ``Zffo`` and the frequency-dependent SIS load ``Zsis``.

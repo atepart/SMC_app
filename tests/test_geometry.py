@@ -15,14 +15,18 @@ def test_preview_contains_every_calculated_matrix_group_and_transformer() -> Non
     assert [group.title for group in geometry.groups] == ["Mex01", "Mex02", "Mdcb", "Mex03", "Mrad", "MLsis", "Mex04"]
     assert sum(polygon.fill == TRANSFORMER_FILL for polygon in geometry.polygons) == 7
     assert sum(polygon.fill == RADIAL_FILL for polygon in geometry.polygons) == 2
-    dc_rects = [shape.rect for shape in geometry.rects if shape.fill == DC_FILL]
-    assert len(dc_rects) == 8
+    dc_polygons = [shape for shape in geometry.polygons if shape.fill == DC_FILL]
+    assert len(dc_polygons) == 2
 
-    # Four long arms form two separate folded-U conductors.  In particular,
-    # the facing inner arms must not bridge the central galvanic gap.
-    arms = sorted((rect for rect in dc_rects if rect.height > rect.width * 2.0), key=lambda rect: rect.x)
-    assert len(arms) == 4
-    assert arms[1].right < arms[2].x
+    # Exactly two conductors face one another across an open slot.  Each inner
+    # face is a straight vertical segment; there are no U-shaped return arms.
+    left, right = sorted(dc_polygons, key=lambda shape: min(point.x for point in shape.points))
+    left_inner_x = max(point.x for point in left.points)
+    right_inner_x = min(point.x for point in right.points)
+    assert left_inner_x < right_inner_x
+    assert sum(point.x == left_inner_x for point in left.points) == 2
+    assert sum(point.x == right_inner_x for point in right.points) == 2
+    assert not any(shape.fill == DC_FILL for shape in geometry.rects)
 
     register = next(shape.rect for shape in geometry.rects if shape.stroke == "#94a3b8")
     assert register.x > max(group.rect.right for group in geometry.groups)
@@ -54,13 +58,17 @@ def test_svg_renders_dotted_matrix_frames_and_engineering_labels() -> None:
     assert "Wslot=4 µm; Wэфф=3.5 µm" in svg
     assert 'orient="auto-start-reverse"' in svg
     assert "rotate(-90 " in svg
-    assert {f"T{index}" for index in range(1, 8)} <= {label.text for label in geometry.labels}
-    assert {f"MSL{index}" for index in range(4, 9)} <= {label.text for label in geometry.labels}
+    sequence_text = " ".join(label.text for label in geometry.labels)
+    assert all(f"T{index}" in sequence_text for index in range(1, 8))
+    assert all(f"MSL{index}" in sequence_text for index in range(4, 9))
     assert not any(label.text.strip().isdigit() for label in geometry.labels)
     assert "Размеры из параметров, µm" in svg
     assert "DC-break" in svg
+    assert "щелевая антенна" in svg
     assert "Radial shunt ×2" in svg
     assert "SIS" in svg
+    assert "Назначение расчётных частей" in svg
+    assert "Mrad + MLsis — ВЧ-замыкатель и индуктивная настройка SIS" in svg
 
 
 def test_size_register_uses_raw_inputs_and_backend_corrected_widths() -> None:

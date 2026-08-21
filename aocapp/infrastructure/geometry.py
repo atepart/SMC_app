@@ -55,7 +55,6 @@ class _Canvas:
     dimensions: list[DimensionLine] = field(default_factory=list)
     groups: list[GroupBoxShape] = field(default_factory=list)
     bounds_points: list[Point] = field(default_factory=list)
-    caption_count: int = 0
 
     def include_rect(self, rect: Rect) -> None:
         self.bounds_points.extend(
@@ -129,6 +128,7 @@ class IntegratedStructureCalculator(StructureCalculator):
             "T6",
         )
         self._add_group(canvas, mex1_start, x, frame_top, frame_bottom, "Mex01", title_side="left")
+        self._add_group_sequence(canvas, mex1_start, x, frame_bottom - 10.0, "T7  →  MSL8  →  T6")
 
         mex2_start = x
         x = self._add_microstrip(canvas, x, center_y, config.msl_7_len_m, config.msl_7_width_m, dw_um, "MSL7")
@@ -156,6 +156,7 @@ class IntegratedStructureCalculator(StructureCalculator):
             "T4",
         )
         self._add_group(canvas, mex2_start, x, frame_top + 14.0, frame_bottom - 14.0, "Mex02", title_side="left")
+        self._add_group_sequence(canvas, mex2_start, x, frame_bottom - 24.0, "MSL7  →  T5  →  MSL6  →  T4")
 
         dcb_start = x
         x = self._add_dc_block(canvas, config, x, center_y, dw_um)
@@ -198,6 +199,7 @@ class IntegratedStructureCalculator(StructureCalculator):
             "T1",
         )
         self._add_group(canvas, mex3_start, x, frame_top + 14.0, frame_bottom - 14.0, "Mex03", title_side="left")
+        self._add_group_sequence(canvas, mex3_start, x, frame_bottom - 24.0, "T3  →  MSL5  →  T2  →  MSL4  →  T1")
 
         x = self._add_radial_and_source(canvas, config, x, center_y, dw_um, frame_top, frame_bottom)
         canvas.labels.append(
@@ -265,7 +267,6 @@ class IntegratedStructureCalculator(StructureCalculator):
         ]
         canvas.polygons.append(PolygonShape(points, fill=TRANSFORMER_FILL))
         canvas.bounds_points.extend(points)
-        self._add_segment_caption(canvas, x, x + visual_length, center_y, max(start_height, end_height), label)
         return x + visual_length
 
     def _add_microstrip(
@@ -286,46 +287,37 @@ class IntegratedStructureCalculator(StructureCalculator):
         rect = Rect(x, center_y - visual_width / 2.0, visual_length, visual_width)
         canvas.rects.append(RectShape(rect, fill=CONDUCTOR_FILL))
         canvas.include_rect(rect)
-        self._add_segment_caption(canvas, x, rect.right, center_y, visual_width, label)
         return rect.right
 
-    def _add_segment_caption(
+    def _add_group_sequence(
         self,
         canvas: _Canvas,
         start_x: float,
         end_x: float,
-        center_y: float,
-        height: float,
+        y: float,
         text: str,
     ) -> None:
-        """Place a physical element name without the article's bare numbers.
+        """List the physical order once per matrix without crossing the metal.
 
-        Figure 3 in Khan et al. (2025) uses digits only together with a caption
-        below the micrograph.  The preview has no such external caption, so it
-        names the actual configured element and alternates labels above/below
-        neighbouring sections to keep them readable.
+        The former per-segment leader lines competed with narrow transformers,
+        dimension callouts and nested matrix frames.  A dedicated sequence
+        lane keeps the element-to-matrix mapping explicit while leaving the
+        topology itself unobstructed.
         """
-        if not text:
-            return
-        above = canvas.caption_count % 2 == 0
-        edge_y = center_y - height / 2.0 if above else center_y + height / 2.0
-        position = Point((start_x + end_x) / 2.0, edge_y - 16.0 if above else edge_y + 22.0)
-        leader_start = Point(position.x, position.y + 3.0 if above else position.y - 10.0)
-        leader_end = Point(position.x, edge_y - 3.0 if above else edge_y + 3.0)
-        canvas.labels.append(TextLabel(position, text, font_size=8.0, anchor="middle", font_weight="bold"))
-        canvas.lines.append(LineShape(leader_start, leader_end, stroke="#374151", stroke_width=0.6))
+        position = Point((start_x + end_x) / 2.0, y)
+        canvas.labels.append(TextLabel(position, text, font_size=7.0, anchor="middle", fill="#334155"))
         canvas.bounds_points.append(position)
-        canvas.bounds_points.append(leader_end)
-        canvas.caption_count += 1
 
     def _add_dc_block(self, canvas: _Canvas, config: S21Config, x: float, center_y: float, dw_um: float) -> float:
-        """Draw the two galvanically isolated folded conductors of the DC block.
+        """Draw the two opposed, galvanically isolated DC-break electrodes.
 
         ``Wslot`` is corrected as ``Wslot - DW`` and ``Wms`` as ``Wms + DW``,
-        exactly as in ``S21CalculatorImpl``.  Each side is one folded-U
-        conductor attached to its feed; the facing inner arms form the folded
-        slot antenna.  The central gap is deliberately left open, because this
-        element transfers RF power while blocking the FFO-to-detector DC path.
+        exactly as in ``S21CalculatorImpl``.  The two filled polygons are the
+        actual left and right conductors from the owner's fabrication sketch:
+        each feed widens through a short shoulder into a straight finger, and
+        the parallel finger faces are separated by the slot.  There are no
+        U-shaped return arms.  The open slot blocks the FFO-to-detector DC path
+        while the distributed slot-antenna model transfers RF power.
         """
         slot_width_um = max(0.1, config.w_slot_m * 1e6 - dw_um)
         slot_length_um = config.l_slot_m * 1e6
@@ -333,51 +325,60 @@ class IntegratedStructureCalculator(StructureCalculator):
         microstrip_length_um = config.l_ms_m * 1e6
         slot_offset_um = config.lso_m * 1e6
 
-        feed_length = max(22.0, microstrip_length_um * LENGTH_SCALE)
-        feed_height = max(4.0, microstrip_width_um)
+        feed_length = max(24.0, microstrip_length_um * LENGTH_SCALE)
+        feed_height = max(4.0, microstrip_width_um * WIDTH_SCALE)
         gap = max(7.0, slot_width_um * WIDTH_SCALE)
-        arm_span = max(22.0, slot_offset_um * LENGTH_SCALE)
-        arm_length = max(62.0, slot_length_um * WIDTH_SCALE)
+        shoulder = max(10.0, slot_offset_um * LENGTH_SCALE)
+        electrode_width = max(12.0, feed_height * 1.8)
+        electrode_length = max(62.0, slot_length_um * WIDTH_SCALE)
+        feed_top = center_y - feed_height / 2.0
+        feed_bottom = center_y + feed_height / 2.0
+        electrode_bottom = feed_bottom
+        electrode_top = electrode_bottom - electrode_length
 
-        left_feed = Rect(x, center_y - feed_height / 2.0, feed_length, feed_height)
-        left_outer_x = left_feed.right - feed_height
-        left_inner_x = left_outer_x + arm_span
-        right_inner_x = left_inner_x + feed_height + gap
-        right_outer_x = right_inner_x + arm_span
-        # The user sketch shows the two folded conductors rising from their
-        # feeds.  This is the same two-port as the earlier downward drawing,
-        # but it now matches the fabrication-view orientation.
-        arm_bottom = center_y + feed_height / 2.0
-        arm_top = arm_bottom - arm_length
+        left_feed_end = x + feed_length
+        left_electrode_x = left_feed_end + shoulder
+        left_slot_edge = left_electrode_x + electrode_width
+        right_slot_edge = left_slot_edge + gap
+        right_electrode_right = right_slot_edge + electrode_width
+        right_feed_start = right_electrode_right + shoulder
+        right_feed_end = right_feed_start + feed_length
 
-        left_bridge = Rect(left_outer_x, arm_top, arm_span + feed_height, feed_height)
-        left_outer_arm = Rect(left_outer_x, arm_top, feed_height, arm_length)
-        left_inner_arm = Rect(left_inner_x, arm_top, feed_height, arm_length)
-        right_bridge = Rect(right_inner_x, arm_top, arm_span + feed_height, feed_height)
-        right_inner_arm = Rect(right_inner_x, arm_top, feed_height, arm_length)
-        right_outer_arm = Rect(right_outer_x, arm_top, feed_height, arm_length)
-        right_feed = Rect(right_outer_x, center_y - feed_height / 2.0, feed_length, feed_height)
+        left_conductor = [
+            Point(x, feed_top),
+            Point(left_feed_end, feed_top),
+            Point(left_electrode_x, feed_top - feed_height * 0.35),
+            Point(left_electrode_x, electrode_top),
+            Point(left_slot_edge, electrode_top),
+            Point(left_slot_edge, electrode_bottom),
+            Point(left_electrode_x, electrode_bottom),
+            Point(left_feed_end, feed_bottom),
+            Point(x, feed_bottom),
+        ]
+        right_conductor = [
+            Point(right_slot_edge, electrode_top),
+            Point(right_electrode_right, electrode_top),
+            Point(right_electrode_right, feed_top - feed_height * 0.35),
+            Point(right_feed_start, feed_top),
+            Point(right_feed_end, feed_top),
+            Point(right_feed_end, feed_bottom),
+            Point(right_feed_start, feed_bottom),
+            Point(right_electrode_right, electrode_bottom),
+            Point(right_slot_edge, electrode_bottom),
+        ]
+        canvas.polygons.extend(
+            (
+                PolygonShape(left_conductor, fill=DC_FILL),
+                PolygonShape(right_conductor, fill=DC_FILL),
+            )
+        )
+        canvas.bounds_points.extend((*left_conductor, *right_conductor))
 
-        for rect in (
-            left_feed,
-            left_bridge,
-            left_outer_arm,
-            left_inner_arm,
-            right_bridge,
-            right_inner_arm,
-            right_outer_arm,
-            right_feed,
-        ):
-            canvas.rects.append(RectShape(rect, fill=DC_FILL))
-            canvas.include_rect(rect)
-
-        left_slot_edge = left_inner_arm.right
-        right_slot_edge = right_inner_arm.x
         slot_center_x = (left_slot_edge + right_slot_edge) / 2.0
         canvas.labels.append(
             TextLabel(
                 Point(slot_center_x, center_y + 34.0),
-                "DC-break",
+                "DC-break · щелевая антенна",
                 font_size=8.0,
                 anchor="middle",
                 font_weight="bold",
@@ -386,23 +387,23 @@ class IntegratedStructureCalculator(StructureCalculator):
         canvas.dimensions.extend(
             (
                 self._dim(
-                    Point(left_slot_edge, arm_top - 13.0),
-                    Point(right_slot_edge, arm_top - 13.0),
+                    Point(left_slot_edge, electrode_top - 13.0),
+                    Point(right_slot_edge, electrode_top - 13.0),
                     f"Wslot={config.w_slot_m * 1e6:g} µm; Wэфф={slot_width_um:g} µm",
-                    Point(slot_center_x, arm_top - 19.0),
+                    Point(slot_center_x, electrode_top - 19.0),
                 ),
                 self._dim(
-                    Point(right_outer_arm.right + 10.0, arm_top),
-                    Point(right_outer_arm.right + 10.0, arm_bottom),
+                    Point(right_electrode_right + 10.0, electrode_top),
+                    Point(right_electrode_right + 10.0, electrode_bottom),
                     f"Lslot={slot_length_um:g} µm",
-                    Point(right_outer_arm.right + 17.0, (arm_top + arm_bottom) / 2.0),
+                    Point(right_electrode_right + 17.0, (electrode_top + electrode_bottom) / 2.0),
                     label_rotation_deg=-90.0,
                 ),
             )
         )
         for dimension in canvas.dimensions[-2:]:
             canvas.bounds_points.extend((dimension.start, dimension.end, dimension.label_pos))
-        return right_feed.right
+        return right_feed_end
 
     def _add_radial_and_source(
         self,
@@ -459,7 +460,7 @@ class IntegratedStructureCalculator(StructureCalculator):
                     font_weight="bold",
                 ),
                 TextLabel(
-                    Point(stub_center.x + 13.0, center_y - 8.0),
+                    Point(stub_center.x + 18.0, center_y - 12.0),
                     "SIS",
                     font_size=7.0,
                     font_weight="bold",
@@ -546,7 +547,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         Transformer ``L`` is derived from the exact slice formula used by the
         calculator, not from the schematic's visual scale.
         """
-        height = 300.0
+        height = 330.0
         panel = Rect(left, top, max(1.0, right - left), height)
         canvas.rects.append(RectShape(panel, fill="#ffffff", stroke="#94a3b8", stroke_width=0.7))
         canvas.include_rect(panel)
@@ -616,6 +617,45 @@ class IntegratedStructureCalculator(StructureCalculator):
                     TextLabel(Point(x, y + 13.0 + line_index * 10.0), line, font_size=7.0, fill="#334155")
                 )
             cursors[column] += 28.0 + len(lines) * 9.0
+
+        purpose_top = top + 222.0
+        canvas.lines.append(
+            LineShape(
+                Point(panel.x + 10.0, purpose_top),
+                Point(panel.right - 10.0, purpose_top),
+                stroke="#94a3b8",
+                stroke_width=0.6,
+            )
+        )
+        canvas.labels.append(
+            TextLabel(
+                Point(panel.x + 12.0, purpose_top + 16.0),
+                "Назначение расчётных частей",
+                font_size=8.5,
+                font_weight="bold",
+            )
+        )
+        purpose_columns = (
+            (
+                "Mex01–Mex03 — каскады T/MSL для согласования импедансов",
+                "Mdcb — щелевая антенна: СВЧ проходит, постоянный ток разорван",
+            ),
+            (
+                "Mrad + MLsis — ВЧ-замыкатель и индуктивная настройка SIS",
+                "SIS — детектор: Rn || C0 и последовательная индуктивность электродов",
+            ),
+        )
+        for column, lines in enumerate(purpose_columns):
+            label_x = panel.x + column * column_width + 12.0
+            for line_index, line in enumerate(lines):
+                canvas.labels.append(
+                    TextLabel(
+                        Point(label_x, purpose_top + 33.0 + line_index * 16.0),
+                        line,
+                        font_size=7.1,
+                        fill="#334155",
+                    )
+                )
 
     def _add_group(
         self,

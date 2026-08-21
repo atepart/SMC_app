@@ -198,16 +198,20 @@ class DCBlockCalculator:
         top_thickness_m: float,
         bot_thickness_m: float,
     ):
-        """Calculate the ABCD matrix for the folded-slot DC block.
+        """Calculate the ABCD matrix for the slot-antenna DC break.
 
-        The physical layout is two isolated inverted-U conductors whose facing
-        arms form a slot antenna.  Its reciprocal equivalent circuit is the
-        symmetric cascade
+        The physical layout contains two galvanically isolated conductor
+        sections with opposed parallel faces, as in the fabrication sketch.
+        The paper by Khan et al. (2023), DOI 10.31857/S0033849423100066,
+        identifies this block as a DC break implemented by a slot antenna.
+        Its reciprocal distributed equivalent circuit is the symmetric cascade
 
         ``bridge/2 · open MSL · slot shunt · slot line · slot shunt · open MSL · bridge/2``.
 
-        Thus there is no DC series connection, while the slot/dipole mutual
-        coupling and open microstrip sections transfer the terahertz signal.
+        Thus there is no DC series connection.  The slot-field coupling and
+        open microstrip sections transfer the terahertz signal, so the model
+        must not be replaced by an unexplained lumped capacitor even though
+        the two opposed electrodes look capacitor-like in the plan view.
 
         Args:
             frequency_ghz: Frequency in GHz.
@@ -253,7 +257,7 @@ class DCBlockCalculator:
         )
         matrices.append(array([[1.0, z_ms], [0.0, 1.0]]))
 
-        # The two folded slots couple as identical shunt impedances on either
+        # Reciprocity gives identical slot-antenna shunt impedances on either
         # side of the short central slot-line section.
         base_distance = 2.0 * microstrip_width_m + 2.0 * slot_offset_m + 4.0e-6
         z_sa = self.slot_impedance(
