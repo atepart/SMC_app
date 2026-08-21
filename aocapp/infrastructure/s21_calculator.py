@@ -29,7 +29,19 @@ from aocapp.domain.s21_models import S21Config, S21Result
 
 @dataclass
 class S21CalculatorImpl(S21Calculator):
-    """S21 calculator that mirrors backend/main.py."""
+    """Assemble the legacy superconducting circuit as an ABCD network.
+
+    The matrix is multiplied detector-to-FFO as
+    ``Mex4 · Mex3 · M_DCB · Mex2 · Mex1``.  ``Mex1``/``Mex2`` match the
+    low-impedance FFO to the folded-slot DC block, ``Mex3`` continues the
+    transformation after the galvanic break, and ``Mex4`` contains the radial
+    shunt and SIS-side tuning line.  The terminal impedances are the FFO source
+    ``Zffo`` and the frequency-dependent SIS load ``Zsis``.
+
+    Values stay in the units used by ``backend/main.py``: GHz, metres, eV,
+    Ω·µm², F/µm² and dimensionless relative permittivity.  Presentation-only
+    conversions such as pF/µm² are reversed before this class is called.
+    """
 
     gap_calc: SuperconductingGapCalculator
     mb_calc: MattisBardeenCalculator
@@ -42,6 +54,19 @@ class S21CalculatorImpl(S21Calculator):
     results: ResultsCalculator
 
     def calculate(self, config: S21Config, progress_callback: Callable[[str], None] | None = None) -> S21Result:
+        """Calculate transducer ``S21`` for every requested LO frequency.
+
+        ``alpha_top`` and ``alpha_bot`` supply the correction from the
+        2026-07-07 Mathcad correspondence through
+        ``2*Delta0 = alpha*kB*Tc``.  The resulting gaps feed Mattis–Bardeen
+        conductivity tables, which in turn provide the complex surface
+        impedances used by every microstrip, transformer, DC-block and SIS
+        element.
+
+        The proposed ``t_prox`` anodization capacitance is intentionally not
+        present: it is a separate future parallel branch and no authoritative
+        Mathcad expression/value was supplied with issue #4.
+        """
         config.validate()
         log_messages: list[str] = []
 
@@ -53,6 +78,8 @@ class S21CalculatorImpl(S21Calculator):
         with warnings.catch_warnings(record=True) as caught_warnings:
             warnings.simplefilter("always", IntegrationWarning)
 
+            # Zero-temperature film gaps.  This is the specific alpha factor
+            # missing from the earlier worksheet version mentioned by Fedor.
             delta0_top = self._delta0_from_alpha_tc(config.alpha_top, config.tc_top_k)
             delta0_bot = self._delta0_from_alpha_tc(config.alpha_bot, config.tc_bot_k)
 
@@ -81,9 +108,13 @@ class S21CalculatorImpl(S21Calculator):
             e1 = config.e1
             dw = config.dw_m
 
+            # Fabrication correction applies with opposite sign to the etched
+            # slot and deposited microstrip, exactly as in the legacy model.
             w_slot = config.w_slot_m - dw
             w_ms = config.w_ms_m + dw
 
+            # Mdcb: symmetric seven-factor slot-antenna two-port.  It transfers
+            # RF while keeping the FFO and detector galvanically isolated.
             m_dcb = lambda f: self.dcb.matrix(
                 f,
                 w_slot,
@@ -101,6 +132,8 @@ class S21CalculatorImpl(S21Calculator):
                 config.d_bot_m,
             )
 
+            # Mrad/MLsis: transform the nominal Zrad0, add two identical radial
+            # shunt admittances, then tune the result with two MSL sections.
             zrad1 = lambda f: self.microstrip.transform_impedance(
                 f,
                 config.zrad0_ohm,
@@ -152,6 +185,8 @@ class S21CalculatorImpl(S21Calculator):
             )
 
             m_rad = lambda f: array([[1.0, 0.0], [1.0 / zrad4(f), 1.0]])
+            # Legacy deliberately evaluates this one short Mex4 line at f0,
+            # while the radial shunt itself remains evaluated at sweep f.
             mex4 = lambda f: m_rad(f).dot(
                 self.microstrip.matrix(
                     config.f0_ghz,
@@ -166,6 +201,7 @@ class S21CalculatorImpl(S21Calculator):
                 )
             )
 
+            # Mex3 is the detector-side cascade T1 -> MSL4 -> T2 -> MSL5 -> T3.
             m_transf_1 = lambda f: self._transformer_matrix(
                 top_film,
                 bot_film,
@@ -226,6 +262,7 @@ class S21CalculatorImpl(S21Calculator):
             )
             mex3 = lambda f: self.results.group(f, (m_transf_1, m_msl_4, m_transf_2, m_msl_5, m_transf_3))
 
+            # Mex2 is the middle cascade T4 -> MSL6 -> T5 -> MSL7.
             m_transf_4 = lambda f: self._transformer_matrix(
                 top_film,
                 bot_film,
@@ -274,6 +311,8 @@ class S21CalculatorImpl(S21Calculator):
             )
             mex2 = lambda f: self.results.group(f, (m_transf_4, m_msl_6, m_transf_5, m_msl_7))
 
+            # Mex1 is the FFO-side cascade T6 -> MSL8 -> T7 and uses the E1/H1
+            # dielectric stack rather than the E12/H12 stack used above.
             m_transf_6 = lambda f: self._transformer_matrix(
                 top_film,
                 bot_film,
@@ -314,6 +353,8 @@ class S21CalculatorImpl(S21Calculator):
             log("Assembling network: Mex4 -> Mex3 -> M_DCB -> Mex2 -> Mex1.")
             m_total = lambda f: self.results.group(f, (mex4, mex3, m_dcb, mex2, mex1))
 
+            # Terminal load: Rn and C0 in parallel, divided by junction area,
+            # plus the kinetic/geometric inductive correction of the leads.
             z_sis = lambda f: self.sis.impedance_sis(
                 f,
                 config.sis_area_um2,
@@ -356,7 +397,15 @@ class S21CalculatorImpl(S21Calculator):
 
         return S21Result(frequencies_ghz=list(freq_arr2), s21_db=res, log_messages=log_messages)
 
-    def _delta0_from_alpha_tc(self, alpha: float, critical_temperature_k: float) -> float:
+    @staticmethod
+    def _delta0_from_alpha_tc(alpha: float, critical_temperature_k: float) -> float:
+        """Return ``Delta0`` in eV from ``2*Delta0 = alpha*kB*Tc``.
+
+        ``1.38065/1.6022*1e-4`` is Boltzmann's constant in eV/K written with
+        the same rounded constants as the legacy backend.  For alpha=3.54 and
+        Tc=9.5 K this gives about 1.45 meV, preserving the old default while
+        making the documented alpha dependence effective.
+        """
         return alpha / 2.0 * 1.38065 / 1.6022 * critical_temperature_k * 1e-4
 
     def _build_film(
@@ -391,6 +440,13 @@ class S21CalculatorImpl(S21Calculator):
         thickness_m: float,
         dl_m: float,
     ):
+        """Build one stepped MSL transformer with the common width correction.
+
+        ``w_start_m``/``w_end_m`` identify the physical element endpoints,
+        ``dwdl_um`` controls the discrete width slices, and ``dl_m`` is the
+        longitudinal length of every slice.  The film and dielectric arguments
+        select the stack belonging to that portion of the circuit.
+        """
         return self.transformer.transformer_matrix(
             frequency_ghz,
             w_start_m + config.dw_m,

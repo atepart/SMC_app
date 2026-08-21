@@ -34,6 +34,9 @@ class S21Config:
     """
 
     GROUP_ORDER: ClassVar[tuple[str, ...]] = (
+        "LO",
+        "Backend Grid",
+        "SIS",
         "EL1 Material",
         "EL2 Material",
         "Dielectrics",
@@ -41,8 +44,6 @@ class S21Config:
         "DC Break",
         "Radial Stub",
         "Block SIS",
-        "Sweep / Source",
-        "Backend Grid",
     )
 
     temperature_k: float = field(
@@ -359,7 +360,7 @@ class S21Config:
         default=650.0,
         metadata={
             "label": "f0",
-            "group": "Sweep / Source",
+            "group": "LO",
             "description": "Reference frequency used by the legacy chain at the radial-stub-side line segment.",
             "suffix": " GHz",
             "minimum": 1.0,
@@ -1153,7 +1154,7 @@ class S21Config:
         default=100.0,
         metadata={
             "label": "Sweep start",
-            "group": "Sweep / Source",
+            "group": "LO",
             "description": "Start frequency for the S21 sweep.",
             "suffix": " GHz",
             "minimum": 0.01,
@@ -1166,7 +1167,7 @@ class S21Config:
         default=900.0,
         metadata={
             "label": "Sweep stop",
-            "group": "Sweep / Source",
+            "group": "LO",
             "description": "Stop frequency for the S21 sweep.",
             "suffix": " GHz",
             "minimum": 0.01,
@@ -1179,7 +1180,7 @@ class S21Config:
         default=5.0,
         metadata={
             "label": "Sweep step",
-            "group": "Sweep / Source",
+            "group": "LO",
             "description": "Frequency step for the S21 sweep.",
             "suffix": " GHz",
             "minimum": 0.01,
@@ -1192,7 +1193,7 @@ class S21Config:
         default=0.15,
         metadata={
             "label": "Z FFO",
-            "group": "Sweep / Source",
+            "group": "LO",
             "description": "Source impedance used on the FFO side in the S21 computation.",
             "suffix": " Ohm",
             "minimum": 0.001,
@@ -1206,7 +1207,7 @@ class S21Config:
         default=0.8,
         metadata={
             "label": "SIS area",
-            "group": "Block SIS",
+            "group": "SIS",
             "description": "Junction area of the SIS detector.",
             "suffix": " um^2",
             "minimum": 0.001,
@@ -1219,7 +1220,7 @@ class S21Config:
         default=32.0,
         metadata={
             "label": "RnA",
-            "group": "Block SIS",
+            "group": "SIS",
             "description": "Normal resistance-area product of the SIS junction.",
             "suffix": " Ohm*um^2",
             "minimum": 0.001,
@@ -1232,20 +1233,21 @@ class S21Config:
         default=8.3e-14,
         metadata={
             "label": "C0",
-            "group": "Block SIS",
+            "group": "SIS",
             "description": "Specific capacitance of the SIS junction.",
-            "suffix": " F/um^2",
-            "minimum": 1e-18,
-            "maximum": 1e-9,
-            "step": 1e-14,
-            "decimals": 14,
+            "suffix": " pF/µm²",
+            "minimum": 0.000001,
+            "maximum": 1000.0,
+            "step": 0.001,
+            "decimals": 6,
+            "scale": 1e12,
         },
     )
     sis_width_um: float = field(
         default=4.0,
         metadata={
             "label": "W SIS",
-            "group": "Block SIS",
+            "group": "SIS",
             "description": "Effective width used in the inductive correction near the SIS junction.",
             "suffix": " um",
             "minimum": 0.1,
@@ -1346,7 +1348,9 @@ class S21Config:
         """Return the UI scale factor for a field.
 
         A value of ``1e6`` means the UI displays micrometers while the dataclass
-        stores the corresponding value in meters.
+        stores the corresponding value in meters.  The SIS capacitance uses
+        ``1e12`` so the UI presents pF/µm² while the calculation continues to
+        receive the legacy F/µm² value.
         """
         for config_field in dataclass_fields(cls):
             if config_field.name == name:

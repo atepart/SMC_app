@@ -2,10 +2,10 @@
 
 The preview is deliberately derived from the same :class:`S21Config` fields
 as ``S21CalculatorImpl``.  Its left-to-right order follows the supplied
-engineering sketch (load to source), which is the reverse of the matrix
-multiplication order used by the calculator::
+engineering sketch (FFO toward the detector-side matching network), which is
+the reverse of the matrix multiplication order used by the calculator::
 
-    drawing:      Mex01 -> Mex02 -> Mdcb -> Mex03 -> Mex04 -> 50 Ohm
+    drawing:      FFO -> Mex01 -> Mex02 -> Mdcb -> Mex03 -> Mex04
     calculation:  Mex4  -> Mex3  -> Mdcb -> Mex2  -> Mex1
 
 Reversing the visual order does not change the formulas; it only presents the
@@ -83,8 +83,9 @@ class IntegratedStructureCalculator(StructureCalculator):
 
         Width correction ``DW`` is added wherever the S21 calculator adds it.
         The seven transformers are drawn in reverse physical direction because
-        the reference runs from the SIS/load side (Mex01) to the 50 Ohm source,
-        whereas ``m_total`` is multiplied from ``Mex4`` toward ``Mex1``.
+        the reference runs from the FFO side (Mex01) toward the radial/SIS
+        matching section, whereas ``m_total`` is multiplied from ``Mex4``
+        toward ``Mex1``.
         """
         canvas = _Canvas()
         center_y = 185.0
@@ -99,7 +100,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         input_rect = Rect(x, center_y - input_width / 2.0, 20.0, input_width)
         canvas.rects.append(RectShape(input_rect, fill=CONDUCTOR_FILL))
         canvas.include_rect(input_rect)
-        canvas.labels.append(TextLabel(Point(x, center_y - input_width / 2.0 - 10.0), "SIS/load", font_size=8.0))
+        canvas.labels.append(TextLabel(Point(x, center_y - input_width / 2.0 - 10.0), "ФФО", font_size=8.0))
         x = input_rect.right
 
         mex1_start = x
@@ -312,61 +313,70 @@ class IntegratedStructureCalculator(StructureCalculator):
         canvas.bounds_points.append(leader_end)
 
     def _add_dc_block(self, canvas: _Canvas, config: S21Config, x: float, center_y: float, dw_um: float) -> float:
-        """Draw the symmetric slot-coupled DC block used by ``DCBlockCalculator``.
+        """Draw the two galvanically isolated folded conductors of the DC block.
 
         ``Wslot`` is corrected as ``Wslot - DW`` and ``Wms`` as ``Wms + DW``,
-        exactly as in ``S21CalculatorImpl``.  The two vertical plates represent
-        the symmetric series bridge terms; the open U-shaped conductors below
-        represent the two coupled slot/dipole shunt branches.
+        exactly as in ``S21CalculatorImpl``.  Each side is one inverted-U
+        conductor attached to its feed; the facing inner arms form the folded
+        slot antenna.  The central gap is deliberately left open, because this
+        element transfers RF power while blocking the FFO-to-detector DC path.
         """
         slot_width_um = max(0.1, config.w_slot_m * 1e6 - dw_um)
         slot_length_um = config.l_slot_m * 1e6
         microstrip_width_um = config.w_ms_m * 1e6 + dw_um
         microstrip_length_um = config.l_ms_m * 1e6
+        slot_offset_um = config.lso_m * 1e6
 
         feed_length = max(22.0, microstrip_length_um * LENGTH_SCALE)
-        feed_height = max(4.0, microstrip_width_um * WIDTH_SCALE)
+        feed_height = max(4.0, microstrip_width_um)
         gap = max(7.0, slot_width_um * WIDTH_SCALE)
-        plate_width = max(5.0, feed_height * 0.42)
-        plate_height = max(62.0, slot_length_um * WIDTH_SCALE)
+        arm_span = max(22.0, slot_offset_um * LENGTH_SCALE)
+        arm_length = max(62.0, slot_length_um * WIDTH_SCALE)
 
         left_feed = Rect(x, center_y - feed_height / 2.0, feed_length, feed_height)
-        left_plate = Rect(left_feed.right, center_y - plate_height / 2.0, plate_width, plate_height)
-        right_plate = Rect(left_plate.right + gap, center_y - plate_height / 2.0, plate_width, plate_height)
-        right_feed = Rect(right_plate.right, center_y - feed_height / 2.0, feed_length, feed_height)
-        for rect in (left_feed, left_plate, right_plate, right_feed):
+        left_outer_x = left_feed.right - feed_height
+        left_inner_x = left_outer_x + arm_span
+        right_inner_x = left_inner_x + feed_height + gap
+        right_outer_x = right_inner_x + arm_span
+        arm_top = center_y - feed_height / 2.0
+
+        left_bridge = Rect(left_outer_x, arm_top, arm_span + feed_height, feed_height)
+        left_outer_arm = Rect(left_outer_x, arm_top, feed_height, arm_length)
+        left_inner_arm = Rect(left_inner_x, arm_top, feed_height, arm_length)
+        right_bridge = Rect(right_inner_x, arm_top, arm_span + feed_height, feed_height)
+        right_inner_arm = Rect(right_inner_x, arm_top, feed_height, arm_length)
+        right_outer_arm = Rect(right_outer_x, arm_top, feed_height, arm_length)
+        right_feed = Rect(right_outer_x, arm_top, feed_length, feed_height)
+
+        for rect in (
+            left_feed,
+            left_bridge,
+            left_outer_arm,
+            left_inner_arm,
+            right_bridge,
+            right_inner_arm,
+            right_outer_arm,
+            right_feed,
+        ):
             canvas.rects.append(RectShape(rect, fill=DC_FILL))
             canvas.include_rect(rect)
 
-        # Slot/dipole coupling is drawn as two open U branches.  It is not an
-        # electrical shortcut across the DC gap: the branches remain separate.
-        branch_bottom = center_y + plate_height / 2.0 + 42.0
-        left_outer = left_plate.x - 18.0
-        right_outer = right_plate.right + 18.0
-        branch_lines = (
-            LineShape(Point(left_outer, center_y), Point(left_outer, branch_bottom), stroke_width=2.6),
-            LineShape(Point(left_outer, branch_bottom), Point(left_plate.right, branch_bottom), stroke_width=2.6),
-            LineShape(Point(right_outer, center_y), Point(right_outer, branch_bottom), stroke_width=2.6),
-            LineShape(Point(right_plate.x, branch_bottom), Point(right_outer, branch_bottom), stroke_width=2.6),
-        )
-        canvas.lines.extend(branch_lines)
-        for line in branch_lines:
-            canvas.bounds_points.extend((line.start, line.end))
-
-        slot_center_x = (left_plate.right + right_plate.x) / 2.0
+        left_slot_edge = left_inner_arm.right
+        right_slot_edge = right_inner_arm.x
+        slot_center_x = (left_slot_edge + right_slot_edge) / 2.0
         canvas.dimensions.extend(
             (
                 self._dim(
-                    Point(left_plate.right, center_y - plate_height / 2.0 - 13.0),
-                    Point(right_plate.x, center_y - plate_height / 2.0 - 13.0),
+                    Point(left_slot_edge, arm_top - 13.0),
+                    Point(right_slot_edge, arm_top - 13.0),
                     f"Wslot={slot_width_um:g} µm",
-                    Point(slot_center_x, center_y - plate_height / 2.0 - 19.0),
+                    Point(slot_center_x, arm_top - 19.0),
                 ),
                 self._dim(
-                    Point(left_plate.x - 10.0, center_y - plate_height / 2.0),
-                    Point(left_plate.x - 10.0, center_y + plate_height / 2.0),
+                    Point(left_outer_arm.x - 10.0, arm_top),
+                    Point(left_outer_arm.x - 10.0, arm_top + arm_length),
                     f"Lslot={slot_length_um:g} µm",
-                    Point(slot_center_x, center_y + plate_height / 2.0 + 18.0),
+                    Point(slot_center_x, arm_top + arm_length + 18.0),
                 ),
             )
         )

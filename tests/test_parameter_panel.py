@@ -62,9 +62,11 @@ def test_wheel_requires_click_and_groups_collapse(parameter_window: MainWindow) 
     assert spin.value() == original + spin.singleStep()
 
     group = parameter_window._parameter_groups["Dielectrics"]
+    assert group.toggle_button.arrowType() == QtCore.Qt.ArrowType.DownArrow
     group.setChecked(False)
     app.processEvents()
     assert not group.content.isVisible()
+    assert group.toggle_button.arrowType() == QtCore.Qt.ArrowType.RightArrow
     assert not parameter_window.parameters_scroll.isAncestorOf(parameter_window.actions_box)
 
 
@@ -93,6 +95,15 @@ def test_greek_labels_fixed_orders_and_design_round_trip(parameter_window: MainW
     assert not parameter_window._same_materials_checkbox.isChecked()
 
 
+def test_issue_4_group_order_and_sis_capacitance_units(parameter_window: MainWindow) -> None:
+    assert list(parameter_window._parameter_groups)[:3] == ["LO", "Backend Grid", "SIS"]
+
+    capacitance = parameter_window._config_inputs["sis_cap_f_per_um2"]
+    assert capacitance.value() == pytest.approx(0.083)
+    assert capacitance.suffix() == " pF/µm²"
+    assert parameter_window._build_config().sis_cap_f_per_um2 == pytest.approx(8.3e-14)
+
+
 def test_open_file_menu_imports_both_comparison_traces(parameter_window: MainWindow, tmp_path) -> None:
     assert [action.text() for action in parameter_window.open_files_menu.actions()] == [
         "Дизайн",
@@ -115,6 +126,15 @@ def test_open_file_menu_imports_both_comparison_traces(parameter_window: MainWin
 
 
 def test_plot_home_hover_and_png_export(parameter_window: MainWindow, tmp_path) -> None:
+    app = QtWidgets.QApplication.instance()
+    assert app is not None
+    assert parameter_window._plot_initial_range == (100.0, 900.0, -20.0, 0.0)
+    assert parameter_window._plot_scale_inputs["x_min"].singleStep() == 50.0
+    assert parameter_window._plot_scale_inputs["y_min"].singleStep() == 5.0
+    initial_x_range, initial_y_range = parameter_window._plot.getPlotItem().vb.viewRange()
+    assert initial_x_range == pytest.approx([100.0, 900.0])
+    assert initial_y_range == pytest.approx([-20.0, 0.0])
+
     parameter_window._plot_scale_inputs["x_min"].setValue(95.0)
     parameter_window._plot_scale_inputs["x_max"].setValue(145.0)
     parameter_window._plot_scale_inputs["y_min"].setValue(-25.0)
@@ -125,10 +145,21 @@ def test_plot_home_hover_and_png_export(parameter_window: MainWindow, tmp_path) 
     assert x_range == pytest.approx([95.0, 145.0])
     assert y_range == pytest.approx([-25.0, 0.0])
 
-    scene_position = parameter_window._plot.getPlotItem().vb.sceneBoundingRect().center()
+    view_box = parameter_window._plot.getPlotItem().vb
+    scene_position = view_box.mapToScene(view_box.boundingRect().center())
     parameter_window._on_plot_mouse_moved(scene_position)
     assert parameter_window._plot_hover_label.isVisible()
     assert "GHz" in parameter_window._plot_hover_label.text()
+    assert "S21" in parameter_window._plot_hover_label.text()
+    assert "dB" in parameter_window._plot_hover_label.text()
+    assert "f = 120." in parameter_window._plot_hover_label.text()
+
+    parameter_window._plot_scale_inputs["x_min"].setValue(100.0)
+    parameter_window._plot_scale_inputs["x_max"].setValue(1100.0)
+    parameter_window._apply_plot_scale()
+    app.processEvents()
+    assert parameter_window._frequency_axis.labelUnits == "THz"
+    assert parameter_window._frequency_axis.tickStrings([1000.0], 1.0, 100.0) == ["1.0"]
 
     destination = tmp_path / "plot.png"
     assert parameter_window.export_plot_to_path(destination) == destination

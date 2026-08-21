@@ -15,7 +15,14 @@ def test_preview_contains_every_calculated_matrix_group_and_transformer() -> Non
     assert [group.title for group in geometry.groups] == ["Mex01", "Mex02", "Mdcb", "Mex03", "Mrad", "MLsis", "Mex04"]
     assert sum(polygon.fill == TRANSFORMER_FILL for polygon in geometry.polygons) == 7
     assert sum(polygon.fill == RADIAL_FILL for polygon in geometry.polygons) == 2
-    assert sum(rect.fill == DC_FILL for rect in geometry.rects) == 4
+    dc_rects = [shape.rect for shape in geometry.rects if shape.fill == DC_FILL]
+    assert len(dc_rects) == 8
+
+    # Four long arms form two separate inverted-U conductors.  In particular,
+    # the facing inner arms must not bridge the central galvanic gap.
+    arms = sorted((rect for rect in dc_rects if rect.height > rect.width * 2.0), key=lambda rect: rect.x)
+    assert len(arms) == 4
+    assert arms[1].right < arms[2].x
 
 
 def test_transformer_length_matches_backend_slice_formula() -> None:
@@ -38,4 +45,6 @@ def test_svg_renders_dotted_matrix_frames_and_engineering_labels() -> None:
     assert "Mdcb" in svg
     assert "Mex04" in svg
     assert "50 Ω" in svg
+    assert "ФФО" in svg
+    assert "SIS/load" not in svg
     assert "Wslot=3.5 µm" in svg

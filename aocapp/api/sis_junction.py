@@ -31,7 +31,16 @@ class SISJunctionCalculator:
         insulator_thickness_m: float,
         width_um: float = 4.0,
     ) -> complex:
-        """Calculate SIS junction impedance.
+        """Calculate the large-signal equivalent SIS junction impedance.
+
+        The tunnel element is modelled as ``Rn || C0`` per unit area,
+        ``Z0 = 1 / (1/RnA + j*omega*C0) / S``.  A series term ``j*L_sis`` then
+        represents current spreading and the magnetic/kinetic inductance of
+        the two superconducting electrodes plus the insulating layer.
+
+        ``C0`` is only the tunnel-junction specific capacitance.  A future
+        anodization/proximity capacitance parameterized by ``t_prox`` would be
+        an additional parallel branch and is deliberately not folded into C0.
 
         Args:
             frequency_ghz: Frequency in GHz.

@@ -23,7 +23,7 @@ echo "Building main app..."
 "$PYTHON_BIN" -m PyInstaller aocapp/__main__.py \
   -n "$APP_NAME" \
   --onedir \
-  --icon=assets/aocapp-icon.ico \
+  --icon=assets/smc-logo.ico \
   --noconsole \
   --windowed \
   -y \

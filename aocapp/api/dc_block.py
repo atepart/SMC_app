@@ -198,7 +198,16 @@ class DCBlockCalculator:
         top_thickness_m: float,
         bot_thickness_m: float,
     ):
-        """Calculate the ABCD matrix for the DC block structure.
+        """Calculate the ABCD matrix for the folded-slot DC block.
+
+        The physical layout is two isolated inverted-U conductors whose facing
+        arms form a slot antenna.  Its reciprocal equivalent circuit is the
+        symmetric cascade
+
+        ``bridge/2 · open MSL · slot shunt · slot line · slot shunt · open MSL · bridge/2``.
+
+        Thus there is no DC series connection, while the slot/dipole mutual
+        coupling and open microstrip sections transfer the terahertz signal.
 
         Args:
             frequency_ghz: Frequency in GHz.
@@ -218,6 +227,8 @@ class DCBlockCalculator:
         """
         matrices = []
 
+        # Series impedance of half the narrow bridge; symmetry adds the same
+        # term again at the far side of the element.
         bridge_width = slot_width_m + 2.0 * microstrip_width_m
         z_bridge, gamma_bridge = self.bridge_line(
             frequency_ghz, slot_width_m, bridge_width, substrate_dielectric, substrate_thickness_m
@@ -226,6 +237,8 @@ class DCBlockCalculator:
 
         matrices.append(array([[1.0, z_bridge_eff / 2.0], [0.0, 1.0]]))
 
+        # Each conductor ends as an open microstrip.  1e10 Ω is the legacy
+        # numerical approximation of that open termination.
         z_ms = self.microstrip.transform_impedance(
             frequency_ghz,
             1.0e10,
@@ -240,6 +253,8 @@ class DCBlockCalculator:
         )
         matrices.append(array([[1.0, z_ms], [0.0, 1.0]]))
 
+        # The two folded slots couple as identical shunt impedances on either
+        # side of the short central slot-line section.
         base_distance = 2.0 * microstrip_width_m + 2.0 * slot_offset_m + 4.0e-6
         z_sa = self.slot_impedance(
             frequency_ghz,

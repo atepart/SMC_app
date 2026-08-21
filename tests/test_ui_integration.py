@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import cast
 from unittest.mock import Mock
 
@@ -50,7 +52,21 @@ def test_main_window_supports_material_toggle_and_preview_refresh(tmp_path) -> N
     app.processEvents()
 
     assert window._view._svg_item is not None
-    screenshot_path = tmp_path / "main-window.png"
+    window._update_s21_plot([100.0, 300.0, 500.0, 700.0, 900.0], [-18.0, -8.0, -4.0, -7.0, -15.0])
+    window._parameter_groups["LO"].setChecked(False)
+    window._parameter_groups["Backend Grid"].setChecked(False)
+    view_box = window._plot.getPlotItem().vb
+    scene_position = view_box.mapToScene(view_box.boundingRect().center())
+    window._on_plot_mouse_moved(scene_position)
+    app.processEvents()
+
+    artifact_dir = os.environ.get("AOC_UI_ARTIFACT_DIR")
+    if artifact_dir:
+        screenshot_dir = Path(artifact_dir)
+        screenshot_dir.mkdir(parents=True, exist_ok=True)
+        screenshot_path = screenshot_dir / "issue-4-interface.png"
+    else:
+        screenshot_path = tmp_path / "main-window.png"
     assert window.grab().save(str(screenshot_path))
     assert screenshot_path.stat().st_size > 0
 

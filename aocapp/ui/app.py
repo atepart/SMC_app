@@ -185,25 +185,70 @@ class SafeDoubleSpinBox(QDoubleSpinBox):
             event.ignore()
 
 
-class CollapsibleParameterGroup(QGroupBox):
-    """Checkable group box that actually removes its form from the layout."""
+class FrequencyAxisItem(pg.AxisItem):
+    """Frequency axis that switches from GHz to THz instead of showing kGHz."""
+
+    def __init__(self, orientation: str = "bottom") -> None:
+        super().__init__(orientation=orientation)
+        self._display_factor = 1.0
+        self._display_unit = "GHz"
+        self.enableAutoSIPrefix(False)
+        self.setLabel("Frequency", units=self._display_unit)
+
+    def set_display_range(self, lower_ghz: float, upper_ghz: float) -> None:
+        """Choose the engineering unit from the visible data range."""
+        use_thz = max(abs(lower_ghz), abs(upper_ghz)) >= 1000.0
+        factor = 1e-3 if use_thz else 1.0
+        unit = "THz" if use_thz else "GHz"
+        if factor == self._display_factor:
+            return
+        self._display_factor = factor
+        self._display_unit = unit
+        self.setLabel("Frequency", units=unit)
+        self.picture = None
+        self.update()
+
+    def tickStrings(self, values, scale, spacing):  # noqa: N802 - Qt/pyqtgraph API
+        """Format GHz data coordinates in the selected display unit."""
+        display_spacing = abs(spacing * scale * self._display_factor)
+        decimals = 0 if display_spacing <= 0 else max(0, min(6, math.ceil(-math.log10(display_spacing))))
+        return [f"{value * scale * self._display_factor:.{decimals}f}" for value in values]
+
+
+class CollapsibleParameterGroup(QWidget):
+    """Parameter section with an explicit down/right disclosure triangle."""
 
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
-        super().__init__(title, parent)
-        self.setCheckable(True)
-        self.setChecked(True)
+        super().__init__(parent)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 2, 6, 4)
+        self.toggle_button = QtWidgets.QToolButton(self)
+        self.toggle_button.setText(title)
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setChecked(True)
+        self.toggle_button.setArrowType(Qt.ArrowType.DownArrow)
+        self.toggle_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.toggle_button.setAutoRaise(True)
+        self.toggle_button.setStyleSheet("QToolButton { font-weight: bold; border: 0; padding: 2px; }")
+        layout.addWidget(self.toggle_button)
         self.content = QWidget(self)
         self.form_layout = QFormLayout(self.content)
         self.form_layout.setLabelAlignment(Qt.AlignLeft)
         layout.addWidget(self.content)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Maximum)
-        self.toggled.connect(self._set_expanded)
+        self.toggle_button.toggled.connect(self._set_expanded)
+
+    def setChecked(self, checked: bool) -> None:  # noqa: N802 - compatibility with the former QGroupBox API
+        self.toggle_button.setChecked(checked)
+
+    def isChecked(self) -> bool:  # noqa: N802 - compatibility with the former QGroupBox API
+        return self.toggle_button.isChecked()
 
     def _set_expanded(self, expanded: bool) -> None:
         """Hide the form and release its height back to the scroll layout."""
+        self.toggle_button.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
         self.content.setVisible(expanded)
-        self.setMaximumHeight(16777215 if expanded else self.fontMetrics().height() + 18)
+        self.setMaximumHeight(16777215 if expanded else self.toggle_button.sizeHint().height() + 8)
         self.updateGeometry()
 
 
@@ -219,13 +264,14 @@ class MainWindow(QMainWindow):
         self._use_case = use_case
         self._s21_use_case = s21_use_case
         self.setWindowTitle(f"AOC Structure Calculator {__version__}")
-        self.setWindowIcon(QIcon(str(_resource_path("assets", "aocapp-icon.png"))))
+        self.setWindowIcon(QIcon(str(_resource_path("assets", "smc-logo.png"))))
         # QtAds calculates initial splitter ratios while docks are inserted, so
         # establish the reference size before building the workspace.
         self.resize(1440, 920)
 
         self._view = SvgGraphicsView()
-        self._plot = pg.PlotWidget()
+        self._frequency_axis = FrequencyAxisItem()
+        self._plot = pg.PlotWidget(axisItems={"bottom": self._frequency_axis})
         self._config_inputs: Dict[str, QDoubleSpinBox] = {}
         self._parameter_groups: Dict[str, CollapsibleParameterGroup] = {}
         self._engineering_orders: Dict[str, QLineEdit] = {}
@@ -444,16 +490,17 @@ class MainWindow(QMainWindow):
         controls = QHBoxLayout()
         self._plot_scale_inputs: dict[str, QDoubleSpinBox] = {}
         for name, label, value in (
-            ("x_min", "X min", 80.0),
-            ("x_max", "X max", 800.0),
-            ("y_min", "Y min", -60.0),
-            ("y_max", "Y max", 5.0),
+            ("x_min", "X min", 100.0),
+            ("x_max", "X max", 900.0),
+            ("y_min", "Y min", -20.0),
+            ("y_max", "Y max", 0.0),
         ):
             controls.addWidget(QLabel(label))
             spin = SafeDoubleSpinBox(panel)
             spin.setRange(-1_000_000.0, 1_000_000.0)
             spin.setDecimals(2)
             spin.setValue(value)
+            spin.setSingleStep(50.0 if name.startswith("x_") else 5.0)
             spin.setFixedWidth(90)
             self._plot_scale_inputs[name] = spin
             controls.addWidget(spin)
@@ -720,7 +767,7 @@ class MainWindow(QMainWindow):
         spin.setValue(default_value * scale)
         # Scaled metric dimensions get a separate immutable engineering-order
         # field, so the editable number remains uncluttered and unambiguous.
-        if scale == 1.0:
+        if scale == 1.0 or name == "sis_cap_f_per_um2":
             spin.setSuffix(field_info.suffix)
         if name in self._material_sync_map:
             spin.valueChanged.connect(self._apply_material_sync)
@@ -729,7 +776,7 @@ class MainWindow(QMainWindow):
     def _build_parameter_editor(self, name: str, spin: SafeDoubleSpinBox) -> QWidget:
         """Add an immutable ``×10^n`` field for SI values shown with a scale."""
         scale = S21Config.field_scale(name)
-        if scale == 1.0:
+        if scale == 1.0 or name == "sis_cap_f_per_um2":
             return spin
 
         exponent = -round(math.log10(scale))
@@ -763,7 +810,7 @@ class MainWindow(QMainWindow):
             axis = self._plot.getPlotItem().getAxis(axis_name)
             axis.setPen(axis_pen)
             axis.setTextPen(axis_pen)
-        self._plot_initial_range = (80.0, 800.0, -60.0, 5.0)
+        self._plot_initial_range = (100.0, 900.0, -20.0, 0.0)
         self._plot_hover_label = QLabel(self._plot)
         self._plot_hover_label.setStyleSheet(
             "QLabel { background: rgba(30, 30, 30, 150); color: white; padding: 3px 6px; border-radius: 3px; }"
@@ -771,6 +818,8 @@ class MainWindow(QMainWindow):
         self._plot_hover_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._plot_hover_label.hide()
         self._plot.scene().sigMouseMoved.connect(self._on_plot_mouse_moved)
+        self._plot.getPlotItem().vb.sigXRangeChanged.connect(self._sync_frequency_axis_unit)
+        self._restore_plot_scale()
 
     def _apply_plot_scale(self) -> None:
         """Validate editors and make their range the new Home position."""
@@ -790,14 +839,19 @@ class MainWindow(QMainWindow):
         self._plot.setXRange(x_min, x_max, padding=0)
         self._plot.setYRange(y_min, y_max, padding=0)
 
+    def _sync_frequency_axis_unit(self, *_args) -> None:
+        """Keep the bottom-axis unit aligned with the visible GHz range."""
+        x_range = self._plot.getPlotItem().vb.viewRange()[0]
+        self._frequency_axis.set_display_range(x_range[0], x_range[1])
+
     def _on_plot_mouse_moved(self, scene_position) -> None:
-        """Show frequency next to the cursor without obscuring the curve."""
+        """Show frequency and S21 coordinates next to the cursor."""
         plot_item = self._plot.getPlotItem()
         if not plot_item.sceneBoundingRect().contains(scene_position):
             self._plot_hover_label.hide()
             return
-        frequency = plot_item.vb.mapSceneToView(scene_position).x()
-        self._plot_hover_label.setText(f"f = {frequency:.3f} GHz")
+        cursor_value = plot_item.vb.mapSceneToView(scene_position)
+        self._plot_hover_label.setText(f"f = {cursor_value.x():.3f} GHz; S21 = {cursor_value.y():.3f} dB")
         self._plot_hover_label.adjustSize()
         local = self._plot.mapFromScene(scene_position)
         self._plot_hover_label.move(local.x() + 12, local.y() + 12)
@@ -986,6 +1040,11 @@ class MainWindow(QMainWindow):
                 pen=pg.mkPen(color=color, width=2, style=style),
                 name=kind,
             )
+
+        # PlotItem enables auto-range again when curves are cleared/re-added.
+        # Reapply the user's Home range so recalculation/import cannot silently
+        # replace the requested issue-4 defaults (100…900 GHz, -20…0 dB).
+        self._restore_plot_scale()
 
     def _set_log_messages(self, messages: list[str]) -> None:
         if self._log_view is None:

@@ -36,7 +36,7 @@ rtk uv run pytest
 macOS/Linux:
 
 ```bash
-rtk uv run pyinstaller aocapp/__main__.py -n SMC_app --onedir --icon=assets/aocapp-icon.ico --noconsole --windowed -y --add-data="assets:assets"
+rtk uv run pyinstaller aocapp/__main__.py -n SMC_app --onedir --icon=assets/smc-logo.ico --noconsole --windowed -y --add-data="assets:assets"
 ```
 
 Windows:
@@ -45,7 +45,7 @@ Windows:
 rtk build.bat
 ```
 
-Результат появляется в `dist/SMC_app`. Иконка приложения лежит в `assets/aocapp-icon.png` и `assets/aocapp-icon.ico`.
+Результат появляется в `dist/SMC_app`. Иконка приложения лежит в `assets/smc-logo.png` и `assets/smc-logo.ico`.
 
 ## Релиз и версии
 
