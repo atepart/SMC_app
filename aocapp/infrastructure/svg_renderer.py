@@ -29,7 +29,7 @@ class SvgRendererImpl(SvgRenderer):
 
         svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}" width="100%" height="100%">
   <defs>
-    <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto" markerUnits="strokeWidth">
+    <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth">
       <path d="M 0 0 L 6 3 L 0 6 Z" fill="{self.dimension_color}" />
     </marker>
     <pattern id="hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(135)">
@@ -108,11 +108,16 @@ class SvgRendererImpl(SvgRenderer):
 
     def _render_dimension(self, dim, font_size: float) -> str:
         label = dim.label.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        transform = (
+            f' transform="rotate({dim.label_rotation_deg:g} {dim.label_pos.x:g} {dim.label_pos.y:g})"'
+            if dim.label_rotation_deg
+            else ""
+        )
         return (
             f'<line x1="{dim.start.x:g}" y1="{dim.start.y:g}" x2="{dim.end.x:g}" y2="{dim.end.y:g}" '
             f'marker-start="url(#arrow)" marker-end="url(#arrow)" />\n'
             f'<text x="{dim.label_pos.x:g}" y="{dim.label_pos.y:g}" font-size="{font_size:g}" '
-            f'text-anchor="middle" fill="{self.dimension_color}">{label}</text>'
+            f'text-anchor="middle" fill="{self.dimension_color}"{transform}>{label}</text>'
         )
 
     def _render_label(self, label: TextLabel) -> str:
@@ -120,7 +125,9 @@ class SvgRendererImpl(SvgRenderer):
         escaped_lines = [self._escape(line) for line in lines]
         tspan_items = []
         for index, line in enumerate(escaped_lines):
-            dy = "0" if index == 0 else "1.2em"
+            # QtSvg does not consistently apply CSS ``em`` units to tspan
+            # baselines.  Numeric user units keep multiline registers legible.
+            dy = "0" if index == 0 else f"{label.font_size * 1.25:g}"
             tspan_items.append(f'<tspan x="{label.position.x:g}" dy="{dy}">{line}</tspan>')
         tspan_markup = "".join(tspan_items)
         return (

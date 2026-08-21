@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import cast
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -28,6 +28,10 @@ def parameter_window() -> MainWindow:
     window.show()
     app.processEvents()
     yield window
+    # Persistence is covered by the dedicated dock-layout tests. Avoid asking
+    # QtAds to serialize a window while deferred Qt objects are being torn down
+    # repeatedly by this per-test fixture.
+    window.save_settings = Mock()
     window.close()
     window.deleteLater()
     QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete.value)
@@ -51,7 +55,7 @@ def _wheel_event(widget: QtWidgets.QWidget) -> QtGui.QWheelEvent:
 def test_wheel_requires_click_and_groups_collapse(parameter_window: MainWindow) -> None:
     app = QtWidgets.QApplication.instance()
     assert app is not None
-    spin = parameter_window._config_inputs["block_center_length_um"]
+    spin = parameter_window._config_inputs["l_slot_m"]
     original = spin.value()
 
     app.sendEvent(spin, _wheel_event(spin))
@@ -82,17 +86,19 @@ def test_greek_labels_fixed_orders_and_design_round_trip(parameter_window: MainW
     path = tmp_path / "round-trip.aocdesign"
     parameter_window._same_materials_checkbox.setChecked(False)
     parameter_window._config_inputs["tc_bot_k"].setValue(8.7)
-    parameter_window._config_inputs["block_center_length_um"].setValue(42.5)
+    parameter_window._config_inputs["l_slot_m"].setValue(42.5)
     parameter_window.save_design_to_path(path)
 
     parameter_window._config_inputs["tc_bot_k"].setValue(7.0)
-    parameter_window._config_inputs["block_center_length_um"].setValue(10.0)
+    parameter_window._config_inputs["l_slot_m"].setValue(10.0)
     loaded = parameter_window.load_design_from_path(path)
 
     assert loaded.tc_bot_k == pytest.approx(8.7)
     assert parameter_window._config_inputs["tc_bot_k"].value() == pytest.approx(8.7)
-    assert parameter_window._config_inputs["block_center_length_um"].value() == pytest.approx(42.5)
+    assert parameter_window._config_inputs["l_slot_m"].value() == pytest.approx(42.5)
     assert not parameter_window._same_materials_checkbox.isChecked()
+    assert "Block 1 / Block 2" not in parameter_window._parameter_groups
+    assert "block_center_length_um" not in parameter_window._config_inputs
 
 
 def test_issue_4_group_order_and_sis_capacitance_units(parameter_window: MainWindow) -> None:
@@ -104,12 +110,29 @@ def test_issue_4_group_order_and_sis_capacitance_units(parameter_window: MainWin
     assert parameter_window._build_config().sis_cap_f_per_um2 == pytest.approx(8.3e-14)
 
 
+def test_preview_rejects_nonpositive_corrected_dc_slot(parameter_window: MainWindow) -> None:
+    parameter_window._config_inputs["w_slot_m"].setValue(0.1)
+    parameter_window._config_inputs["dw_m"].setValue(0.5)
+
+    with patch.object(QtWidgets.QMessageBox, "warning") as warning:
+        parameter_window._update_svg()
+
+    warning.assert_called_once()
+    assert "w_slot_m must be > dw_m" in warning.call_args.args[2]
+
+
 def test_open_file_menu_imports_both_comparison_traces(parameter_window: MainWindow, tmp_path) -> None:
     assert [action.text() for action in parameter_window.open_files_menu.actions()] == [
-        "Дизайн",
+        "Параметры SMC_app",
         "HFSS",
         "Experiment",
     ]
+    hint = parameter_window.findChild(QtWidgets.QLabel, "parameter_file_hint")
+    load_button = parameter_window.findChild(QtWidgets.QPushButton, "load_parameters_button")
+    save_button = parameter_window.findChild(QtWidgets.QPushButton, "save_parameters_button")
+    assert hint is not None and "не файл Mathcad" in hint.text()
+    assert load_button is not None and ".mcd/.mcdx не поддерживаются" in load_button.toolTip()
+    assert save_button is not None and "кривая S21" in save_button.toolTip()
     hfss = tmp_path / "hfss.txt"
     experiment = tmp_path / "experiment.txt"
     hfss.write_text("100 -12\n110 -9\n", encoding="utf-8")

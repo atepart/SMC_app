@@ -415,11 +415,30 @@ class MainWindow(QMainWindow):
         self.actions_box = controls_box
         controls_layout = QVBoxLayout(controls_box)
 
+        design_hint = QLabel(
+            "Файл параметров SMC_app (.aocdesign/.json) хранит входы расчёта; "
+            "это не файл Mathcad и не готовая топология для производства."
+        )
+        design_hint.setObjectName("parameter_file_hint")
+        design_hint.setWordWrap(True)
+        design_hint.setStyleSheet("color: #555;")
+        controls_layout.addWidget(design_hint)
+
         design_row = QHBoxLayout()
-        load_design_button = QPushButton("Загрузить дизайн")
+        load_design_button = QPushButton("Открыть параметры…")
+        load_design_button.setObjectName("load_parameters_button")
+        load_design_button.setToolTip(
+            "Загрузить все поля S21Config из версионного файла SMC_app и обновить preview. "
+            "Форматы Mathcad .mcd/.mcdx не поддерживаются."
+        )
         load_design_button.clicked.connect(self._load_design_dialog)
         design_row.addWidget(load_design_button)
-        save_design_button = QPushButton("Сохранить дизайн")
+        save_design_button = QPushButton("Сохранить параметры…")
+        save_design_button.setObjectName("save_parameters_button")
+        save_design_button.setToolTip(
+            "Сохранить полный набор текущих входных параметров в версионный JSON SMC_app; "
+            "кривая S21 и Mathcad-лист в файл не входят."
+        )
         save_design_button.clicked.connect(self._save_design_dialog)
         design_row.addWidget(save_design_button)
         controls_layout.addLayout(design_row)
@@ -545,7 +564,8 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
 
         self.open_files_menu = QtWidgets.QMenu("Открыть файл", self)
-        design_action = self.open_files_menu.addAction("Дизайн")
+        design_action = self.open_files_menu.addAction("Параметры SMC_app")
+        design_action.setToolTip("Открыть .aocdesign/.json с входными параметрами расчёта")
         design_action.triggered.connect(self._load_design_dialog)
         hfss_action = self.open_files_menu.addAction("HFSS")
         hfss_action.triggered.connect(lambda: self._open_trace_dialog("HFSS"))
@@ -648,7 +668,7 @@ class MainWindow(QMainWindow):
         self.save_settings()
 
     def _last_files_directory(self) -> str:
-        """Return the last successful design directory or a useful default."""
+        """Return the last successful parameter-file directory or a useful default."""
         value = QSettings().value("Files/last_directory", "", type=str)
         candidate = Path(value).expanduser() if value else Path.home() / "Documents" / "SMC_app"
         return str(candidate if candidate.exists() else Path.home())
@@ -661,9 +681,9 @@ class MainWindow(QMainWindow):
         """Ask for a friendly target and save the current backend parameters."""
         selected, _ = QtWidgets.QFileDialog.getSaveFileName(
             self,
-            "Сохранить дизайн",
-            str(Path(self._last_files_directory()) / "design.aocdesign"),
-            "Дизайн AOCapp (*.aocdesign);;JSON (*.json)",
+            "Сохранить параметры SMC_app",
+            str(Path(self._last_files_directory()) / "parameters.aocdesign"),
+            "Параметры SMC_app (*.aocdesign);;JSON (*.json)",
         )
         if not selected:
             return
@@ -673,22 +693,22 @@ class MainWindow(QMainWindow):
         try:
             self.save_design_to_path(path)
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "Ошибка сохранения дизайна", str(exc))
+            QMessageBox.critical(self, "Ошибка сохранения параметров", str(exc))
 
     def _load_design_dialog(self) -> None:
-        """Select a design and apply it to every visible parameter editor."""
+        """Select an SMC_app parameter set and apply it to every editor."""
         selected, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
-            "Открыть дизайн",
+            "Открыть параметры SMC_app",
             self._last_files_directory(),
-            "Дизайн AOCapp (*.aocdesign *.json)",
+            "Параметры SMC_app (*.aocdesign *.json)",
         )
         if not selected:
             return
         try:
             self.load_design_from_path(selected)
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "Ошибка открытия дизайна", str(exc))
+            QMessageBox.critical(self, "Ошибка открытия параметров", str(exc))
 
     def _open_trace_dialog(self, kind: str) -> None:
         """Select and add one HFSS or experiment comparison table."""
@@ -724,7 +744,7 @@ class MainWindow(QMainWindow):
         destination = self._design_files.save(path, config)
         self._remember_file_directory(destination)
         if self._s21_status is not None:
-            self._s21_status.setText(f"Дизайн сохранён: {destination}")
+            self._s21_status.setText(f"Параметры сохранены: {destination}")
         return destination
 
     def load_design_from_path(self, path: str | Path) -> S21Config:
@@ -752,7 +772,7 @@ class MainWindow(QMainWindow):
         self._remember_file_directory(path)
         self._update_svg()
         if self._s21_status is not None:
-            self._s21_status.setText(f"Дизайн загружен: {Path(path).expanduser()}")
+            self._s21_status.setText(f"Параметры загружены: {Path(path).expanduser()}")
         return config
 
     def _create_spinbox(self, name: str, field_info) -> SafeDoubleSpinBox:

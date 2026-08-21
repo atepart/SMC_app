@@ -283,6 +283,7 @@ class S21Config:
             "label": "Block taper L",
             "group": "Block 1 / Block 2",
             "description": "Left taper length of the octagonal block shape used for Block1 and Block2 preview.",
+            "visible": False,
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -296,6 +297,7 @@ class S21Config:
             "label": "Block body",
             "group": "Block 1 / Block 2",
             "description": "Straight body length of Block1/Block2.",
+            "visible": False,
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 2000.0,
@@ -309,6 +311,7 @@ class S21Config:
             "label": "Block taper R",
             "group": "Block 1 / Block 2",
             "description": "Right taper length of the octagonal block shape used for Block1 and Block2 preview.",
+            "visible": False,
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -322,6 +325,7 @@ class S21Config:
             "label": "Block height",
             "group": "Block 1 / Block 2",
             "description": "Full block height shown on the sketch for Block1 and Block2.",
+            "visible": False,
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 2000.0,
@@ -335,6 +339,7 @@ class S21Config:
             "label": "Neck height",
             "group": "Block 1 / Block 2",
             "description": "Narrow neck height at the microstrip connection of the block.",
+            "visible": False,
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -348,6 +353,7 @@ class S21Config:
             "label": "Arm length",
             "group": "Block 1 / Block 2",
             "description": "Length of the outgoing arm from Block1/Block2 toward the next element.",
+            "visible": False,
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 2000.0,
@@ -1316,6 +1322,8 @@ class S21Config:
             errors.append("s21_freq_stop_ghz must be <= film_freq_stop_ghz")
         if self.block_neck_height_um > self.block_body_height_um:
             errors.append("block_neck_height_um must be <= block_body_height_um")
+        if self.w_slot_m <= self.dw_m:
+            errors.append("w_slot_m must be > dw_m so the corrected DC-break slot stays positive")
         if errors:
             raise ValueError("; ".join(errors))
 

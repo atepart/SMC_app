@@ -55,6 +55,7 @@ class _Canvas:
     dimensions: list[DimensionLine] = field(default_factory=list)
     groups: list[GroupBoxShape] = field(default_factory=list)
     bounds_points: list[Point] = field(default_factory=list)
+    caption_count: int = 0
 
     def include_rect(self, rect: Rect) -> None:
         self.bounds_points.extend(
@@ -113,9 +114,9 @@ class IntegratedStructureCalculator(StructureCalculator):
             config.transf_7_dwdl_um,
             config.transf_7_dl_m,
             dw_um,
-            "3 · T7",
+            "T7",
         )
-        x = self._add_microstrip(canvas, x, center_y, config.msl_8_len_m, config.msl_8_width_m, dw_um, "2 · MSL8")
+        x = self._add_microstrip(canvas, x, center_y, config.msl_8_len_m, config.msl_8_width_m, dw_um, "MSL8")
         x = self._add_transformer(
             canvas,
             x,
@@ -125,12 +126,12 @@ class IntegratedStructureCalculator(StructureCalculator):
             config.transf_6_dwdl_um,
             config.transf_6_dl_m,
             dw_um,
-            "1 · T6",
+            "T6",
         )
         self._add_group(canvas, mex1_start, x, frame_top, frame_bottom, "Mex01", title_side="left")
 
         mex2_start = x
-        x = self._add_microstrip(canvas, x, center_y, config.msl_7_len_m, config.msl_7_width_m, dw_um, "4 · MSL7")
+        x = self._add_microstrip(canvas, x, center_y, config.msl_7_len_m, config.msl_7_width_m, dw_um, "MSL7")
         x = self._add_transformer(
             canvas,
             x,
@@ -140,9 +141,9 @@ class IntegratedStructureCalculator(StructureCalculator):
             config.transf_5_dwdl_um,
             config.transf_5_dl_m,
             dw_um,
-            "3 · T5",
+            "T5",
         )
-        x = self._add_microstrip(canvas, x, center_y, config.msl_6_len_m, config.msl_6_width_m, dw_um, "2 · MSL6")
+        x = self._add_microstrip(canvas, x, center_y, config.msl_6_len_m, config.msl_6_width_m, dw_um, "MSL6")
         x = self._add_transformer(
             canvas,
             x,
@@ -152,7 +153,7 @@ class IntegratedStructureCalculator(StructureCalculator):
             config.transf_4_dwdl_um,
             config.transf_4_dl_m,
             dw_um,
-            "1 · T4",
+            "T4",
         )
         self._add_group(canvas, mex2_start, x, frame_top + 14.0, frame_bottom - 14.0, "Mex02", title_side="left")
 
@@ -170,9 +171,9 @@ class IntegratedStructureCalculator(StructureCalculator):
             config.transf_3_dwdl_um,
             config.transf_3_dl_m,
             dw_um,
-            "5 · T3",
+            "T3",
         )
-        x = self._add_microstrip(canvas, x, center_y, config.msl_5_len_m, config.msl_5_width_m, dw_um, "4 · MSL5")
+        x = self._add_microstrip(canvas, x, center_y, config.msl_5_len_m, config.msl_5_width_m, dw_um, "MSL5")
         x = self._add_transformer(
             canvas,
             x,
@@ -182,9 +183,9 @@ class IntegratedStructureCalculator(StructureCalculator):
             config.transf_2_dwdl_um,
             config.transf_2_dl_m,
             dw_um,
-            "3 · T2",
+            "T2",
         )
-        x = self._add_microstrip(canvas, x, center_y, config.msl_4_len_m, config.msl_4_width_m, dw_um, "2 · MSL4")
+        x = self._add_microstrip(canvas, x, center_y, config.msl_4_len_m, config.msl_4_width_m, dw_um, "MSL4")
         x = self._add_transformer(
             canvas,
             x,
@@ -194,7 +195,7 @@ class IntegratedStructureCalculator(StructureCalculator):
             config.transf_1_dwdl_um,
             config.transf_1_dl_m,
             dw_um,
-            "1 · T1",
+            "T1",
         )
         self._add_group(canvas, mex3_start, x, frame_top + 14.0, frame_bottom - 14.0, "Mex03", title_side="left")
 
@@ -202,6 +203,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         canvas.labels.append(
             TextLabel(Point(x - 34.0, center_y - 30.0), "50 Ω", font_size=11.0, anchor="middle", font_weight="bold")
         )
+        self._add_parameter_register(canvas, config, dw_um, x + 30.0, x + 650.0, frame_top)
 
         bounds = bounds_from_points(canvas.bounds_points)
         margin = 22.0
@@ -296,27 +298,31 @@ class IntegratedStructureCalculator(StructureCalculator):
         height: float,
         text: str,
     ) -> None:
-        """Place the numbered matrix-element caption used in the sketch."""
+        """Place a physical element name without the article's bare numbers.
+
+        Figure 3 in Khan et al. (2025) uses digits only together with a caption
+        below the micrograph.  The preview has no such external caption, so it
+        names the actual configured element and alternates labels above/below
+        neighbouring sections to keep them readable.
+        """
         if not text:
             return
-        # The supplied sketch numbers individual matrices and explains names
-        # outside the drawing.  Keeping only that number prevents short T/MSL
-        # sections from producing unreadable overlapping captions.
-        display_text = text.split("·", maxsplit=1)[0].strip()
-        position = Point((start_x + end_x) / 2.0, center_y - height / 2.0 - 18.0)
-        leader_end = Point(position.x, center_y - height / 2.0 - 3.0)
-        canvas.labels.append(TextLabel(position, display_text, font_size=9.0, anchor="middle", font_weight="bold"))
-        canvas.lines.append(
-            LineShape(Point(position.x, position.y + 3.0), leader_end, stroke="#374151", stroke_width=0.6)
-        )
+        above = canvas.caption_count % 2 == 0
+        edge_y = center_y - height / 2.0 if above else center_y + height / 2.0
+        position = Point((start_x + end_x) / 2.0, edge_y - 16.0 if above else edge_y + 22.0)
+        leader_start = Point(position.x, position.y + 3.0 if above else position.y - 10.0)
+        leader_end = Point(position.x, edge_y - 3.0 if above else edge_y + 3.0)
+        canvas.labels.append(TextLabel(position, text, font_size=8.0, anchor="middle", font_weight="bold"))
+        canvas.lines.append(LineShape(leader_start, leader_end, stroke="#374151", stroke_width=0.6))
         canvas.bounds_points.append(position)
         canvas.bounds_points.append(leader_end)
+        canvas.caption_count += 1
 
     def _add_dc_block(self, canvas: _Canvas, config: S21Config, x: float, center_y: float, dw_um: float) -> float:
         """Draw the two galvanically isolated folded conductors of the DC block.
 
         ``Wslot`` is corrected as ``Wslot - DW`` and ``Wms`` as ``Wms + DW``,
-        exactly as in ``S21CalculatorImpl``.  Each side is one inverted-U
+        exactly as in ``S21CalculatorImpl``.  Each side is one folded-U
         conductor attached to its feed; the facing inner arms form the folded
         slot antenna.  The central gap is deliberately left open, because this
         element transfers RF power while blocking the FFO-to-detector DC path.
@@ -338,7 +344,11 @@ class IntegratedStructureCalculator(StructureCalculator):
         left_inner_x = left_outer_x + arm_span
         right_inner_x = left_inner_x + feed_height + gap
         right_outer_x = right_inner_x + arm_span
-        arm_top = center_y - feed_height / 2.0
+        # The user sketch shows the two folded conductors rising from their
+        # feeds.  This is the same two-port as the earlier downward drawing,
+        # but it now matches the fabrication-view orientation.
+        arm_bottom = center_y + feed_height / 2.0
+        arm_top = arm_bottom - arm_length
 
         left_bridge = Rect(left_outer_x, arm_top, arm_span + feed_height, feed_height)
         left_outer_arm = Rect(left_outer_x, arm_top, feed_height, arm_length)
@@ -346,7 +356,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         right_bridge = Rect(right_inner_x, arm_top, arm_span + feed_height, feed_height)
         right_inner_arm = Rect(right_inner_x, arm_top, feed_height, arm_length)
         right_outer_arm = Rect(right_outer_x, arm_top, feed_height, arm_length)
-        right_feed = Rect(right_outer_x, arm_top, feed_length, feed_height)
+        right_feed = Rect(right_outer_x, center_y - feed_height / 2.0, feed_length, feed_height)
 
         for rect in (
             left_feed,
@@ -364,19 +374,29 @@ class IntegratedStructureCalculator(StructureCalculator):
         left_slot_edge = left_inner_arm.right
         right_slot_edge = right_inner_arm.x
         slot_center_x = (left_slot_edge + right_slot_edge) / 2.0
+        canvas.labels.append(
+            TextLabel(
+                Point(slot_center_x, center_y + 34.0),
+                "DC-break",
+                font_size=8.0,
+                anchor="middle",
+                font_weight="bold",
+            )
+        )
         canvas.dimensions.extend(
             (
                 self._dim(
                     Point(left_slot_edge, arm_top - 13.0),
                     Point(right_slot_edge, arm_top - 13.0),
-                    f"Wslot={slot_width_um:g} µm",
+                    f"Wslot={config.w_slot_m * 1e6:g} µm; Wэфф={slot_width_um:g} µm",
                     Point(slot_center_x, arm_top - 19.0),
                 ),
                 self._dim(
-                    Point(left_outer_arm.x - 10.0, arm_top),
-                    Point(left_outer_arm.x - 10.0, arm_top + arm_length),
+                    Point(right_outer_arm.right + 10.0, arm_top),
+                    Point(right_outer_arm.right + 10.0, arm_bottom),
                     f"Lslot={slot_length_um:g} µm",
-                    Point(slot_center_x, arm_top + arm_length + 18.0),
+                    Point(right_outer_arm.right + 17.0, (arm_top + arm_bottom) / 2.0),
+                    label_rotation_deg=-90.0,
                 ),
             )
         )
@@ -429,6 +449,23 @@ class IntegratedStructureCalculator(StructureCalculator):
 
         x = feed.right
         radial_start = mex4_start
+        canvas.labels.extend(
+            (
+                TextLabel(
+                    Point(stub_center.x, center_y - r_max - 12.0),
+                    "Radial shunt ×2",
+                    font_size=8.0,
+                    anchor="middle",
+                    font_weight="bold",
+                ),
+                TextLabel(
+                    Point(stub_center.x + 13.0, center_y - 8.0),
+                    "SIS",
+                    font_size=7.0,
+                    font_weight="bold",
+                ),
+            )
+        )
         x = self._add_microstrip(canvas, x, center_y, config.zrad3_len_m, config.zrad3_width_m, dw_um, "")
         x = self._add_microstrip(canvas, x, center_y, config.zrad4_len_m, config.zrad4_width_m, dw_um, "")
         mlsis_start = x
@@ -492,6 +529,94 @@ class IntegratedStructureCalculator(StructureCalculator):
             canvas.bounds_points.extend((dimension.start, dimension.end, dimension.label_pos))
         return x
 
+    def _add_parameter_register(
+        self,
+        canvas: _Canvas,
+        config: S21Config,
+        dw_um: float,
+        left: float,
+        right: float,
+        top: float,
+    ) -> None:
+        """Add a non-overlapping register of every configured physical size.
+
+        The drawing itself stays legible at overview scale.  This register is
+        part of the same SVG and reports the raw input values; where the
+        backend applies the lithographic correction it also reports ``Wэфф``.
+        Transformer ``L`` is derived from the exact slice formula used by the
+        calculator, not from the schematic's visual scale.
+        """
+        height = 300.0
+        panel = Rect(left, top, max(1.0, right - left), height)
+        canvas.rects.append(RectShape(panel, fill="#ffffff", stroke="#94a3b8", stroke_width=0.7))
+        canvas.include_rect(panel)
+        canvas.labels.append(
+            TextLabel(
+                Point(left + 12.0, top + 17.0),
+                f"Размеры из параметров, µm (Wэфф учитывает DW={dw_um:g} µm)",
+                font_size=9.0,
+                font_weight="bold",
+            )
+        )
+
+        def transformer_line(index: int) -> str:
+            start = getattr(config, f"transf_{index}_w_start_m") * 1e6
+            end = getattr(config, f"transf_{index}_w_end_m") * 1e6
+            step = getattr(config, f"transf_{index}_dwdl_um")
+            dl_m = getattr(config, f"transf_{index}_dl_m")
+            length = self._transformer_physical_length_um(start * 1e-6, end * 1e-6, step, dl_m)
+            return f"T{index}: Wstart={start:g}; Wend={end:g}; dW={step:g}; dL={dl_m * 1e6:g}; L={length:g}"
+
+        def msl_line(index: int) -> str:
+            length = getattr(config, f"msl_{index}_len_m") * 1e6
+            width = getattr(config, f"msl_{index}_width_m") * 1e6
+            return f"MSL{index}: W={width:g} (Wэфф={width + dw_um:g}); L={length:g}"
+
+        columns = (
+            ("Mex01", (transformer_line(7), msl_line(8), transformer_line(6))),
+            ("Mex02", (msl_line(7), transformer_line(5), msl_line(6), transformer_line(4))),
+            (
+                "Mdcb / DC-break",
+                (
+                    f"slot: W={config.w_slot_m * 1e6:g} (Wэфф={config.w_slot_m * 1e6 - dw_um:g}); L={config.l_slot_m * 1e6:g}",
+                    f"offset Lso={config.lso_m * 1e6:g}",
+                    f"MS: W={config.w_ms_m * 1e6:g} (Wэфф={config.w_ms_m * 1e6 + dw_um:g}); L={config.l_ms_m * 1e6:g}",
+                ),
+            ),
+            ("Mex03", (transformer_line(3), msl_line(5), transformer_line(2), msl_line(4), transformer_line(1))),
+            (
+                "Mrad / MLsis / SIS",
+                (
+                    f"Zrad1: W={config.zrad1_width_m * 1e6:g}; L={config.zrad1_len_m * 1e6:g}",
+                    f"radial: R={config.radial_r_min_m * 1e6:g}…{config.radial_r_max_m * 1e6:g}; α={config.radial_angle_deg:g}°",
+                    f"Zrad3: W={config.zrad3_width_m * 1e6:g}; L={config.zrad3_len_m * 1e6:g}",
+                    f"Zrad4: W={config.zrad4_width_m * 1e6:g}; L={config.zrad4_len_m * 1e6:g}",
+                    f"MLsis: W={config.mex4_width_m * 1e6:g}; L={config.mex4_len_m * 1e6:g}; SIS W={config.sis_width_um:g}; S={config.sis_area_um2:g} µm²",
+                ),
+            ),
+        )
+        column_width = panel.width / 2.0
+        divider_x = panel.x + column_width
+        canvas.lines.append(
+            LineShape(
+                Point(divider_x, top + 27.0),
+                Point(divider_x, panel.bottom - 9.0),
+                stroke="#cbd5e1",
+                stroke_width=0.5,
+            )
+        )
+        cursors = [top + 40.0, top + 40.0]
+        for index, (title, lines) in enumerate(columns):
+            column = 0 if index < 3 else 1
+            x = panel.x + column * column_width + 12.0
+            y = cursors[column]
+            canvas.labels.append(TextLabel(Point(x, y), title, font_size=8.2, font_weight="bold"))
+            for line_index, line in enumerate(lines):
+                canvas.labels.append(
+                    TextLabel(Point(x, y + 13.0 + line_index * 10.0), line, font_size=7.0, fill="#334155")
+                )
+            cursors[column] += 28.0 + len(lines) * 9.0
+
     def _add_group(
         self,
         canvas: _Canvas,
@@ -505,15 +630,11 @@ class IntegratedStructureCalculator(StructureCalculator):
         """Add a dotted ABCD matrix boundary like the supplied sketch."""
         padding = 5.0
         rect = Rect(start_x - padding, top, end_x - start_x + padding * 2.0, bottom - top)
-        if title_side == "right":
-            title_position = Point(rect.right - 8.0, rect.y + 56.0)
-            rotation = -90.0
-        elif title_side == "top":
-            title_position = Point(rect.x + rect.width / 2.0, rect.y + 14.0)
-            rotation = 0.0
-        else:
-            title_position = Point(rect.x + 13.0, rect.y + 56.0)
-            rotation = -90.0
+        # Nested matrix frames already occupy different vertical levels.
+        # A horizontal title centred on each top edge is readable without
+        # crossing the physical chain or its size callouts.
+        title_position = Point(rect.x + rect.width / 2.0, rect.y + 13.0)
+        rotation = 0.0
         group = GroupBoxShape(rect=rect, title=title, title_position=title_position, title_rotation_deg=rotation)
         canvas.groups.append(group)
         canvas.include_rect(rect)
@@ -566,8 +687,21 @@ class IntegratedStructureCalculator(StructureCalculator):
         ]
         return outer + inner
 
-    def _dim(self, start: Point, end: Point, label: str, label_pos: Point) -> DimensionLine:
-        return DimensionLine(start=start, end=end, label=label, label_pos=label_pos)
+    def _dim(
+        self,
+        start: Point,
+        end: Point,
+        label: str,
+        label_pos: Point,
+        label_rotation_deg: float = 0.0,
+    ) -> DimensionLine:
+        return DimensionLine(
+            start=start,
+            end=end,
+            label=label,
+            label_pos=label_pos,
+            label_rotation_deg=label_rotation_deg,
+        )
 
     def _rect_points(self, rect: Rect) -> Iterable[Point]:
         """Return rectangle corners for tests and future interactive overlays."""

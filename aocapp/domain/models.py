@@ -34,6 +34,7 @@ class DimensionLine:
     end: Point
     label: str
     label_pos: Point
+    label_rotation_deg: float = 0.0
 
 
 @dataclass(frozen=True)
