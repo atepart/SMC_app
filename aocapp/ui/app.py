@@ -495,6 +495,11 @@ class MainWindow(QMainWindow):
         home_button.setFixedSize(30, 28)
         home_button.clicked.connect(self._view.reset_view)
         toolbar.addWidget(home_button)
+        self._schematic_details = QCheckBox("С обозначениями")
+        self._schematic_details.setObjectName("schematic_details")
+        self._schematic_details.setToolTip("Показать расшифровку номеров Mathcad и текущие размеры под схемой")
+        self._schematic_details.toggled.connect(self._update_svg)
+        toolbar.addWidget(self._schematic_details)
         toolbar.addStretch(1)
         vbox.addLayout(toolbar)
         return panel
@@ -567,8 +572,6 @@ class MainWindow(QMainWindow):
         design_action = self.open_files_menu.addAction("Параметры SMC_app")
         design_action.setToolTip("Открыть .aocdesign/.json с входными параметрами расчёта")
         design_action.triggered.connect(self._load_design_dialog)
-        hfss_action = self.open_files_menu.addAction("HFSS")
-        hfss_action.triggered.connect(lambda: self._open_trace_dialog("HFSS"))
         experiment_action = self.open_files_menu.addAction("Experiment")
         experiment_action.triggered.connect(lambda: self._open_trace_dialog("Experiment"))
 
@@ -711,7 +714,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Ошибка открытия параметров", str(exc))
 
     def _open_trace_dialog(self, kind: str) -> None:
-        """Select and add one HFSS or experiment comparison table."""
+        """Select and add an experiment comparison table."""
         selected, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             f"Открыть {kind}",
@@ -727,7 +730,7 @@ class MainWindow(QMainWindow):
 
     def load_comparison_trace(self, kind: str, path: str | Path) -> ComparisonTrace:
         """Load a plot-only trace; it never changes calculation parameters."""
-        if kind not in {"HFSS", "Experiment"}:
+        if kind != "Experiment":
             raise ValueError(f"Неизвестный тип сравнительного графика: {kind}.")
         trace = self._trace_reader.load(path)
         self._comparison_traces[kind] = trace
@@ -936,7 +939,7 @@ class MainWindow(QMainWindow):
     def _update_svg(self) -> None:
         try:
             config = self._build_config()
-            svg = self._use_case.execute(config)
+            svg = self._use_case.execute(config, show_details=self._schematic_details.isChecked())
         except (ValueError, OSError) as exc:
             QMessageBox.warning(self, "Invalid input", str(exc))
             return
@@ -1046,10 +1049,9 @@ class MainWindow(QMainWindow):
             )
 
         styles = {
-            "HFSS": ("#d62728", Qt.PenStyle.DashLine),
             "Experiment": ("#2ca02c", Qt.PenStyle.DotLine),
         }
-        for kind in ("HFSS", "Experiment"):
+        for kind in ("Experiment",):
             trace = self._comparison_traces.get(kind)
             if trace is None:
                 continue

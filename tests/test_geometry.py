@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from aocapp.domain.s21_models import S21Config
-from aocapp.infrastructure.geometry import DC_FILL, RADIAL_FILL, TRANSFORMER_FILL, IntegratedStructureCalculator
+from aocapp.infrastructure.geometry import DC_FILL, TRANSFORMER_FILL, IntegratedStructureCalculator
 from aocapp.infrastructure.svg_renderer import SvgRendererImpl
 
 
@@ -14,7 +14,10 @@ def test_preview_contains_every_calculated_matrix_group_and_transformer() -> Non
 
     assert [group.title for group in geometry.groups] == ["Mex01", "Mex02", "Mdcb", "Mex03", "Mrad", "MLsis", "Mex04"]
     assert sum(polygon.fill == TRANSFORMER_FILL for polygon in geometry.polygons) == 7
-    assert sum(polygon.fill == RADIAL_FILL for polygon in geometry.polygons) == 2
+    assert {p.element_id for p in geometry.paths if p.element_id in {"radial-upper", "radial-lower"}} == {
+        "radial-upper",
+        "radial-lower",
+    }
     dc_polygons = [shape for shape in geometry.polygons if shape.fill == DC_FILL]
     assert len(dc_polygons) == 2
 
@@ -29,7 +32,7 @@ def test_preview_contains_every_calculated_matrix_group_and_transformer() -> Non
     assert not any(shape.fill == DC_FILL for shape in geometry.rects)
 
     register = next(shape.rect for shape in geometry.rects if shape.stroke == "#94a3b8")
-    assert register.x > max(group.rect.right for group in geometry.groups)
+    assert register.y > max(group.rect.bottom for group in geometry.groups)
     assert all(group.title_rotation_deg == 0.0 for group in geometry.groups)
 
 
@@ -55,20 +58,20 @@ def test_svg_renders_dotted_matrix_frames_and_engineering_labels() -> None:
     assert "50 Ω" in svg
     assert "ФФО" in svg
     assert "SIS/load" not in svg
-    assert "Wslot=4 µm; Wэфф=3.5 µm" in svg
+    assert "Wslot=4; Wэфф=3.5; Lslot=36" in svg
     assert 'orient="auto-start-reverse"' in svg
     assert "rotate(-90 " in svg
     sequence_text = " ".join(label.text for label in geometry.labels)
     assert all(f"T{index}" in sequence_text for index in range(1, 8))
     assert all(f"MSL{index}" in sequence_text for index in range(4, 9))
-    assert not any(label.text.strip().isdigit() for label in geometry.labels)
-    assert "Размеры из параметров, µm" in svg
-    assert "DC-break" in svg
+    numbers = [label.text for label in geometry.labels if label.text.isdigit()]
+    assert numbers == ["3", "2", "1", "4", "3", "2", "1", "5", "4", "3", "2", "1"]
+    assert "Обозначения и размеры" in svg
+    assert "DC-развязка" in svg
     assert "щелевая антенна" in svg
-    assert "Radial shunt ×2" in svg
-    assert "SIS" in svg
-    assert "Назначение расчётных частей" in svg
-    assert "Mrad + MLsis — ВЧ-замыкатель и индуктивная настройка SIS" in svg
+    assert "Радиальные шлейфы ×2" in svg
+    assert "SIS · туннельный переход" in svg
+    assert "схема не в масштабе" in svg
 
 
 def test_size_register_uses_raw_inputs_and_backend_corrected_widths() -> None:
@@ -83,5 +86,51 @@ def test_size_register_uses_raw_inputs_and_backend_corrected_widths() -> None:
     )
     svg = SvgRendererImpl().render(geometry)
 
-    assert "MSL8: W=41 (Wэфф=41.75); L=23" in svg
-    assert "slot: W=4 (Wэфф=3.25); L=37" in svg
+    assert "2  —  MSL8 · линия · W 41; L 23" in svg
+    assert "DW=0.75" in svg
+    assert "Wslot=4; Wэфф=3.25; Lslot=37" in svg
+
+
+def test_sis_rectangle_and_circle_are_left_of_radial_neck() -> None:
+    geometry = IntegratedStructureCalculator().calculate(S21Config())
+    sis = next(circle for circle in geometry.circles if circle.fill == "#fff")
+    box = next(shape.rect for shape in geometry.rects if shape.stroke_width == 1.2)
+    assert box.x < sis.center.x < box.right
+    assert box.y < sis.center.y < box.bottom
+    output = next(p for p in geometry.paths if p.element_id == "radial-output")
+    radial_center_x = output.bounds.x
+    assert box.right < radial_center_x
+    mlsis = next(group.rect for group in geometry.groups if group.title == "MLsis")
+    assert mlsis.x < box.x and box.right < mlsis.right < radial_center_x
+    # Downward fingers are longer below the feed than above it.
+    for polygon in (p for p in geometry.polygons if p.fill == DC_FILL):
+        assert max(p.y for p in polygon.points) - sis.center.y > sis.center.y - min(p.y for p in polygon.points)
+
+
+@pytest.mark.parametrize("config", [S21Config(), S21Config(msl_8_len_m=1e-9, radial_r_max_m=90e-6, l_slot_m=80e-6)])
+def test_number_callouts_and_legend_remain_separate(config) -> None:
+    geometry = IntegratedStructureCalculator().calculate(config)
+    number_labels = [label for label in geometry.labels if label.text.isdigit()]
+    assert all(b.position.x - a.position.x >= 38 for a, b in zip(number_labels, number_labels[1:]))
+    register = next(shape.rect for shape in geometry.rects if shape.stroke == "#94a3b8")
+    assert all(point.y < register.y for poly in geometry.polygons for point in poly.points)
+    assert all(path.bounds.bottom < register.y for path in geometry.paths)
+    assert all(geometry.bounds.y < label.position.y < geometry.bounds.bottom for label in geometry.labels)
+
+
+def test_clean_radial_reference_uses_bezier_rims_and_stepped_neck() -> None:
+    geometry = IntegratedStructureCalculator().calculate(S21Config())
+    paths = {path.element_id: path for path in geometry.paths}
+    for name in ("radial-upper", "radial-lower"):
+        # A real quadratic Bézier rim remains smooth at any SVG zoom.
+        assert paths[name].data.count("Q") == 1
+        assert paths[name].data.count("L") == 2
+        assert "Z" not in paths[name].data
+    assert paths["radial-output"].data.count("M") == 3
+    svg = SvgRendererImpl().render(geometry)
+    assert '<path id="radial-upper"' in svg
+    # No extra rectangular feed/flange before the first transformer.
+    first_taper_x = min(p.x for poly in geometry.polygons if poly.fill == TRANSFORMER_FILL for p in poly.points)
+    overview = geometry.overview
+    assert overview is not None
+    assert not any(rect.rect.right <= first_taper_x for rect in overview.rects)

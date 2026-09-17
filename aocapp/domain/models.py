@@ -47,6 +47,18 @@ class PolygonShape:
 
 
 @dataclass(frozen=True)
+class PathShape:
+    """Native vector contour with explicit bounds (including Bézier controls)."""
+
+    data: str
+    bounds: Rect
+    element_id: str
+    fill: str = "none"
+    stroke: str = "#111111"
+    stroke_width: float = 0.8
+
+
+@dataclass(frozen=True)
 class RectShape:
     rect: Rect
     fill: str = "#cfeef5"
@@ -105,6 +117,8 @@ class StructureGeometry:
     dimensions: List[DimensionLine]
     bounds: Rect
     groups: List[GroupBoxShape] = field(default_factory=list)
+    overview: StructureGeometry | None = None
+    paths: List[PathShape] = field(default_factory=list)
 
 
 def bounds_from_points(points: Iterable[Point]) -> Rect:

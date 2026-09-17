@@ -13,7 +13,9 @@ class GenerateStructureUseCase:
     calculator: StructureCalculator
     renderer: SvgRenderer
 
-    def execute(self, config: S21Config) -> str:
+    def execute(self, config: S21Config, *, show_details: bool = True) -> str:
         config.validate()
         geometry = self.calculator.calculate(config)
+        if not show_details and geometry.overview is not None:
+            geometry = geometry.overview
         return self.renderer.render(geometry)

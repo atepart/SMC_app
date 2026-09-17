@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 from typing import cast
 from unittest.mock import Mock, patch
 
@@ -18,6 +19,10 @@ from aocapp.ui.app import MainWindow
 
 @pytest.fixture
 def parameter_window() -> MainWindow:
+    # Collect cycles from the previous pyqtgraph window before constructing
+    # new graphics items: a GC pass inside AxisItem.resizeEvent can otherwise
+    # destroy wrappers from the preceding QtAds window reentrantly.
+    gc.collect()
     QtCore.QSettings().clear()
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     window = MainWindow(
@@ -121,10 +126,9 @@ def test_preview_rejects_nonpositive_corrected_dc_slot(parameter_window: MainWin
     assert "w_slot_m must be > dw_m" in warning.call_args.args[2]
 
 
-def test_open_file_menu_imports_both_comparison_traces(parameter_window: MainWindow, tmp_path) -> None:
+def test_open_file_menu_imports_experiment_and_rejects_hfss(parameter_window: MainWindow, tmp_path) -> None:
     assert [action.text() for action in parameter_window.open_files_menu.actions()] == [
         "Параметры SMC_app",
-        "HFSS",
         "Experiment",
     ]
     hint = parameter_window.findChild(QtWidgets.QLabel, "parameter_file_hint")
@@ -138,14 +142,15 @@ def test_open_file_menu_imports_both_comparison_traces(parameter_window: MainWin
     hfss.write_text("100 -12\n110 -9\n", encoding="utf-8")
     experiment.write_text("100 -13\n110 -10\n", encoding="utf-8")
 
-    parameter_window.load_comparison_trace("HFSS", hfss)
+    with pytest.raises(ValueError, match="Неизвестный тип"):
+        parameter_window.load_comparison_trace("HFSS", hfss)
     parameter_window.load_comparison_trace("Experiment", experiment)
     parameter_window._update_s21_plot([100.0, 110.0], [-11.5, -9.5])
 
-    assert set(parameter_window._comparison_traces) == {"HFSS", "Experiment"}
-    assert len(parameter_window._plot.listDataItems()) == 3
+    assert set(parameter_window._comparison_traces) == {"Experiment"}
+    assert len(parameter_window._plot.listDataItems()) == 2
     legend_labels = {label.text for _, label in parameter_window._plot_legend.items}
-    assert legend_labels == {"Theory", "HFSS", "Experiment"}
+    assert legend_labels == {"Theory", "Experiment"}
 
 
 def test_plot_home_hover_and_png_export(parameter_window: MainWindow, tmp_path) -> None:
@@ -187,3 +192,17 @@ def test_plot_home_hover_and_png_export(parameter_window: MainWindow, tmp_path) 
     destination = tmp_path / "plot.png"
     assert parameter_window.export_plot_to_path(destination) == destination
     assert destination.read_bytes().startswith(b"\x89PNG")
+
+
+def test_schematic_details_toggle_keeps_overview_large(parameter_window: MainWindow) -> None:
+    app = QtWidgets.QApplication.instance()
+    compact = parameter_window._view._svg_item.boundingRect()
+    toggle = parameter_window.findChild(QtWidgets.QCheckBox, "schematic_details")
+    assert toggle is not None and not toggle.isChecked()
+    QTest.mouseClick(toggle, QtCore.Qt.LeftButton, pos=QtCore.QPoint(8, toggle.height() // 2))
+    app.processEvents()
+    detailed = parameter_window._view._svg_item.boundingRect()
+    assert detailed.height() > compact.height() * 1.5
+    QTest.mouseClick(toggle, QtCore.Qt.LeftButton, pos=QtCore.QPoint(8, toggle.height() // 2))
+    app.processEvents()
+    assert parameter_window._view._svg_item.boundingRect() == compact

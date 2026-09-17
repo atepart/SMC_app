@@ -14,8 +14,8 @@ physical chain in the orientation used by the reference drawing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from math import cos, floor, radians, sin
+from dataclasses import dataclass, field, replace
+from math import floor, radians, sin
 from typing import Iterable
 
 from aocapp.domain.models import (
@@ -23,6 +23,7 @@ from aocapp.domain.models import (
     DimensionLine,
     GroupBoxShape,
     LineShape,
+    PathShape,
     Point,
     PolygonShape,
     Rect,
@@ -36,11 +37,20 @@ from aocapp.domain.s21_models import S21Config
 
 LENGTH_SCALE = 2.0
 WIDTH_SCALE = 2.0
-MIN_SEGMENT_LENGTH = 9.0
+MIN_SEGMENT_LENGTH = 44.0
 CONDUCTOR_FILL = "#e8f1f5"
 TRANSFORMER_FILL = "#dbeafe"
 RADIAL_FILL = "#fde68a"
 DC_FILL = "#d7edf5"
+
+# Local numbers on Mathcad PNG item 587, repeated within each matrix.
+# Tuple order follows the physical drawing, from FFO toward the detector.
+REFERENCE_SECTIONS = {
+    "Mex01": ((3, "T7"), (2, "MSL8"), (1, "T6")),
+    "Mex02": ((4, "MSL7"), (3, "T5"), (2, "MSL6"), (1, "T4")),
+    "Mex03": ((5, "T3"), (4, "MSL5"), (3, "T2"), (2, "MSL4"), (1, "T1")),
+}
+REFERENCE_NUMBERS = {name: number for entries in REFERENCE_SECTIONS.values() for number, name in entries}
 
 
 @dataclass
@@ -48,6 +58,7 @@ class _Canvas:
     """Mutable collector used only while assembling an immutable geometry."""
 
     polygons: list[PolygonShape] = field(default_factory=list)
+    paths: list[PathShape] = field(default_factory=list)
     rects: list[RectShape] = field(default_factory=list)
     circles: list[CircleShape] = field(default_factory=list)
     lines: list[LineShape] = field(default_factory=list)
@@ -90,18 +101,14 @@ class IntegratedStructureCalculator(StructureCalculator):
         canvas = _Canvas()
         center_y = 185.0
         frame_top = 35.0
-        frame_bottom = 335.0
+        frame_bottom = 325.0
         dw_um = config.dw_m * 1e6
         x = 28.0
 
-        # A short continuation makes the load-side boundary explicit without
-        # inventing another matrix element outside Mex01.
-        input_width = (config.transf_7_w_end_m * 1e6 + dw_um) * WIDTH_SCALE
-        input_rect = Rect(x, center_y - input_width / 2.0, 20.0, input_width)
-        canvas.rects.append(RectShape(input_rect, fill=CONDUCTOR_FILL))
-        canvas.include_rect(input_rect)
-        canvas.labels.append(TextLabel(Point(x, center_y - input_width / 2.0 - 10.0), "ФФО", font_size=8.0))
-        x = input_rect.right
+        # Start at the first taper. The far-left flange/partial feed in the
+        # supplied structure_clean.svg is explicitly outside this schematic.
+        input_width = max(8.0, min(126.0, (config.transf_7_w_end_m * 1e6 + dw_um) * WIDTH_SCALE))
+        canvas.labels.append(TextLabel(Point(x, center_y + 80.0), "ФФО", font_size=12.0))
 
         mex1_start = x
         x = self._add_transformer(
@@ -128,7 +135,6 @@ class IntegratedStructureCalculator(StructureCalculator):
             "T6",
         )
         self._add_group(canvas, mex1_start, x, frame_top, frame_bottom, "Mex01", title_side="left")
-        self._add_group_sequence(canvas, mex1_start, x, frame_bottom - 10.0, "T7  →  MSL8  →  T6")
 
         mex2_start = x
         x = self._add_microstrip(canvas, x, center_y, config.msl_7_len_m, config.msl_7_width_m, dw_um, "MSL7")
@@ -156,7 +162,6 @@ class IntegratedStructureCalculator(StructureCalculator):
             "T4",
         )
         self._add_group(canvas, mex2_start, x, frame_top + 14.0, frame_bottom - 14.0, "Mex02", title_side="left")
-        self._add_group_sequence(canvas, mex2_start, x, frame_bottom - 24.0, "MSL7  →  T5  →  MSL6  →  T4")
 
         dcb_start = x
         x = self._add_dc_block(canvas, config, x, center_y, dw_um)
@@ -199,24 +204,40 @@ class IntegratedStructureCalculator(StructureCalculator):
             "T1",
         )
         self._add_group(canvas, mex3_start, x, frame_top + 14.0, frame_bottom - 14.0, "Mex03", title_side="left")
-        self._add_group_sequence(canvas, mex3_start, x, frame_bottom - 24.0, "T3  →  MSL5  →  T2  →  MSL4  →  T1")
 
         x = self._add_radial_and_source(canvas, config, x, center_y, dw_um, frame_top, frame_bottom)
         canvas.labels.append(
             TextLabel(Point(x - 34.0, center_y - 30.0), "50 Ω", font_size=11.0, anchor="middle", font_weight="bold")
         )
-        self._add_parameter_register(canvas, config, dw_um, x + 30.0, x + 650.0, frame_top)
+        canvas.labels.append(
+            TextLabel(
+                Point(28.0, 14.0),
+                "Структура HD35 · нумерация Mathcad · схема не в масштабе",
+                font_size=13.0,
+                font_weight="bold",
+            )
+        )
 
+        canvas.bounds_points.append(Point(28.0, -3.0))
+        overview = self._snapshot(canvas)
+        legend_top = max(point.y for point in canvas.bounds_points) + 32.0
+        self._add_parameter_register(canvas, config, dw_um, 28.0, max(x, 1128.0), legend_top)
+        return replace(self._snapshot(canvas), overview=overview)
+
+    @staticmethod
+    def _snapshot(canvas: _Canvas) -> StructureGeometry:
+        """Freeze separate overview/detail lists so the legend cannot shrink the overview."""
         bounds = bounds_from_points(canvas.bounds_points)
         margin = 22.0
         return StructureGeometry(
-            polygons=canvas.polygons,
-            rects=canvas.rects,
-            circles=canvas.circles,
-            lines=canvas.lines,
-            labels=canvas.labels,
-            dimensions=canvas.dimensions,
-            groups=canvas.groups,
+            polygons=list(canvas.polygons),
+            paths=list(canvas.paths),
+            rects=list(canvas.rects),
+            circles=list(canvas.circles),
+            lines=list(canvas.lines),
+            labels=list(canvas.labels),
+            dimensions=list(canvas.dimensions),
+            groups=list(canvas.groups),
             bounds=Rect(
                 bounds.x - margin,
                 bounds.y - margin,
@@ -245,8 +266,8 @@ class IntegratedStructureCalculator(StructureCalculator):
 
         and gives every slice the configured longitudinal step ``dL``.
         Consequently the physical transformer length is ``L = N * dL``.  The
-        preview uses precisely that formula and only applies a constant visual
-        scale afterwards.
+        legend uses precisely that formula. The schematic clamps visual
+        lengths to keep short sections identifiable; it is not a mask layout.
         """
         start_um = start_width_m * 1e6 + dw_um
         end_um = end_width_m * 1e6 + dw_um
@@ -256,9 +277,9 @@ class IntegratedStructureCalculator(StructureCalculator):
             width_step_um,
             length_step_m,
         )
-        visual_length = max(MIN_SEGMENT_LENGTH, physical_length_um * LENGTH_SCALE)
-        start_height = max(3.0, start_um * WIDTH_SCALE)
-        end_height = max(3.0, end_um * WIDTH_SCALE)
+        visual_length = max(MIN_SEGMENT_LENGTH, min(150.0, physical_length_um * LENGTH_SCALE))
+        start_height = max(8.0, min(126.0, start_um * WIDTH_SCALE))
+        end_height = max(8.0, min(126.0, end_um * WIDTH_SCALE))
         points = [
             Point(x, center_y - start_height / 2.0),
             Point(x + visual_length, center_y - end_height / 2.0),
@@ -267,6 +288,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         ]
         canvas.polygons.append(PolygonShape(points, fill=TRANSFORMER_FILL))
         canvas.bounds_points.extend(points)
+        self._add_callout(canvas, label, x + visual_length / 2.0, center_y - (start_height + end_height) / 4.0)
         return x + visual_length
 
     def _add_microstrip(
@@ -282,128 +304,90 @@ class IntegratedStructureCalculator(StructureCalculator):
         """Draw an MSL section using ``L`` and the corrected width ``W + DW``."""
         length_um = length_m * 1e6
         width_um = width_m * 1e6 + dw_um
-        visual_length = max(MIN_SEGMENT_LENGTH, length_um * LENGTH_SCALE)
-        visual_width = max(3.0, width_um * WIDTH_SCALE)
+        visual_length = max(78.0, min(180.0, length_um * LENGTH_SCALE))
+        visual_width = max(8.0, min(126.0, width_um * WIDTH_SCALE))
         rect = Rect(x, center_y - visual_width / 2.0, visual_length, visual_width)
         canvas.rects.append(RectShape(rect, fill=CONDUCTOR_FILL))
         canvas.include_rect(rect)
+        self._add_callout(canvas, label, x + visual_length / 2.0, rect.y)
         return rect.right
 
-    def _add_group_sequence(
-        self,
-        canvas: _Canvas,
-        start_x: float,
-        end_x: float,
-        y: float,
-        text: str,
-    ) -> None:
-        """List the physical order once per matrix without crossing the metal.
-
-        The former per-segment leader lines competed with narrow transformers,
-        dimension callouts and nested matrix frames.  A dedicated sequence
-        lane keeps the element-to-matrix mapping explicit while leaving the
-        topology itself unobstructed.
-        """
-        position = Point((start_x + end_x) / 2.0, y)
-        canvas.labels.append(TextLabel(position, text, font_size=7.0, anchor="middle", fill="#334155"))
-        canvas.bounds_points.append(position)
+    def _add_callout(self, canvas: _Canvas, element: str, x: float, edge_y: float) -> None:
+        """Connect each local number to exactly one section, clear of the metal."""
+        if element not in REFERENCE_NUMBERS:
+            return
+        y = 98.0
+        canvas.labels.append(
+            TextLabel(Point(x, y), str(REFERENCE_NUMBERS[element]), font_size=14.0, anchor="middle", font_weight="bold")
+        )
+        canvas.lines.append(LineShape(Point(x, y + 6.0), Point(x, edge_y - 4.0), stroke="#64748b"))
+        canvas.circles.append(CircleShape(Point(x, edge_y - 3.0), radius=1.5, fill="#64748b", stroke="#64748b"))
 
     def _add_dc_block(self, canvas: _Canvas, config: S21Config, x: float, center_y: float, dw_um: float) -> float:
-        """Draw the two opposed, galvanically isolated DC-break electrodes.
+        """Opposed downward electrodes as in Mathcad's embedded HD35 drawing.
 
-        ``Wslot`` is corrected as ``Wslot - DW`` and ``Wms`` as ``Wms + DW``,
-        exactly as in ``S21CalculatorImpl``.  The two filled polygons are the
-        actual left and right conductors from the owner's fabrication sketch:
-        each feed widens through a short shoulder into a straight finger, and
-        the parallel finger faces are separated by the slot.  There are no
-        U-shaped return arms.  The open slot blocks the FFO-to-detector DC path
-        while the distributed slot-antenna model transfers RF power.
+        This is a topology schematic, not a fabrication mask. The two metal
+        polygons remain disjoint; the slot is not a third metal component.
+        Actual dimensions and the Wslot-DW correction are reported below.
         """
-        slot_width_um = max(0.1, config.w_slot_m * 1e6 - dw_um)
-        slot_length_um = config.l_slot_m * 1e6
-        microstrip_width_um = config.w_ms_m * 1e6 + dw_um
-        microstrip_length_um = config.l_ms_m * 1e6
-        slot_offset_um = config.lso_m * 1e6
-
-        feed_length = max(24.0, microstrip_length_um * LENGTH_SCALE)
-        feed_height = max(4.0, microstrip_width_um * WIDTH_SCALE)
-        gap = max(7.0, slot_width_um * WIDTH_SCALE)
-        shoulder = max(10.0, slot_offset_um * LENGTH_SCALE)
-        electrode_width = max(12.0, feed_height * 1.8)
-        electrode_length = max(62.0, slot_length_um * WIDTH_SCALE)
-        feed_top = center_y - feed_height / 2.0
-        feed_bottom = center_y + feed_height / 2.0
-        electrode_bottom = feed_bottom
-        electrode_top = electrode_bottom - electrode_length
-
-        left_feed_end = x + feed_length
-        left_electrode_x = left_feed_end + shoulder
-        left_slot_edge = left_electrode_x + electrode_width
-        right_slot_edge = left_slot_edge + gap
-        right_electrode_right = right_slot_edge + electrode_width
-        right_feed_start = right_electrode_right + shoulder
-        right_feed_end = right_feed_start + feed_length
-
-        left_conductor = [
-            Point(x, feed_top),
-            Point(left_feed_end, feed_top),
-            Point(left_electrode_x, feed_top - feed_height * 0.35),
-            Point(left_electrode_x, electrode_top),
-            Point(left_slot_edge, electrode_top),
-            Point(left_slot_edge, electrode_bottom),
-            Point(left_electrode_x, electrode_bottom),
-            Point(left_feed_end, feed_bottom),
-            Point(x, feed_bottom),
+        gap = max(9.0, min(24.0, (config.w_slot_m * 1e6 - dw_um) * WIDTH_SCALE))
+        feed_h = max(10.0, min(30.0, (config.w_ms_m * 1e6 + dw_um) * WIDTH_SCALE))
+        finger = 18.0
+        shoulder = 18.0
+        length = max(75.0, min(104.0, config.l_slot_m * 1e6 * WIDTH_SCALE))
+        top, bottom = center_y - feed_h / 2.0, center_y + feed_h / 2.0
+        inner = x + shoulder + finger
+        end = inner + gap + finger + shoulder
+        left = [
+            Point(x, top),
+            Point(inner - 8.0, top),
+            Point(inner, bottom),
+            Point(inner, bottom + length),
+            Point(inner - finger, bottom + length),
+            Point(inner - finger, bottom),
+            Point(x, bottom),
         ]
-        right_conductor = [
-            Point(right_slot_edge, electrode_top),
-            Point(right_electrode_right, electrode_top),
-            Point(right_electrode_right, feed_top - feed_height * 0.35),
-            Point(right_feed_start, feed_top),
-            Point(right_feed_end, feed_top),
-            Point(right_feed_end, feed_bottom),
-            Point(right_feed_start, feed_bottom),
-            Point(right_electrode_right, electrode_bottom),
-            Point(right_slot_edge, electrode_bottom),
+        right = [
+            Point(end, top),
+            Point(inner + gap + 8.0, top),
+            Point(inner + gap, bottom),
+            Point(inner + gap, bottom + length),
+            Point(inner + gap + finger, bottom + length),
+            Point(inner + gap + finger, bottom),
+            Point(end, bottom),
         ]
-        canvas.polygons.extend(
-            (
-                PolygonShape(left_conductor, fill=DC_FILL),
-                PolygonShape(right_conductor, fill=DC_FILL),
+        canvas.polygons.extend((PolygonShape(left, fill=DC_FILL), PolygonShape(right, fill=DC_FILL)))
+        canvas.bounds_points.extend((*left, *right))
+        # Separate lateral leads are visible in the reference; they do not
+        # bridge the central gap and are schematic, without invented sizes.
+        for start, outside in ((inner - finger, x - 8.0), (inner + gap + finger, end + 8.0)):
+            y = bottom + 20.0
+            canvas.lines.extend(
+                (
+                    LineShape(Point(start, y), Point(outside, y), stroke_width=2.5),
+                    LineShape(Point(outside, y), Point(outside, bottom + length + 10), stroke_width=2.5),
+                )
+            )
+        slot_x = inner + gap / 2.0
+        canvas.dimensions.append(
+            self._dim(
+                Point(inner, bottom + length + 15),
+                Point(inner + gap, bottom + length + 15),
+                "Wslot",
+                Point(slot_x, bottom + length + 30),
             )
         )
-        canvas.bounds_points.extend((*left_conductor, *right_conductor))
-
-        slot_center_x = (left_slot_edge + right_slot_edge) / 2.0
-        canvas.labels.append(
-            TextLabel(
-                Point(slot_center_x, center_y + 34.0),
-                "DC-break · щелевая антенна",
-                font_size=8.0,
-                anchor="middle",
-                font_weight="bold",
+        canvas.dimensions.append(
+            self._dim(
+                Point(slot_x, bottom),
+                Point(slot_x, bottom + length),
+                "Lslot",
+                Point(slot_x + 4, bottom + length / 2),
+                label_rotation_deg=-90,
             )
         )
-        canvas.dimensions.extend(
-            (
-                self._dim(
-                    Point(left_slot_edge, electrode_top - 13.0),
-                    Point(right_slot_edge, electrode_top - 13.0),
-                    f"Wslot={config.w_slot_m * 1e6:g} µm; Wэфф={slot_width_um:g} µm",
-                    Point(slot_center_x, electrode_top - 19.0),
-                ),
-                self._dim(
-                    Point(right_electrode_right + 10.0, electrode_top),
-                    Point(right_electrode_right + 10.0, electrode_bottom),
-                    f"Lslot={slot_length_um:g} µm",
-                    Point(right_electrode_right + 17.0, (electrode_top + electrode_bottom) / 2.0),
-                    label_rotation_deg=-90.0,
-                ),
-            )
-        )
-        for dimension in canvas.dimensions[-2:]:
-            canvas.bounds_points.extend((dimension.start, dimension.end, dimension.label_pos))
-        return right_feed_end
+        canvas.bounds_points.append(Point(slot_x, bottom + length + 30))
+        return end
 
     def _add_radial_and_source(
         self,
@@ -415,120 +399,101 @@ class IntegratedStructureCalculator(StructureCalculator):
         frame_top: float,
         frame_bottom: float,
     ) -> float:
-        """Draw Mex04, the radial shunt network, MLsis and the 50 Ohm port.
+        """Place MLsis/SIS before the radial neck, as in PNG item 587.
 
-        The radial branch is the parallel admittance
-
-        ``Zrad2 = 1 / (2*Yrad + 1/Zrad1)``.
-
-        Two fan sectors are therefore drawn symmetrically around the feed line.
-        The following ``Zrad3``/``Zrad4`` and ``Mex4`` microstrips mirror the
-        successive impedance transforms in ``S21CalculatorImpl``.
+        Mrad is the shunt equivalent of the radial/filter branch, not a series
+        cascade of additional numbered transformers. Its 50-ohm termination
+        is drawn beyond the two radial sectors, outside the Mex04 frame.
         """
-        mex4_start = x
-        feed_width_um = config.zrad1_width_m * 1e6 + dw_um
-        feed_height = max(3.0, feed_width_um * WIDTH_SCALE)
-        feed_length = max(28.0, config.zrad1_len_m * 1e6 * LENGTH_SCALE)
-        feed = Rect(x, center_y - feed_height / 2.0, feed_length, feed_height)
-        canvas.rects.append(RectShape(feed, fill=CONDUCTOR_FILL))
-        canvas.include_rect(feed)
-        stub_center = Point(feed.right, center_y)
+        start = x
+        # Coordinates are taken from the user's clean SVG, whose SIS circle
+        # is (1037,276). Scale the footprint but retain its asymmetric curved
+        # rims, inclined sides and stepped neck; do not use annular wedges.
+        radius = max(72.0, min(88.0, config.radial_r_max_m * 1e6 * WIDTH_SCALE))
+        sy = radius / 138.0
+        sx = sy * sin(radians(config.radial_angle_deg / 2.0)) / sin(radians(113.0 / 2.0))
+        sx = max(0.5, min(0.9, sx))
+        h = max(10.0, min(20.0, (config.mex4_width_m * 1e6 + dw_um) * WIDTH_SCALE))
 
-        r_min = config.radial_r_min_m * 1e6 * WIDTH_SCALE
-        r_max = config.radial_r_max_m * 1e6 * WIDTH_SCALE
-        top_lobe = self._fan_lobe_points(stub_center, r_min, r_max, config.radial_angle_deg, upward=True)
-        bottom_lobe = self._fan_lobe_points(stub_center, r_min, r_max, config.radial_angle_deg, upward=False)
-        canvas.polygons.extend(
-            (
-                PolygonShape(top_lobe, fill=RADIAL_FILL),
-                PolygonShape(bottom_lobe, fill=RADIAL_FILL),
+        def point(rx: float, ry: float) -> Point:
+            # Keep the thin neck legible even when the fan is small.
+            dy = ry - 276.0
+            y = center_y + (dy * h / 18.0 if abs(dy) <= 14.0 else dy * sy)
+            return Point(start + (rx - 1023.0) * sx, y)
+
+        def path(element_id: str, commands: list[tuple[str, tuple[float, ...]]]) -> None:
+            parts = []
+            points = []
+            for command, coordinates in commands:
+                mapped = [point(*coordinates[i : i + 2]) for i in range(0, len(coordinates), 2)]
+                parts.append(command + " ".join(f"{p.x:g},{p.y:g}" for p in mapped))
+                points.extend(mapped)
+            bounds = bounds_from_points(points)
+            canvas.paths.append(PathShape(" ".join(parts), bounds, element_id))
+            canvas.include_rect(bounds)
+
+        path("radial-upper", [("M", (1067, 266)), ("L", (976, 166)), ("Q", (1059, 106, 1147, 170)), ("L", (1074, 265))])
+        path("radial-lower", [("M", (1067, 284)), ("L", (975, 386)), ("Q", (1059, 465, 1148, 381)), ("L", (1074, 289))])
+        path("sis-feed", [("M", (1023, 266)), ("L", (1067, 266)), ("M", (1023, 284)), ("L", (1067, 284))])
+        # Upper and lower stepped contours from the reference, extended to
+        # the current output-line length without adding an inner circular arc.
+        neck = point(1074, 276).x
+        output_start = point(1079, 276).x
+        output_end = output_start + max(104.0, min(180.0, config.zrad1_len_m * 1e6 * LENGTH_SCALE))
+        rx_end = 1023.0 + (output_end - start) / sx
+        path(
+            "radial-output",
+            [
+                ("M", (1074, 265)),
+                ("L", (1074, 267)),
+                ("L", (1079, 267)),
+                ("L", (1079, 270)),
+                ("L", (rx_end, 270)),
+                ("M", (rx_end, 283)),
+                ("L", (1074, 283)),
+                ("L", (1074, 289)),
+                ("M", (1079, 270)),
+                ("L", (1079, 283)),
+            ],
+        )
+        sis = point(1037, 276)
+        sis_top = point(1023, 266)
+        sis_bottom = point(1049, 284)
+        canvas.rects.append(
+            RectShape(
+                Rect(sis_top.x, sis_top.y, sis_bottom.x - sis_top.x, sis_bottom.y - sis_top.y),
+                fill="#ffffff",
+                stroke_width=1.2,
             )
         )
-        canvas.bounds_points.extend((*top_lobe, *bottom_lobe))
-        canvas.circles.append(CircleShape(stub_center, radius=3.0, fill="#ffffff"))
-        canvas.bounds_points.extend((Point(stub_center.x - 3.0, center_y), Point(stub_center.x + 3.0, center_y)))
-
-        x = feed.right
-        radial_start = mex4_start
-        canvas.labels.extend(
-            (
-                TextLabel(
-                    Point(stub_center.x, center_y - r_max - 12.0),
-                    "Radial shunt ×2",
-                    font_size=8.0,
-                    anchor="middle",
-                    font_weight="bold",
-                ),
-                TextLabel(
-                    Point(stub_center.x + 18.0, center_y - 12.0),
-                    "SIS",
-                    font_size=7.0,
-                    font_weight="bold",
-                ),
-            )
+        canvas.circles.append(CircleShape(sis, radius=5.0 * sy, fill="#fff"))
+        canvas.labels.append(TextLabel(Point(start - 38, center_y + 49), "SIS", font_size=12.0, anchor="end"))
+        canvas.lines.append(
+            LineShape(Point(sis.x, sis_bottom.y + 3), Point(start - 34, center_y + 40), stroke="#64748b")
         )
-        x = self._add_microstrip(canvas, x, center_y, config.zrad3_len_m, config.zrad3_width_m, dw_um, "")
-        x = self._add_microstrip(canvas, x, center_y, config.zrad4_len_m, config.zrad4_width_m, dw_um, "")
-        mlsis_start = x
-        x = self._add_microstrip(canvas, x, center_y, config.mex4_len_m, config.mex4_width_m, dw_um, "")
-        mlsis_end = x
-
-        # The 50 Ohm source is a port boundary, not an eighth calculated
-        # transformer.  A neutral outline distinguishes it from blue T1..T7.
-        port_height = max(18.0, feed_height * 3.2)
-        port_taper_length = 28.0
-        port_points = [
-            Point(x, center_y - feed_height / 2.0),
-            Point(x + port_taper_length, center_y - port_height / 2.0),
-            Point(x + port_taper_length, center_y + port_height / 2.0),
-            Point(x, center_y + feed_height / 2.0),
+        canvas.labels.append(
+            TextLabel(Point(neck + 12, center_y + radius + 35), "Радиальные шлейфы ×2", font_size=12.0, anchor="middle")
+        )
+        self._add_group(canvas, start - 10, output_end, frame_top + 26, frame_bottom - 18, "Mrad", "left")
+        self._add_group(canvas, start, sis_bottom.x + 2, center_y - 23, center_y + 15, "MLsis", "left")
+        # Give MLsis its own leader/title lane instead of squeezing the title
+        # into a short metal section or placing it on the output line.
+        group = canvas.groups[-1]
+        canvas.groups[-1] = GroupBoxShape(group.rect, "MLsis", Point(start + 18, 92.0), 0.0)
+        canvas.lines.append(LineShape(Point(start + 18, 99.0), Point(sis.x, center_y - 24), stroke="#64748b"))
+        self._add_group(canvas, start - 18, output_end + 8, frame_top, frame_bottom, "Mex04", "right")
+        port_height = 32.0
+        pts = [
+            Point(output_end, point(rx_end, 270).y),
+            Point(output_end + 26, center_y - port_height / 2),
+            Point(output_end + 26, center_y + port_height / 2),
+            Point(output_end, point(rx_end, 283).y),
         ]
-        canvas.polygons.append(PolygonShape(port_points, fill="#f8fafc", stroke="#374151"))
-        canvas.bounds_points.extend(port_points)
-        x += port_taper_length
-        port_line = Rect(x, center_y - port_height / 2.0, 52.0, port_height)
-        canvas.rects.append(RectShape(port_line, fill="#f8fafc", stroke="#374151"))
-        canvas.include_rect(port_line)
-        x = port_line.right
-
-        self._add_group(
-            canvas, radial_start, mlsis_start, frame_top + 8.0, frame_bottom - 8.0, "Mrad", title_side="left"
-        )
-        self._add_group(
-            canvas,
-            mlsis_start,
-            mlsis_end,
-            frame_top + 34.0,
-            frame_bottom - 34.0,
-            "MLsis",
-            title_side="left",
-        )
-        self._add_group(
-            canvas,
-            mex4_start,
-            x,
-            frame_top - 8.0,
-            frame_bottom + 8.0,
-            "Mex04",
-            title_side="right",
-        )
-
-        feed_dimension = self._dim(
-            Point(feed.x, center_y - feed_height / 2.0 - 18.0),
-            Point(feed.right, center_y - feed_height / 2.0 - 18.0),
-            f"{config.zrad1_len_m * 1e6:g} µm",
-            Point((feed.x + feed.right) / 2.0, center_y - feed_height / 2.0 - 24.0),
-        )
-        radius_dimension = self._dim(
-            Point(stub_center.x + r_min, center_y + r_max + 10.0),
-            Point(stub_center.x + r_max, center_y + r_max + 10.0),
-            f"R={config.radial_r_min_m * 1e6:g}…{config.radial_r_max_m * 1e6:g} µm",
-            Point(stub_center.x + (r_min + r_max) / 2.0, center_y + r_max + 5.0),
-        )
-        canvas.dimensions.extend((feed_dimension, radius_dimension))
-        for dimension in (feed_dimension, radius_dimension):
-            canvas.bounds_points.extend((dimension.start, dimension.end, dimension.label_pos))
-        return x
+        canvas.polygons.append(PolygonShape(pts, fill="#f8fafc"))
+        rect = Rect(output_end + 26, center_y - port_height / 2, 44, port_height)
+        canvas.rects.append(RectShape(rect, fill="#f8fafc"))
+        canvas.include_rect(rect)
+        return rect.right
 
     def _add_parameter_register(
         self,
@@ -539,123 +504,52 @@ class IntegratedStructureCalculator(StructureCalculator):
         right: float,
         top: float,
     ) -> None:
-        """Add a non-overlapping register of every configured physical size.
+        """Readable local-number legend below the drawing, with live sizes.
 
-        The drawing itself stays legible at overview scale.  This register is
-        part of the same SVG and reports the raw input values; where the
-        backend applies the lithographic correction it also reports ``Wэфф``.
-        Transformer ``L`` is derived from the exact slice formula used by the
-        calculator, not from the schematic's visual scale.
+        Numbers are scoped to Mex01/Mex02/Mex03; T/MSL names are the app's
+        identifiers, not names claimed to exist in the Mathcad worksheet.
         """
-        height = 330.0
-        panel = Rect(left, top, max(1.0, right - left), height)
+        panel = Rect(left, top, right - left, 270.0)
         canvas.rects.append(RectShape(panel, fill="#ffffff", stroke="#94a3b8", stroke_width=0.7))
         canvas.include_rect(panel)
         canvas.labels.append(
             TextLabel(
-                Point(left + 12.0, top + 17.0),
-                f"Размеры из параметров, µm (Wэфф учитывает DW={dw_um:g} µm)",
-                font_size=9.0,
+                Point(left + 12, top + 20),
+                "Обозначения и размеры · µm · Wэфф = W + DW · направление W: от ФФО вправо",
+                font_size=13.0,
                 font_weight="bold",
             )
         )
-
-        def transformer_line(index: int) -> str:
-            start = getattr(config, f"transf_{index}_w_start_m") * 1e6
-            end = getattr(config, f"transf_{index}_w_end_m") * 1e6
-            step = getattr(config, f"transf_{index}_dwdl_um")
-            dl_m = getattr(config, f"transf_{index}_dl_m")
-            length = self._transformer_physical_length_um(start * 1e-6, end * 1e-6, step, dl_m)
-            return f"T{index}: Wstart={start:g}; Wend={end:g}; dW={step:g}; dL={dl_m * 1e6:g}; L={length:g}"
-
-        def msl_line(index: int) -> str:
-            length = getattr(config, f"msl_{index}_len_m") * 1e6
-            width = getattr(config, f"msl_{index}_width_m") * 1e6
-            return f"MSL{index}: W={width:g} (Wэфф={width + dw_um:g}); L={length:g}"
-
-        columns = (
-            ("Mex01", (transformer_line(7), msl_line(8), transformer_line(6))),
-            ("Mex02", (msl_line(7), transformer_line(5), msl_line(6), transformer_line(4))),
-            (
-                "Mdcb / DC-break",
-                (
-                    f"slot: W={config.w_slot_m * 1e6:g} (Wэфф={config.w_slot_m * 1e6 - dw_um:g}); L={config.l_slot_m * 1e6:g}",
-                    f"offset Lso={config.lso_m * 1e6:g}",
-                    f"MS: W={config.w_ms_m * 1e6:g} (Wэфф={config.w_ms_m * 1e6 + dw_um:g}); L={config.l_ms_m * 1e6:g}",
-                ),
-            ),
-            ("Mex03", (transformer_line(3), msl_line(5), transformer_line(2), msl_line(4), transformer_line(1))),
-            (
-                "Mrad / MLsis / SIS",
-                (
-                    f"Zrad1: W={config.zrad1_width_m * 1e6:g}; L={config.zrad1_len_m * 1e6:g}",
-                    f"radial: R={config.radial_r_min_m * 1e6:g}…{config.radial_r_max_m * 1e6:g}; α={config.radial_angle_deg:g}°",
-                    f"Zrad3: W={config.zrad3_width_m * 1e6:g}; L={config.zrad3_len_m * 1e6:g}",
-                    f"Zrad4: W={config.zrad4_width_m * 1e6:g}; L={config.zrad4_len_m * 1e6:g}",
-                    f"MLsis: W={config.mex4_width_m * 1e6:g}; L={config.mex4_len_m * 1e6:g}; SIS W={config.sis_width_um:g}; S={config.sis_area_um2:g} µm²",
-                ),
-            ),
+        width = panel.width / 3
+        for column, (matrix, sections) in enumerate(REFERENCE_SECTIONS.items()):
+            lx = left + column * width + 12
+            canvas.labels.append(TextLabel(Point(lx, top + 46), matrix, font_size=14.0, font_weight="bold"))
+            for row, (number, element) in enumerate(sections):
+                y = top + 67 + row * 21
+                if element.startswith("T"):
+                    i = int(element[1:])
+                    w1 = getattr(config, f"transf_{i}_w_start_m")
+                    w2 = getattr(config, f"transf_{i}_w_end_m")
+                    step = getattr(config, f"transf_{i}_dwdl_um")
+                    dl = getattr(config, f"transf_{i}_dl_m")
+                    length = self._transformer_physical_length_um(w1, w2, step, dl)
+                    detail = f"{element} · переход · W {w2 * 1e6:g}→{w1 * 1e6:g}; L {length:g}"
+                else:
+                    i = int(element[3:])
+                    w = getattr(config, f"msl_{i}_width_m") * 1e6
+                    length = getattr(config, f"msl_{i}_len_m") * 1e6
+                    detail = f"{element} · линия · W {w:g}; L {length:g}"
+                canvas.labels.append(TextLabel(Point(lx, y), f"{number}  —  {detail}", font_size=12.0))
+        y = top + 173
+        canvas.lines.append(LineShape(Point(left + 12, y), Point(right - 12, y), stroke="#cbd5e1"))
+        explanations = (
+            f"Mdcb · DC-развязка: щелевая антенна; Wslot={config.w_slot_m * 1e6:g}; Wэфф={config.w_slot_m * 1e6 - dw_um:g}; Lslot={config.l_slot_m * 1e6:g}; Lso={config.lso_m * 1e6:g}",
+            f"MS-шлейф: W={config.w_ms_m * 1e6:g}; L={config.l_ms_m * 1e6:g}.  Mrad · радиальный фильтр: R={config.radial_r_min_m * 1e6:g}…{config.radial_r_max_m * 1e6:g}; угол {config.radial_angle_deg:g}°",
+            f"MLsis · линия у SIS: W={config.mex4_width_m * 1e6:g}; L={config.mex4_len_m * 1e6:g}.  SIS · туннельный переход.  DW={dw_um:g}",
+            "Цифры повторяются внутри каждой Mex. T — трансформатор, MSL — микрополосковая линия. Размеры — текущие параметры приложения.",
         )
-        column_width = panel.width / 2.0
-        divider_x = panel.x + column_width
-        canvas.lines.append(
-            LineShape(
-                Point(divider_x, top + 27.0),
-                Point(divider_x, panel.bottom - 9.0),
-                stroke="#cbd5e1",
-                stroke_width=0.5,
-            )
-        )
-        cursors = [top + 40.0, top + 40.0]
-        for index, (title, lines) in enumerate(columns):
-            column = 0 if index < 3 else 1
-            x = panel.x + column * column_width + 12.0
-            y = cursors[column]
-            canvas.labels.append(TextLabel(Point(x, y), title, font_size=8.2, font_weight="bold"))
-            for line_index, line in enumerate(lines):
-                canvas.labels.append(
-                    TextLabel(Point(x, y + 13.0 + line_index * 10.0), line, font_size=7.0, fill="#334155")
-                )
-            cursors[column] += 28.0 + len(lines) * 9.0
-
-        purpose_top = top + 222.0
-        canvas.lines.append(
-            LineShape(
-                Point(panel.x + 10.0, purpose_top),
-                Point(panel.right - 10.0, purpose_top),
-                stroke="#94a3b8",
-                stroke_width=0.6,
-            )
-        )
-        canvas.labels.append(
-            TextLabel(
-                Point(panel.x + 12.0, purpose_top + 16.0),
-                "Назначение расчётных частей",
-                font_size=8.5,
-                font_weight="bold",
-            )
-        )
-        purpose_columns = (
-            (
-                "Mex01–Mex03 — каскады T/MSL для согласования импедансов",
-                "Mdcb — щелевая антенна: СВЧ проходит, постоянный ток разорван",
-            ),
-            (
-                "Mrad + MLsis — ВЧ-замыкатель и индуктивная настройка SIS",
-                "SIS — детектор: Rn || C0 и последовательная индуктивность электродов",
-            ),
-        )
-        for column, lines in enumerate(purpose_columns):
-            label_x = panel.x + column * column_width + 12.0
-            for line_index, line in enumerate(lines):
-                canvas.labels.append(
-                    TextLabel(
-                        Point(label_x, purpose_top + 33.0 + line_index * 16.0),
-                        line,
-                        font_size=7.1,
-                        fill="#334155",
-                    )
-                )
+        for row, text in enumerate(explanations):
+            canvas.labels.append(TextLabel(Point(left + 12, y + 21 + row * 21), text, font_size=12.0, fill="#334155"))
 
     def _add_group(
         self,
@@ -696,36 +590,6 @@ class IntegratedStructureCalculator(StructureCalculator):
         delta_width_um = abs(end_width_m - start_width_m) * 1e6
         slice_count = floor(delta_width_um / max(width_step_um, 1e-12)) + 1
         return slice_count * length_step_m * 1e6
-
-    def _fan_lobe_points(
-        self,
-        center: Point,
-        r_min: float,
-        r_max: float,
-        angle_deg: float,
-        upward: bool,
-    ) -> list[Point]:
-        """Approximate an annular sector while preserving ``Rmin/Rmax/angle``."""
-        center_angle = -90.0 if upward else 90.0
-        start = center_angle - angle_deg / 2.0
-        stop = center_angle + angle_deg / 2.0
-        segments = max(12, int(angle_deg / 5.0))
-        step = angle_deg / segments
-        outer = [
-            Point(
-                center.x + r_max * cos(radians(start + index * step)),
-                center.y + r_max * sin(radians(start + index * step)),
-            )
-            for index in range(segments + 1)
-        ]
-        inner = [
-            Point(
-                center.x + r_min * cos(radians(stop - index * step)),
-                center.y + r_min * sin(radians(stop - index * step)),
-            )
-            for index in range(segments + 1)
-        ]
-        return outer + inner
 
     def _dim(
         self,

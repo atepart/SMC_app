@@ -18,16 +18,27 @@ class SvgRendererImpl(SvgRenderer):
         bounds = geometry.bounds
         view_box = f"{bounds.x:g} {bounds.y:g} {bounds.width:g} {bounds.height:g}"
 
-        font_size = max(4.0, min(8.2, bounds.height * 0.036))
+        font_size = 10.0
         dim_lines = "\n".join(self._render_dimension(dim, font_size) for dim in geometry.dimensions)
         polygons = "\n".join(self._render_polygon(polygon) for polygon in geometry.polygons)
+        paths = "\n".join(
+            f'<path id="{self._escape(path.element_id)}" d="{path.data}" fill="{path.fill}" '
+            f'stroke="{path.stroke}" stroke-width="{path.stroke_width:g}" stroke-linejoin="miter" />'
+            for path in geometry.paths
+        )
         rects = "\n".join(self._render_rect(rect_shape) for rect_shape in geometry.rects)
         circles = "\n".join(self._render_circle(circle) for circle in geometry.circles)
         lines = "\n".join(self._render_line(line) for line in geometry.lines)
         labels = "\n".join(self._render_label(label) for label in geometry.labels)
         groups = "\n".join(self._render_group(group) for group in geometry.groups)
+        group_titles = "\n".join(
+            self._render_label(
+                TextLabel(group.title_position, group.title, font_size=12.0, anchor="middle", font_weight="bold")
+            )
+            for group in geometry.groups
+        )
 
-        svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}" width="100%" height="100%">
+        svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}" width="100%" height="100%" font-family="Arial">
   <defs>
     <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth">
       <path d="M 0 0 L 6 3 L 0 6 Z" fill="{self.dimension_color}" />
@@ -43,6 +54,7 @@ class SvgRendererImpl(SvgRenderer):
   <g>
     {polygons}
     {rects}
+    {paths}
     {circles}
     {lines}
   </g>
@@ -51,6 +63,7 @@ class SvgRendererImpl(SvgRenderer):
   </g>
   <g>
     {labels}
+    {group_titles}
   </g>
 </svg>"""
         return svg
@@ -63,19 +76,10 @@ class SvgRendererImpl(SvgRenderer):
         not an additional physical conductor.
         """
         rect = group.rect
-        title = self._escape(group.title)
-        transform = (
-            f' transform="rotate({group.title_rotation_deg:g} '
-            f'{group.title_position.x:g} {group.title_position.y:g})"'
-            if group.title_rotation_deg
-            else ""
-        )
         return (
             f'<rect x="{rect.x:g}" y="{rect.y:g}" width="{rect.width:g}" height="{rect.height:g}" '
             f'fill="none" stroke="{group.stroke}" stroke-width="{group.stroke_width:g}" '
-            f'stroke-dasharray="{group.dash_array}" />\n'
-            f'<text x="{group.title_position.x:g}" y="{group.title_position.y:g}" font-size="11" '
-            f'text-anchor="middle" font-weight="bold" fill="#111827"{transform}>{title}</text>'
+            f'stroke-dasharray="{group.dash_array}" />'
         )
 
     def _render_polygon(self, polygon: PolygonShape) -> str:

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1373" height="460" viewBox="0 0 1373 460">
+  <title>Clean vector reconstruction of apparatus structure</title>
+  <desc>Vector-only reconstruction based on the supplied reference image. Labels, arrows and dotted guide boxes omitted.</desc>
+  <rect width="1373" height="460" fill="white"/>
+  <g fill="none" stroke="#000" stroke-width="2" stroke-linecap="butt" stroke-linejoin="miter" vector-effect="non-scaling-stroke">
+
+    <!-- central rear support / frame -->
+    <path d="M512 438 V324 H678 V438" stroke-width="6"/>
+
+    <!-- far-left partial feed and flange -->
+    <path d="M0 184 H18 V366 H0"/>
+    <path d="M0 218 L18 230"/>
+    <path d="M0 276 H18"/>
+    <path d="M0 333 L18 321"/>
+    <rect x="18" y="207" width="6" height="137" fill="white"/>
+
+    <!-- left-hand vessel train, upper contour -->
+    <path d="M24 207 L57 161 H127 L171 208 H336 L375 253 H570 L581 304"/>
+    <!-- left-hand vessel train, lower contour -->
+    <path d="M24 344 L57 390 H127 L171 344 H336 L375 298 H534 L555 304"/>
+
+    <!-- left-hand partitions -->
+    <path d="M57 161 V390"/>
+    <path d="M127 161 V390"/>
+    <path d="M171 208 V344"/>
+    <path d="M336 208 V344"/>
+    <path d="M375 253 V298"/>
+    <path d="M534 253 V298"/>
+
+    <!-- central plates; white fill masks the rear frame exactly as in the source -->
+    <rect x="555" y="304" width="26" height="109" fill="white"/>
+    <rect x="595" y="304" width="26" height="109" fill="white"/>
+
+    <!-- right side of the central transition / guide -->
+    <path d="M595 304 L606 254 H812 L846 226 H999 L1023 266 H1067"/>
+    <path d="M621 304 L651 298 H812 L846 330 H999 L1023 284 H1067"/>
+
+    <!-- right-side partitions -->
+    <path d="M651 254 V298"/>
+    <path d="M812 254 V298"/>
+    <path d="M846 226 V330"/>
+    <path d="M999 226 V330"/>
+
+    <!-- small throat block near the bow-tie / sector assembly -->
+    <path d="M1023 266 V284"/>
+    <path d="M1049 267 V283"/>
+    <circle cx="1037" cy="276" r="5"/>
+
+    <!-- upper and lower sector elements -->
+    <path d="M1067 266 L976 166 Q1059 106 1147 170 L1074 265"/>
+    <path d="M1067 284 L975 386 Q1059 465 1148 381 L1074 289"/>
+
+    <!-- stepped neck into the long narrow guide -->
+    <path d="M1074 265 V267 H1079 V270 H1232"/>
+    <path d="M1232 283 H1074 V289"/>
+    <path d="M1079 270 V283"/>
+
+    <!-- long narrow guide, right transition and final chamber -->
+    <path d="M1232 270 L1282 231 H1373"/>
+    <path d="M1232 283 L1282 321 H1373"/>
+    <path d="M1282 231 V321"/>
+
+  </g>
+</svg>
