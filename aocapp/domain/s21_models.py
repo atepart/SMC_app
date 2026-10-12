@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields as dataclass_fields
+from dataclasses import dataclass, field, fields as dataclass_fields, replace
 from typing import ClassVar
+
+from aocapp.domain.transformers import SCHEMATIC_SECTIONS, transformer_length_m
 
 
 @dataclass(frozen=True)
@@ -43,7 +45,11 @@ class S21Config:
         "Block 1 / Block 2",
         "DC Break",
         "Radial Stub",
-        "Block SIS",
+        *tuple(
+            f"{number} · {'Трансформатор' if element.startswith('T') else 'Линия'}"
+            for sections in SCHEMATIC_SECTIONS.values()
+            for number, element in sections
+        ),
     )
 
     temperature_k: float = field(
@@ -146,10 +152,11 @@ class S21Config:
             "group": "EL1 Material",
             "description": "Normal-state conductivity sigma_1 of electrode EL1.",
             "suffix": " 1/(Ohm*m)",
-            "minimum": 1.0,
-            "maximum": 1.0e9,
-            "step": 1.0e5,
-            "decimals": 0,
+            "minimum": 0.000001,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 6,
+            "scale": 1e-6,
         },
     )
     sigma0_bot: float = field(
@@ -159,10 +166,11 @@ class S21Config:
             "group": "EL2 Material",
             "description": "Normal-state conductivity sigma_2 of electrode EL2.",
             "suffix": " 1/(Ohm*m)",
-            "minimum": 1.0,
-            "maximum": 1.0e9,
-            "step": 1.0e5,
-            "decimals": 0,
+            "minimum": 0.000001,
+            "maximum": 1000.0,
+            "step": 0.1,
+            "decimals": 6,
+            "scale": 1e-6,
         },
     )
 
@@ -1349,7 +1357,75 @@ class S21Config:
                     visible=meta.get("visible", True),
                 )
             )
-        return [field_info for field_info in result if field_info.visible]
+        visible = []
+        for info in result:
+            if not info.visible or info.name.startswith(("transf_", "msl_")):
+                continue
+            if info.suffix == " GHz":
+                info = replace(info, step=1.0 if "step" in info.name else 10.0)
+            if info.suffix == " um" and info.group in {"DC Break", "Radial Stub", "SIS"}:
+                info = replace(info, step=0.5)
+            if info.name == "sis_rn_area_ohm_um2":
+                info = replace(info, step=0.5, label="RnS")
+            visible.append(info)
+        by_name = {info.name: info for info in result}
+        for sections in SCHEMATIC_SECTIONS.values():
+            for number, element in sections:
+                group = f"{number} · {'Трансформатор' if element.startswith('T') else 'Линия'}"
+                if element.startswith("T"):
+                    prefix = f"transf_{element[1:]}"
+                    # Backend width direction is opposite to the drawing.
+                    for suffix, label in (("w_end_m", "W1"), ("w_start_m", "W2")):
+                        visible.append(
+                            replace(
+                                by_name[f"{prefix}_{suffix}"],
+                                label=label,
+                                group=group,
+                                step=0.5,
+                                description=f"Элемент {number}: ширина {'слева (от ФФО)' if label == 'W1' else 'справа (к SIS)'}, до поправки DW.",
+                            )
+                        )
+                    visible.append(
+                        ConfigFieldInfo(
+                            f"{prefix}_length_m",
+                            "L",
+                            group,
+                            "Общая длина трансформатора. Автоподбор целых n и |W1−W2|/n; dl=0.5…1.5 µm.",
+                            suffix=" um",
+                            minimum=0.1,
+                            maximum=10000,
+                            step=0.5,
+                            decimals=6,
+                        )
+                    )
+                else:
+                    prefix = f"msl_{element[3:]}"
+                    for suffix, label in (("width_m", "W"), ("len_m", "L")):
+                        visible.append(
+                            replace(
+                                by_name[f"{prefix}_{suffix}"],
+                                label=label,
+                                group=group,
+                                step=0.5,
+                                description=f"Элемент {number}: {'ширина линии до поправки DW' if label == 'W' else 'длина линии'}.",
+                            )
+                        )
+        return visible
+
+    def ui_value(self, name: str) -> float:
+        """Return a UI value, including the derived transformer length."""
+        if name.startswith("transf_") and name.endswith("_length_m"):
+            prefix = name.removesuffix("_length_m")
+            return (
+                transformer_length_m(
+                    getattr(self, f"{prefix}_w_start_m"),
+                    getattr(self, f"{prefix}_w_end_m"),
+                    getattr(self, f"{prefix}_dwdl_um"),
+                    getattr(self, f"{prefix}_dl_m"),
+                )
+                * 1e6
+            )
+        return getattr(self, name) * self.field_scale(name)
 
     @classmethod
     def field_scale(cls, name: str) -> float:
@@ -1360,6 +1436,8 @@ class S21Config:
         ``1e12`` so the UI presents pF/µm² while the calculation continues to
         receive the legacy F/µm² value.
         """
+        if name.startswith("transf_") and name.endswith("_length_m"):
+            return 1e6
         for config_field in dataclass_fields(cls):
             if config_field.name == name:
                 return config_field.metadata.get("scale", 1.0)

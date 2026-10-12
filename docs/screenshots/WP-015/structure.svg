@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 -25 1149 737" width="100%" height="100%" font-family="Arial">
+  <defs>
+    <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth">
+      <path d="M 0 0 L 6 3 L 0 6 Z" fill="#000000" />
+    </marker>
+    <pattern id="hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(135)">
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#6b7280" stroke-width="1" />
+    </pattern>
+  </defs>
+  <rect x="1" y="-25" width="1149" height="737" fill="#fdfdfd" />
+  <g>
+    <rect x="23" y="35" width="176" height="290" fill="none" stroke="#6b7280" stroke-width="0.7" stroke-dasharray="2 2" />
+<rect x="189" y="49" width="254" height="262" fill="none" stroke="#6b7280" stroke-width="0.7" stroke-dasharray="2 2" />
+<rect x="433" y="63" width="91" height="234" fill="none" stroke="#6b7280" stroke-width="0.7" stroke-dasharray="2 2" />
+<rect x="514" y="49" width="298" height="262" fill="none" stroke="#6b7280" stroke-width="0.7" stroke-dasharray="2 2" />
+<rect x="792" y="61" width="164.841" height="246" fill="none" stroke="#6b7280" stroke-width="0.7" stroke-dasharray="2 2" />
+<rect x="802" y="162" width="26.3188" height="38" fill="none" stroke="#6b7280" stroke-width="0.7" stroke-dasharray="2 2" />
+<rect x="784" y="35" width="180.841" height="290" fill="none" stroke="#6b7280" stroke-width="0.7" stroke-dasharray="2 2" />
+  </g>
+  <g>
+    <polygon points="28,170.5 72,135.5 72,234.5 28,199.5" fill="#dbeafe" stroke="#111111" stroke-width="0.8" />
+<polygon points="150,136.5 194,166.5 194,203.5 150,233.5" fill="#dbeafe" stroke="#111111" stroke-width="0.8" />
+<polygon points="272,166.5 316,178.5 316,191.5 272,203.5" fill="#dbeafe" stroke="#111111" stroke-width="0.8" />
+<polygon points="394,178.5 438,174.5 438,195.5 394,191.5" fill="#dbeafe" stroke="#111111" stroke-width="0.8" />
+<polygon points="438,175.5 466,175.5 474,194.5 474,269.5 456,269.5 456,194.5 438,194.5" fill="#d7edf5" stroke="#111111" stroke-width="0.8" />
+<polygon points="519,175.5 491,175.5 483,194.5 483,269.5 501,269.5 501,194.5 519,194.5" fill="#d7edf5" stroke="#111111" stroke-width="0.8" />
+<polygon points="519,174.5 563,178.5 563,191.5 519,195.5" fill="#dbeafe" stroke="#111111" stroke-width="0.8" />
+<polygon points="641,180.5 685,166.5 685,203.5 641,189.5" fill="#dbeafe" stroke="#111111" stroke-width="0.8" />
+<polygon points="763,166.5 807,178.5 807,191.5 763,203.5" fill="#dbeafe" stroke="#111111" stroke-width="0.8" />
+<polygon points="951.841,180.667 977.841,169 977.841,201 951.841,190.056" fill="#f8fafc" stroke="#111111" stroke-width="0.8" />
+    <rect x="72" y="134.5" width="78" height="101" fill="#e8f1f5" stroke="#111111" stroke-width="0.8" />
+<rect x="194" y="166.5" width="78" height="37" fill="#e8f1f5" stroke="#111111" stroke-width="0.8" />
+<rect x="316" y="180.5" width="78" height="9" fill="#e8f1f5" stroke="#111111" stroke-width="0.8" />
+<rect x="563" y="180.5" width="78" height="9" fill="#e8f1f5" stroke="#111111" stroke-width="0.8" />
+<rect x="685" y="166.5" width="78" height="37" fill="#e8f1f5" stroke="#111111" stroke-width="0.8" />
+<rect x="807" y="177.778" width="14.3188" height="13" fill="#ffffff" stroke="#111111" stroke-width="1.2" />
+<rect x="977.841" y="169" width="44" height="32" fill="#f8fafc" stroke="#111111" stroke-width="0.8" />
+<rect x="28" y="357" width="1100" height="333" fill="#ffffff" stroke="#94a3b8" stroke-width="0.7" />
+    <path id="radial-upper" d="M831.232,177.778 L781.116,124.42 Q826.826,91.3768 875.29,126.623 L835.087,177.056" fill="none" stroke="#111111" stroke-width="0.8" stroke-linejoin="miter" />
+<path id="radial-lower" d="M831.232,190.778 L780.565,245.58 Q826.826,289.087 875.841,242.826 L835.087,194.389" fill="none" stroke="#111111" stroke-width="0.8" stroke-linejoin="miter" />
+<path id="sis-feed" d="M807,177.778 L831.232,177.778 M807,190.778 L831.232,190.778" fill="none" stroke="#111111" stroke-width="0.8" stroke-linejoin="miter" />
+<path id="radial-output" d="M835.087,177.056 L835.087,178.5 L837.841,178.5 L837.841,180.667 L951.841,180.667 M951.841,190.056 L835.087,190.056 L835.087,194.389 M837.841,180.667 L837.841,190.056" fill="none" stroke="#111111" stroke-width="0.8" stroke-linejoin="miter" />
+    <circle cx="50" cy="150" r="1.5" fill="#64748b" stroke="#64748b" stroke-width="0.8" />
+<circle cx="111" cy="131.5" r="1.5" fill="#64748b" stroke="#64748b" stroke-width="0.8" />
+<circle cx="172" cy="148.5" r="1.5" fill="#64748b" stroke="#64748b" stroke-width="0.8" />
+<circle cx="233" cy="163.5" r="1.5" fill="#64748b" stroke="#64748b" stroke-width="0.8" />
+<circle cx="294" cy="169.5" r="1.5" fill="#64748b" stroke="#64748b" stroke-width="0.8" />
+<circle cx="355" cy="177.5" r="1.5" fill="#64748b" stroke="#64748b" stroke-width="0.8" />
+<circle cx="416" cy="173.5" r="1.5" fill="#64748b" stroke="#64748b" stroke-width="0.8" />
+<circle cx="541" cy="173.5" r="1.5" fill="#64748b" stroke="#64748b" stroke-width="0.8" />
+<circle cx="602" cy="177.5" r="1.5" fill="#64748b" stroke="#64748b" stroke-width="0.8" />
+<circle cx="663" cy="170.5" r="1.5" fill="#64748b" stroke="#64748b" stroke-width="0.8" />
+<circle cx="724" cy="163.5" r="1.5" fill="#64748b" stroke="#64748b" stroke-width="0.8" />
+<circle cx="785" cy="169.5" r="1.5" fill="#64748b" stroke="#64748b" stroke-width="0.8" />
+<circle cx="814.71" cy="185" r="2.75362" fill="#fff" stroke="#111111" stroke-width="0.8" />
+    <line x1="50" y1="104" x2="50" y2="149" stroke="#64748b" stroke-width="0.8" />
+<line x1="111" y1="104" x2="111" y2="130.5" stroke="#64748b" stroke-width="0.8" />
+<line x1="172" y1="104" x2="172" y2="147.5" stroke="#64748b" stroke-width="0.8" />
+<line x1="233" y1="104" x2="233" y2="162.5" stroke="#64748b" stroke-width="0.8" />
+<line x1="294" y1="104" x2="294" y2="168.5" stroke="#64748b" stroke-width="0.8" />
+<line x1="355" y1="104" x2="355" y2="176.5" stroke="#64748b" stroke-width="0.8" />
+<line x1="416" y1="104" x2="416" y2="172.5" stroke="#64748b" stroke-width="0.8" />
+<line x1="456" y1="214.5" x2="430" y2="214.5" stroke="#111111" stroke-width="2.5" />
+<line x1="430" y1="214.5" x2="430" y2="279.5" stroke="#111111" stroke-width="2.5" />
+<line x1="501" y1="214.5" x2="527" y2="214.5" stroke="#111111" stroke-width="2.5" />
+<line x1="527" y1="214.5" x2="527" y2="279.5" stroke="#111111" stroke-width="2.5" />
+<line x1="541" y1="104" x2="541" y2="172.5" stroke="#64748b" stroke-width="0.8" />
+<line x1="602" y1="104" x2="602" y2="176.5" stroke="#64748b" stroke-width="0.8" />
+<line x1="663" y1="104" x2="663" y2="169.5" stroke="#64748b" stroke-width="0.8" />
+<line x1="724" y1="104" x2="724" y2="162.5" stroke="#64748b" stroke-width="0.8" />
+<line x1="785" y1="104" x2="785" y2="168.5" stroke="#64748b" stroke-width="0.8" />
+<line x1="814.71" y1="193.778" x2="773" y2="225" stroke="#64748b" stroke-width="0.8" />
+<line x1="825" y1="99" x2="814.71" y2="161" stroke="#64748b" stroke-width="0.8" />
+<line x1="40" y1="530" x2="1116" y2="530" stroke="#cbd5e1" stroke-width="0.8" />
+  </g>
+  <g stroke="#000000" stroke-width="0.5" fill="none">
+    <line x1="474" y1="284.5" x2="483" y2="284.5" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+<text x="478.5" y="299.5" font-size="10" text-anchor="middle" fill="#000000">Wslot</text>
+<line x1="478.5" y1="194.5" x2="478.5" y2="269.5" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+<text x="482.5" y="232" font-size="10" text-anchor="middle" fill="#000000" transform="rotate(-90 482.5 232)">Lslot</text>
+  </g>
+  <g>
+    <text x="28" y="265" font-size="12" text-anchor="start" fill="#111111" font-weight="normal"><tspan x="28" dy="0">ФФО</tspan></text>
+<text x="50" y="98" font-size="14" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="50" dy="0">1</tspan></text>
+<text x="111" y="98" font-size="14" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="111" dy="0">2</tspan></text>
+<text x="172" y="98" font-size="14" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="172" dy="0">3</tspan></text>
+<text x="233" y="98" font-size="14" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="233" dy="0">4</tspan></text>
+<text x="294" y="98" font-size="14" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="294" dy="0">5</tspan></text>
+<text x="355" y="98" font-size="14" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="355" dy="0">6</tspan></text>
+<text x="416" y="98" font-size="14" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="416" dy="0">7</tspan></text>
+<text x="541" y="98" font-size="14" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="541" dy="0">8</tspan></text>
+<text x="602" y="98" font-size="14" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="602" dy="0">9</tspan></text>
+<text x="663" y="98" font-size="14" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="663" dy="0">10</tspan></text>
+<text x="724" y="98" font-size="14" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="724" dy="0">11</tspan></text>
+<text x="785" y="98" font-size="14" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="785" dy="0">12</tspan></text>
+<text x="769" y="234" font-size="12" text-anchor="end" fill="#111111" font-weight="normal"><tspan x="769" dy="0">SIS</tspan></text>
+<text x="847.087" y="296" font-size="12" text-anchor="middle" fill="#111111" font-weight="normal"><tspan x="847.087" dy="0">Радиальные шлейфы ×2</tspan></text>
+<text x="987.841" y="155" font-size="11" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="987.841" dy="0">50 Ω</tspan></text>
+<text x="28" y="14" font-size="13" text-anchor="start" fill="#111111" font-weight="bold"><tspan x="28" dy="0">Структура HD35 · от ФФО к SIS · схема не в масштабе</tspan></text>
+<text x="40" y="377" font-size="13" text-anchor="start" fill="#111111" font-weight="bold"><tspan x="40" dy="0">Обозначения и размеры · µm · Wэфф = W + DW · направление W: от ФФО вправо</tspan></text>
+<text x="40" y="403" font-size="14" text-anchor="start" fill="#111111" font-weight="bold"><tspan x="40" dy="0">Mex01</tspan></text>
+<text x="40" y="424" font-size="12" text-anchor="start" fill="#111111" font-weight="normal"><tspan x="40" dy="0">1  —  переход · W1 14; W2 49; L 9.6</tspan></text>
+<text x="40" y="445" font-size="12" text-anchor="start" fill="#111111" font-weight="normal"><tspan x="40" dy="0">2  —  линия · W 50; L 13</tspan></text>
+<text x="40" y="466" font-size="12" text-anchor="start" fill="#111111" font-weight="normal"><tspan x="40" dy="0">3  —  переход · W1 48; W2 18; L 13.2</tspan></text>
+<text x="406.667" y="403" font-size="14" text-anchor="start" fill="#111111" font-weight="bold"><tspan x="406.667" dy="0">Mex02</tspan></text>
+<text x="406.667" y="424" font-size="12" text-anchor="start" fill="#111111" font-weight="normal"><tspan x="406.667" dy="0">4  —  линия · W 18; L 24</tspan></text>
+<text x="406.667" y="445" font-size="12" text-anchor="start" fill="#111111" font-weight="normal"><tspan x="406.667" dy="0">5  —  переход · W1 18; W2 6; L 6</tspan></text>
+<text x="406.667" y="466" font-size="12" text-anchor="start" fill="#111111" font-weight="normal"><tspan x="406.667" dy="0">6  —  линия · W 4; L 25</tspan></text>
+<text x="406.667" y="487" font-size="12" text-anchor="start" fill="#111111" font-weight="normal"><tspan x="406.667" dy="0">7  —  переход · W1 6; W2 10; L 6</tspan></text>
+<text x="773.333" y="403" font-size="14" text-anchor="start" fill="#111111" font-weight="bold"><tspan x="773.333" dy="0">Mex03</tspan></text>
+<text x="773.333" y="424" font-size="12" text-anchor="start" fill="#111111" font-weight="normal"><tspan x="773.333" dy="0">8  —  переход · W1 10; W2 6; L 6</tspan></text>
+<text x="773.333" y="445" font-size="12" text-anchor="start" fill="#111111" font-weight="normal"><tspan x="773.333" dy="0">9  —  линия · W 4; L 10</tspan></text>
+<text x="773.333" y="466" font-size="12" text-anchor="start" fill="#111111" font-weight="normal"><tspan x="773.333" dy="0">10  —  переход · W1 4; W2 18; L 7.2</tspan></text>
+<text x="773.333" y="487" font-size="12" text-anchor="start" fill="#111111" font-weight="normal"><tspan x="773.333" dy="0">11  —  линия · W 18; L 27</tspan></text>
+<text x="773.333" y="508" font-size="12" text-anchor="start" fill="#111111" font-weight="normal"><tspan x="773.333" dy="0">12  —  переход · W1 18; W2 6; L 2.7</tspan></text>
+<text x="40" y="551" font-size="12" text-anchor="start" fill="#334155" font-weight="normal"><tspan x="40" dy="0">Mdcb · DC-развязка: щелевая антенна; Wslot=4; Wэфф=3.5; Lslot=36; Lso=8</tspan></text>
+<text x="40" y="572" font-size="12" text-anchor="start" fill="#334155" font-weight="normal"><tspan x="40" dy="0">MS-шлейф: W=9; L=14.  Mrad · радиальный фильтр: R=4…38; угол 113°</tspan></text>
+<text x="40" y="593" font-size="12" text-anchor="start" fill="#334155" font-weight="normal"><tspan x="40" dy="0">MLsis · линия у SIS: W=6; L=3.  SIS · туннельный переход.  DW=0.5</tspan></text>
+<text x="40" y="614" font-size="12" text-anchor="start" fill="#334155" font-weight="normal"><tspan x="40" dy="0">Radial feed · Ww1=4; Lw1=57; Zrad0=50 Ω</tspan></text>
+<text x="40" y="635" font-size="12" text-anchor="start" fill="#334155" font-weight="normal"><tspan x="40" dy="0">Radial tuning · Ww3=4; Lw3=4; Ww4=6; Lw4=3</tspan></text>
+<text x="40" y="656" font-size="12" text-anchor="start" fill="#334155" font-weight="normal"><tspan x="40" dy="0">SIS · W SIS=4; площадь=0.8 µm². Геометрия показана условно; точные входные размеры приведены здесь.</tspan></text>
+<text x="40" y="677" font-size="12" text-anchor="start" fill="#334155" font-weight="normal"><tspan x="40" dy="0">Номера 1–12 соответствуют группам параметров слева направо. W1 — слева, W2 — справа; L — общая длина.</tspan></text>
+    <text x="111" y="48" font-size="12" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="111" dy="0">Mex01</tspan></text>
+<text x="316" y="62" font-size="12" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="316" dy="0">Mex02</tspan></text>
+<text x="478.5" y="76" font-size="12" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="478.5" dy="0">Mdcb</tspan></text>
+<text x="663" y="62" font-size="12" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="663" dy="0">Mex03</tspan></text>
+<text x="874.42" y="74" font-size="12" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="874.42" dy="0">Mrad</tspan></text>
+<text x="825" y="92" font-size="12" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="825" dy="0">MLsis</tspan></text>
+<text x="874.42" y="48" font-size="12" text-anchor="middle" fill="#111111" font-weight="bold"><tspan x="874.42" dy="0">Mex04</tspan></text>
+  </g>
+</svg>

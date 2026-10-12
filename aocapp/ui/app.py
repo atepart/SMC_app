@@ -44,6 +44,7 @@ from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
 from aocapp.application.version import REPO_SLUG, __version__
 from aocapp.domain.s21_models import S21Config
+from aocapp.domain.transformers import ELEMENT_NUMBERS, derive_transformer_steps
 from aocapp.infrastructure.design_files import DesignFileService
 from aocapp.infrastructure.trace_files import ComparisonTrace, TraceFileReader
 from aocapp.ui.update_dialogs import DownloadReleaseWorker, FetchReleasesWorker, ReleasePickerDialog
@@ -60,11 +61,9 @@ def _default_s21_output_path() -> Path:
     return Path.home() / "Documents" / "SMC_app" / "S21_dB.tab"
 
 
-def _resolve_s21_output_path(path_text: str) -> str:
-    output_path = Path(path_text).expanduser()
-    if not output_path.is_absolute():
-        output_path = Path.home() / "Documents" / "SMC_app" / output_path
-    return str(output_path)
+def _default_s21_output_directory() -> Path:
+    path = Path(QSettings().value("Files/s21_output_directory", str(_default_s21_output_path().parent), type=str))
+    return path if path.is_absolute() else _default_s21_output_path().parent
 
 
 class S21Worker(QObject):
@@ -168,6 +167,15 @@ class SafeDoubleSpinBox(QDoubleSpinBox):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._wheel_armed = False
+        self.setLocale(QtCore.QLocale.c())
+        self.setKeyboardTracking(False)
+
+    def validate(self, text: str, pos: int):
+        state, _, _ = super().validate(text.replace(",", "."), pos)
+        return state, text, pos
+
+    def valueFromText(self, text: str) -> float:  # noqa: N802 - Qt API
+        return super().valueFromText(text.replace(",", "."))
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -275,7 +283,11 @@ class MainWindow(QMainWindow):
         self._config_inputs: Dict[str, QDoubleSpinBox] = {}
         self._parameter_groups: Dict[str, CollapsibleParameterGroup] = {}
         self._engineering_orders: Dict[str, QLineEdit] = {}
+        self._transformer_baselines: dict[int, tuple[float, ...]] = {}
+        self._transformer_status: dict[int, QLabel] = {}
         self._s21_output: QLineEdit | None = None
+        self._s21_output_directory: QLineEdit | None = None
+        self._active_s21_output_path: str | None = None
         self._s21_status: QLabel | None = None
         self._log_view: QPlainTextEdit | None = None
         self._run_s21_button: QPushButton | None = None
@@ -300,6 +312,7 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._configure_plot()
         self._build_ui()
+        self._remember_transformer_inputs()
         self._apply_material_sync()
         self._update_svg()
 
@@ -370,12 +383,12 @@ class MainWindow(QMainWindow):
         inner = QWidget(scroll)
         vbox = QVBoxLayout(inner)
 
-        title = QLabel("Grouped Parameters")
+        title = QLabel("Параметры структуры")
         title.setStyleSheet("font-weight: bold; font-size: 16px;")
         vbox.addWidget(title)
 
         subtitle = QLabel(
-            "Preview and S21 now use the same grouped configuration. Tooltips describe each backend parameter."
+            "Номера элементов идут слева направо от ФФО. W1 — ширина слева, W2 — справа; L — общая длина."
         )
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("color: #555;")
@@ -407,6 +420,16 @@ class MainWindow(QMainWindow):
                 spin.setToolTip(field_info.description)
                 self._config_inputs[field_info.name] = spin
                 form.addRow(label, self._build_parameter_editor(field_info.name, spin))
+
+            if group_fields[0].name.startswith("transf_"):
+                index = int(group_fields[0].name.split("_")[1])
+                status = QLabel()
+                status.setWordWrap(True)
+                status.setStyleSheet("color: #555;")
+                self._transformer_status[index] = status
+                form.addRow(status)
+                for info in group_fields:
+                    self._config_inputs[info.name].valueChanged.connect(self._refresh_transformer_status)
 
             vbox.addWidget(box)
 
@@ -443,10 +466,28 @@ class MainWindow(QMainWindow):
         design_row.addWidget(save_design_button)
         controls_layout.addLayout(design_row)
 
-        self._s21_output = QLineEdit(str(_default_s21_output_path()))
-        self._s21_output.setToolTip("Optional output file for the computed S21 tabulation.")
+        self._s21_output = QLineEdit(_default_s21_output_path().name)
+        self._s21_output.setObjectName("s21_output_filename")
+        self._s21_output.setToolTip(
+            "Только имя файла таблицы S21, например S21_dB.tab. Пустое поле — расчёт без сохранения."
+        )
         output_form = QFormLayout()
-        output_form.addRow("Output file", self._s21_output)
+        output_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        output_form.addRow("Имя файла", self._s21_output)
+        directory_row = QWidget(self)
+        directory_layout = QHBoxLayout(directory_row)
+        directory_layout.setContentsMargins(0, 0, 0, 0)
+        self._s21_output_directory = QLineEdit(str(_default_s21_output_directory()))
+        self._s21_output_directory.setObjectName("s21_output_directory")
+        self._s21_output_directory.setReadOnly(True)
+        self._s21_output_directory.setToolTip(self._s21_output_directory.text())
+        directory_layout.addWidget(self._s21_output_directory, stretch=1)
+        select_directory = QPushButton("Выбрать…")
+        select_directory.setObjectName("select_s21_directory")
+        select_directory.setToolTip("Выбрать папку для таблицы S21; выбранная папка запоминается.")
+        select_directory.clicked.connect(self._select_s21_output_directory)
+        directory_layout.addWidget(select_directory)
+        output_form.addRow("Папка", directory_row)
         controls_layout.addLayout(output_form)
 
         button_row = QHBoxLayout()
@@ -497,7 +538,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(home_button)
         self._schematic_details = QCheckBox("С обозначениями")
         self._schematic_details.setObjectName("schematic_details")
-        self._schematic_details.setToolTip("Показать расшифровку номеров Mathcad и текущие размеры под схемой")
+        self._schematic_details.setToolTip("Показать типы элементов 1–12 и текущие размеры под схемой")
         self._schematic_details.toggled.connect(self._update_svg)
         toolbar.addWidget(self._schematic_details)
         toolbar.addStretch(1)
@@ -524,7 +565,7 @@ class MainWindow(QMainWindow):
             spin.setRange(-1_000_000.0, 1_000_000.0)
             spin.setDecimals(2)
             spin.setValue(value)
-            spin.setSingleStep(50.0 if name.startswith("x_") else 5.0)
+            spin.setSingleStep(10.0 if name.startswith("x_") else 5.0)
             spin.setFixedWidth(90)
             self._plot_scale_inputs[name] = spin
             controls.addWidget(spin)
@@ -762,10 +803,12 @@ class MainWindow(QMainWindow):
         if self._same_materials_checkbox is not None:
             self._same_materials_checkbox.setChecked(same_material)
 
+        self._defaults = config
         for name, spin in self._config_inputs.items():
             blocked = spin.blockSignals(True)
-            spin.setValue(getattr(config, name) * S21Config.field_scale(name))
+            spin.setValue(config.ui_value(name))
             spin.blockSignals(blocked)
+        self._remember_transformer_inputs()
         if same_material:
             self._apply_material_sync()
         else:
@@ -781,13 +824,10 @@ class MainWindow(QMainWindow):
     def _create_spinbox(self, name: str, field_info) -> SafeDoubleSpinBox:
         spin = SafeDoubleSpinBox()
         scale = S21Config.field_scale(name)
-        default_value = getattr(self._defaults, name)
-        if default_value is None:
-            default_value = 0.0
         spin.setDecimals(field_info.decimals)
         spin.setRange(field_info.minimum, field_info.maximum)
         spin.setSingleStep(field_info.step)
-        spin.setValue(default_value * scale)
+        spin.setValue(self._defaults.ui_value(name))
         # Scaled metric dimensions get a separate immutable engineering-order
         # field, so the editable number remains uncluttered and unambiguous.
         if scale == 1.0 or name == "sis_cap_f_per_um2":
@@ -808,10 +848,11 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         layout.addWidget(spin, stretch=1)
-        order = QLineEdit(f"×10^{exponent} m", editor)
+        unit = "1/(Ω·m)" if name.startswith("sigma0_") else "m"
+        order = QLineEdit(f"×10^{exponent} {unit}", editor)
         order.setReadOnly(True)
         order.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        order.setFixedWidth(78)
+        order.setFixedWidth(112 if name.startswith("sigma0_") else 78)
         order.setToolTip("Фиксированный инженерный порядок; показатель всегда кратен 3.")
         self._engineering_orders[name] = order
         layout.addWidget(order)
@@ -910,14 +951,59 @@ class MainWindow(QMainWindow):
     def _build_config(self) -> S21Config:
         values = dict(self._defaults.__dict__)
         for name, spin in self._config_inputs.items():
+            spin.interpretText()
+            if name.endswith("_length_m"):
+                continue
             scale = S21Config.field_scale(name)
             values[name] = spin.value() / scale
+
+        for index in range(1, 8):
+            current = self._transformer_inputs(index)
+            if current == self._transformer_baselines[index]:
+                # Keep the exact original discretization for untouched legacy files.
+                for suffix in ("w_start_m", "w_end_m"):
+                    name = f"transf_{index}_{suffix}"
+                    values[name] = getattr(self._defaults, name)
+                continue
+            try:
+                steps = derive_transformer_steps(*(value * 1e-6 for value in current))
+            except ValueError as error:
+                raise ValueError(f"Элемент {ELEMENT_NUMBERS[f'T{index}']}: {error}") from error
+            values[f"transf_{index}_dwdl_um"] = steps.n_um
+            values[f"transf_{index}_dl_m"] = steps.dl_m
 
         if self._same_materials_checkbox is not None and self._same_materials_checkbox.isChecked():
             for top_name, bot_name in self._material_sync_map.items():
                 values[bot_name] = values[top_name]
 
         return S21Config(**values)
+
+    def _transformer_inputs(self, index: int) -> tuple[float, ...]:
+        return tuple(
+            self._config_inputs[f"transf_{index}_{suffix}"].value() for suffix in ("w_end_m", "w_start_m", "length_m")
+        )
+
+    def _remember_transformer_inputs(self) -> None:
+        self._transformer_baselines = {index: self._transformer_inputs(index) for index in range(1, 8)}
+        self._refresh_transformer_status()
+
+    def _refresh_transformer_status(self) -> None:
+        for index, status in self._transformer_status.items():
+            if index not in self._transformer_baselines:
+                continue
+            try:
+                current = self._transformer_inputs(index)
+                if current == self._transformer_baselines[index]:
+                    n = getattr(self._defaults, f"transf_{index}_dwdl_um")
+                    dl_um = getattr(self._defaults, f"transf_{index}_dl_m") * 1e6
+                    status.setText(f"n={n:g} µm; dl={dl_um:g} µm (из файла/исходных параметров)")
+                else:
+                    steps = derive_transformer_steps(*(value * 1e-6 for value in current))
+                    status.setText(f"n={steps.n_um} µm; ступеней: {steps.intervals + 1}; dl={steps.dl_m * 1e6:g} µm")
+                status.setStyleSheet("color: #555;")
+            except ValueError as error:
+                status.setText(str(error))
+                status.setStyleSheet("color: #b91c1c;")
 
     def _apply_material_sync(self) -> None:
         if self._same_materials_checkbox is None or not self._same_materials_checkbox.isChecked():
@@ -946,6 +1032,31 @@ class MainWindow(QMainWindow):
 
         self._view.set_svg(svg)
 
+    def _select_s21_output_directory(self) -> None:
+        directory = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Папка для таблицы S21", self._s21_output_directory.text()
+        )
+        if directory:
+            self._s21_output_directory.setText(directory)
+            self._s21_output_directory.setToolTip(directory)
+            QSettings().setValue("Files/s21_output_directory", directory)
+
+    def _s21_result_path(self) -> str | None:
+        filename = self._s21_output.text().strip()
+        if not filename:
+            return None
+        reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+        if (
+            filename in {".", ".."}
+            or filename.endswith(".")
+            or any(char in '<>:"/\\|?*' or ord(char) < 32 for char in filename)
+            or filename.split(".")[0].upper() in reserved
+        ):
+            raise ValueError(
+                "Укажите только имя файла без пути и служебных символов; папку выберите кнопкой «Выбрать…»."
+            )
+        return str(Path(self._s21_output_directory.text()) / filename)
+
     def _run_s21(self) -> None:
         if self._s21_output is None or self._s21_status is None:
             return
@@ -954,15 +1065,14 @@ class MainWindow(QMainWindow):
             return
         try:
             config = self._build_config()
+            config.validate()
+            output_path = self._s21_result_path()
         except ValueError as exc:
             self._append_log_message(f"ERROR: {exc}")
             QMessageBox.warning(self, "Invalid input", str(exc))
             return
 
-        output_path = self._s21_output.text().strip()
-        if output_path:
-            output_path = _resolve_s21_output_path(output_path)
-            self._s21_output.setText(output_path)
+        self._active_s21_output_path = output_path
         self._plot.clear()
         self._theory_trace = None
         self._redraw_plot()
@@ -978,7 +1088,7 @@ class MainWindow(QMainWindow):
             self._run_s21_button.setEnabled(False)
 
         self._s21_thread = QThread(self)
-        self._s21_worker = S21Worker(self._s21_use_case, config, output_path if output_path else None)
+        self._s21_worker = S21Worker(self._s21_use_case, config, output_path)
         self._s21_worker.moveToThread(self._s21_thread)
         self._s21_thread.started.connect(self._s21_worker.run)
         self._s21_worker.log_message.connect(self._on_s21_progress)
@@ -997,9 +1107,7 @@ class MainWindow(QMainWindow):
         self._update_s21_plot(result.frequencies_ghz, result.s21_db)
         self._set_log_messages(result.log_messages)
 
-        output_path = self._s21_output.text().strip() if self._s21_output is not None else ""
-        if output_path:
-            output_path = _resolve_s21_output_path(output_path)
+        output_path = self._active_s21_output_path
         if output_path:
             self._s21_status.setText(f"Computed {result.count} points, saved to {output_path}")
         else:

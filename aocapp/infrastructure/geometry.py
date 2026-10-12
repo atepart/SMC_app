@@ -15,7 +15,7 @@ physical chain in the orientation used by the reference drawing.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from math import floor, radians, sin
+from math import radians, sin
 from typing import Iterable
 
 from aocapp.domain.models import (
@@ -34,6 +34,7 @@ from aocapp.domain.models import (
 )
 from aocapp.domain.ports import StructureCalculator
 from aocapp.domain.s21_models import S21Config
+from aocapp.domain.transformers import ELEMENT_NUMBERS, SCHEMATIC_SECTIONS, transformer_length_m
 
 LENGTH_SCALE = 2.0
 WIDTH_SCALE = 2.0
@@ -42,15 +43,6 @@ CONDUCTOR_FILL = "#e8f1f5"
 TRANSFORMER_FILL = "#dbeafe"
 RADIAL_FILL = "#fde68a"
 DC_FILL = "#d7edf5"
-
-# Local numbers on Mathcad PNG item 587, repeated within each matrix.
-# Tuple order follows the physical drawing, from FFO toward the detector.
-REFERENCE_SECTIONS = {
-    "Mex01": ((3, "T7"), (2, "MSL8"), (1, "T6")),
-    "Mex02": ((4, "MSL7"), (3, "T5"), (2, "MSL6"), (1, "T4")),
-    "Mex03": ((5, "T3"), (4, "MSL5"), (3, "T2"), (2, "MSL4"), (1, "T1")),
-}
-REFERENCE_NUMBERS = {name: number for entries in REFERENCE_SECTIONS.values() for number, name in entries}
 
 
 @dataclass
@@ -212,7 +204,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         canvas.labels.append(
             TextLabel(
                 Point(28.0, 14.0),
-                "Структура HD35 · нумерация Mathcad · схема не в масштабе",
+                "Структура HD35 · от ФФО к SIS · схема не в масштабе",
                 font_size=13.0,
                 font_weight="bold",
             )
@@ -262,11 +254,12 @@ class IntegratedStructureCalculator(StructureCalculator):
 
         The backend creates ``N`` microstrip slices with
 
-        ``N = floor(abs(W_end - W_start) / dW) + 1``
+        ``N = abs(W_end - W_start) / n + 1`` for integral subdivisions.
 
         and gives every slice the configured longitudinal step ``dL``.
         Consequently the physical transformer length is ``L = N * dL``.  The
-        legend uses precisely that formula. The schematic clamps visual
+        For legacy fractional inputs it also includes the backend's 0.01 µm
+        endpoint tolerance. The schematic clamps visual
         lengths to keep short sections identifiable; it is not a mask layout.
         """
         start_um = start_width_m * 1e6 + dw_um
@@ -313,12 +306,12 @@ class IntegratedStructureCalculator(StructureCalculator):
         return rect.right
 
     def _add_callout(self, canvas: _Canvas, element: str, x: float, edge_y: float) -> None:
-        """Connect each local number to exactly one section, clear of the metal."""
-        if element not in REFERENCE_NUMBERS:
+        """Connect each left-to-right number to exactly one section, clear of the metal."""
+        if element not in ELEMENT_NUMBERS:
             return
         y = 98.0
         canvas.labels.append(
-            TextLabel(Point(x, y), str(REFERENCE_NUMBERS[element]), font_size=14.0, anchor="middle", font_weight="bold")
+            TextLabel(Point(x, y), str(ELEMENT_NUMBERS[element]), font_size=14.0, anchor="middle", font_weight="bold")
         )
         canvas.lines.append(LineShape(Point(x, y + 6.0), Point(x, edge_y - 4.0), stroke="#64748b"))
         canvas.circles.append(CircleShape(Point(x, edge_y - 3.0), radius=1.5, fill="#64748b", stroke="#64748b"))
@@ -504,12 +497,8 @@ class IntegratedStructureCalculator(StructureCalculator):
         right: float,
         top: float,
     ) -> None:
-        """Readable local-number legend below the drawing, with live sizes.
-
-        Numbers are scoped to Mex01/Mex02/Mex03; T/MSL names are the app's
-        identifiers, not names claimed to exist in the Mathcad worksheet.
-        """
-        panel = Rect(left, top, right - left, 270.0)
+        """Readable sequential-number legend below the drawing, with live sizes."""
+        panel = Rect(left, top, right - left, 333.0)
         canvas.rects.append(RectShape(panel, fill="#ffffff", stroke="#94a3b8", stroke_width=0.7))
         canvas.include_rect(panel)
         canvas.labels.append(
@@ -521,7 +510,7 @@ class IntegratedStructureCalculator(StructureCalculator):
             )
         )
         width = panel.width / 3
-        for column, (matrix, sections) in enumerate(REFERENCE_SECTIONS.items()):
+        for column, (matrix, sections) in enumerate(SCHEMATIC_SECTIONS.items()):
             lx = left + column * width + 12
             canvas.labels.append(TextLabel(Point(lx, top + 46), matrix, font_size=14.0, font_weight="bold"))
             for row, (number, element) in enumerate(sections):
@@ -533,12 +522,12 @@ class IntegratedStructureCalculator(StructureCalculator):
                     step = getattr(config, f"transf_{i}_dwdl_um")
                     dl = getattr(config, f"transf_{i}_dl_m")
                     length = self._transformer_physical_length_um(w1, w2, step, dl)
-                    detail = f"{element} · переход · W {w2 * 1e6:g}→{w1 * 1e6:g}; L {length:g}"
+                    detail = f"переход · W1 {w2 * 1e6:g}; W2 {w1 * 1e6:g}; L {length:g}"
                 else:
                     i = int(element[3:])
                     w = getattr(config, f"msl_{i}_width_m") * 1e6
                     length = getattr(config, f"msl_{i}_len_m") * 1e6
-                    detail = f"{element} · линия · W {w:g}; L {length:g}"
+                    detail = f"линия · W {w:g}; L {length:g}"
                 canvas.labels.append(TextLabel(Point(lx, y), f"{number}  —  {detail}", font_size=12.0))
         y = top + 173
         canvas.lines.append(LineShape(Point(left + 12, y), Point(right - 12, y), stroke="#cbd5e1"))
@@ -546,7 +535,10 @@ class IntegratedStructureCalculator(StructureCalculator):
             f"Mdcb · DC-развязка: щелевая антенна; Wslot={config.w_slot_m * 1e6:g}; Wэфф={config.w_slot_m * 1e6 - dw_um:g}; Lslot={config.l_slot_m * 1e6:g}; Lso={config.lso_m * 1e6:g}",
             f"MS-шлейф: W={config.w_ms_m * 1e6:g}; L={config.l_ms_m * 1e6:g}.  Mrad · радиальный фильтр: R={config.radial_r_min_m * 1e6:g}…{config.radial_r_max_m * 1e6:g}; угол {config.radial_angle_deg:g}°",
             f"MLsis · линия у SIS: W={config.mex4_width_m * 1e6:g}; L={config.mex4_len_m * 1e6:g}.  SIS · туннельный переход.  DW={dw_um:g}",
-            "Цифры повторяются внутри каждой Mex. T — трансформатор, MSL — микрополосковая линия. Размеры — текущие параметры приложения.",
+            f"Radial feed · Ww1={config.zrad1_width_m * 1e6:g}; Lw1={config.zrad1_len_m * 1e6:g}; Zrad0={config.zrad0_ohm:g} Ω",
+            f"Radial tuning · Ww3={config.zrad3_width_m * 1e6:g}; Lw3={config.zrad3_len_m * 1e6:g}; Ww4={config.zrad4_width_m * 1e6:g}; Lw4={config.zrad4_len_m * 1e6:g}",
+            f"SIS · W SIS={config.sis_width_um:g}; площадь={config.sis_area_um2:g} µm². Геометрия показана условно; точные входные размеры приведены здесь.",
+            "Номера 1–12 соответствуют группам параметров слева направо. W1 — слева, W2 — справа; L — общая длина.",
         )
         for row, text in enumerate(explanations):
             canvas.labels.append(TextLabel(Point(left + 12, y + 21 + row * 21), text, font_size=12.0, fill="#334155"))
@@ -584,12 +576,9 @@ class IntegratedStructureCalculator(StructureCalculator):
 
         ``width_step_um`` is the change in width between adjacent slices and
         ``length_step_m`` is the longitudinal length of every slice.  The
-        inclusive endpoint creates one more slice when the width difference is
-        exactly divisible by the width step.
+        endpoint tolerance of 0.01 µm matches the backend's arange stop.
         """
-        delta_width_um = abs(end_width_m - start_width_m) * 1e6
-        slice_count = floor(delta_width_um / max(width_step_um, 1e-12)) + 1
-        return slice_count * length_step_m * 1e6
+        return transformer_length_m(start_width_m, end_width_m, width_step_um, length_step_m) * 1e6
 
     def _dim(
         self,

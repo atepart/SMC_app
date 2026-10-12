@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from numpy import arange
 
 from aocapp.domain.s21_models import S21Config
 from aocapp.infrastructure.geometry import DC_FILL, TRANSFORMER_FILL, IntegratedStructureCalculator
@@ -61,11 +62,10 @@ def test_svg_renders_dotted_matrix_frames_and_engineering_labels() -> None:
     assert "Wslot=4; Wэфф=3.5; Lslot=36" in svg
     assert 'orient="auto-start-reverse"' in svg
     assert "rotate(-90 " in svg
-    sequence_text = " ".join(label.text for label in geometry.labels)
-    assert all(f"T{index}" in sequence_text for index in range(1, 8))
-    assert all(f"MSL{index}" in sequence_text for index in range(4, 9))
+    assert "нумерация Mathcad" not in svg
+    assert "MSL8" not in svg
     numbers = [label.text for label in geometry.labels if label.text.isdigit()]
-    assert numbers == ["3", "2", "1", "4", "3", "2", "1", "5", "4", "3", "2", "1"]
+    assert numbers == [str(index) for index in range(1, 13)]
     assert "Обозначения и размеры" in svg
     assert "DC-развязка" in svg
     assert "щелевая антенна" in svg
@@ -86,7 +86,7 @@ def test_size_register_uses_raw_inputs_and_backend_corrected_widths() -> None:
     )
     svg = SvgRendererImpl().render(geometry)
 
-    assert "2  —  MSL8 · линия · W 41; L 23" in svg
+    assert "2  —  линия · W 41; L 23" in svg
     assert "DW=0.75" in svg
     assert "Wslot=4; Wэфф=3.25; Lslot=37" in svg
 
@@ -134,3 +134,42 @@ def test_clean_radial_reference_uses_bezier_rims_and_stepped_neck() -> None:
     overview = geometry.overview
     assert overview is not None
     assert not any(rect.rect.right <= first_taper_x for rect in overview.rects)
+
+
+def test_every_number_and_size_matches_config_and_backend() -> None:
+    from aocapp.domain.transformers import ELEMENT_NUMBERS
+
+    values = {}
+    for index in range(1, 8):
+        values.update(
+            {
+                f"transf_{index}_w_start_m": (6 + index) * 1e-6,
+                f"transf_{index}_w_end_m": (16 + index) * 1e-6,
+                f"transf_{index}_dwdl_um": 2,
+                f"transf_{index}_dl_m": (0.5 + index * 0.1) * 1e-6,
+            }
+        )
+    config = S21Config(
+        **values,
+        zrad1_width_m=7.5e-6,
+        zrad1_len_m=61e-6,
+        zrad3_width_m=5.5e-6,
+        zrad3_len_m=6.5e-6,
+        zrad4_width_m=8.5e-6,
+        zrad4_len_m=7.5e-6,
+    )
+    geometry = IntegratedStructureCalculator().calculate(config)
+    svg = SvgRendererImpl().render(geometry)
+    tapers = [shape for shape in geometry.polygons if shape.fill == TRANSFORMER_FILL]
+    for index, shape in zip(range(7, 0, -1), tapers):
+        w1 = getattr(config, f"transf_{index}_w_end_m")
+        w2 = getattr(config, f"transf_{index}_w_start_m")
+        dl = getattr(config, f"transf_{index}_dl_m")
+        length = len(arange(min(w1, w2), max(w1, w2) + 0.01e-6, 2e-6)) * dl * 1e6
+        number = ELEMENT_NUMBERS[f"T{index}"]
+        assert f"{number}  —  переход · W1 {w1 * 1e6:g}; W2 {w2 * 1e6:g}; L {length:g}" in svg
+        # Metal envelope uses the same reversed endpoints plus DW as calculation.
+        assert shape.points[3].y - shape.points[0].y == pytest.approx((w1 + config.dw_m) * 1e6 * 2)
+        assert shape.points[2].y - shape.points[1].y == pytest.approx((w2 + config.dw_m) * 1e6 * 2)
+    for text in ("Ww1=7.5", "Lw1=61", "Ww3=5.5", "Lw3=6.5", "Ww4=8.5", "Lw4=7.5"):
+        assert text in svg

@@ -157,7 +157,7 @@ def test_plot_home_hover_and_png_export(parameter_window: MainWindow, tmp_path) 
     app = QtWidgets.QApplication.instance()
     assert app is not None
     assert parameter_window._plot_initial_range == (100.0, 900.0, -20.0, 0.0)
-    assert parameter_window._plot_scale_inputs["x_min"].singleStep() == 50.0
+    assert parameter_window._plot_scale_inputs["x_min"].singleStep() == 10.0
     assert parameter_window._plot_scale_inputs["y_min"].singleStep() == 5.0
     initial_x_range, initial_y_range = parameter_window._plot.getPlotItem().vb.viewRange()
     assert initial_x_range == pytest.approx([100.0, 900.0])
@@ -206,3 +206,111 @@ def test_schematic_details_toggle_keeps_overview_large(parameter_window: MainWin
     QTest.mouseClick(toggle, QtCore.Qt.LeftButton, pos=QtCore.QPoint(8, toggle.height() // 2))
     app.processEvents()
     assert parameter_window._view._svg_item.boundingRect() == compact
+
+
+def test_issue_5_steps_and_sigma_keyboard_input(parameter_window: MainWindow) -> None:
+    inputs = parameter_window._config_inputs
+    for name, spin in inputs.items():
+        if name.endswith("_ghz"):
+            assert spin.singleStep() == (1.0 if "step" in name else 10.0)
+    assert inputs["sis_rn_area_ohm_um2"].singleStep() == 0.5
+    for name in ("w_slot_m", "l_slot_m", "sis_width_um", "radial_r_min_m", "transf_7_length_m", "msl_8_width_m"):
+        assert inputs[name].singleStep() == 0.5
+    sigma = inputs["sigma0_top"]
+    assert sigma.value() == 18.0
+    assert parameter_window._engineering_orders["sigma0_top"].text() == "×10^6 1/(Ω·m)"
+    for text, expected in (("0,975", 975000), ("18.000001", 18000001), ("0.975000", 975000)):
+        sigma.lineEdit().selectAll()
+        QTest.keyClicks(sigma.lineEdit(), text)
+        QTest.keyClick(sigma.lineEdit(), QtCore.Qt.Key_Return)
+        config = parameter_window._build_config()
+        assert config.sigma0_top == pytest.approx(expected)
+        assert config.sigma0_bot == pytest.approx(expected)
+
+
+def test_issue_6_order_conversion_and_invalid_length(parameter_window: MainWindow) -> None:
+    groups = [name for name in parameter_window._parameter_groups if " · " in name]
+    assert [int(name.split()[0]) for name in groups] == list(range(1, 13))
+    inputs = parameter_window._config_inputs
+    assert "transf_7_dwdl_um" not in inputs
+    assert inputs["transf_7_w_end_m"].value() == 14  # W1 on the drawing's left
+    assert inputs["transf_7_w_start_m"].value() == 49  # W2 on the right
+    original = parameter_window._build_config()
+    assert original.transf_7_dwdl_um == 5
+    assert original.transf_7_dl_m == 1.2e-6
+
+    inputs["transf_7_w_end_m"].setValue(18)
+    inputs["transf_7_w_start_m"].setValue(6)
+    inputs["transf_7_length_m"].setValue(7)
+    converted = parameter_window._build_config()
+    assert converted.transf_7_w_end_m == pytest.approx(18e-6)
+    assert converted.transf_7_w_start_m == pytest.approx(6e-6)
+    assert converted.transf_7_dwdl_um == 2
+    assert converted.transf_7_dl_m == pytest.approx(1e-6)
+    assert "ступеней: 7" in parameter_window._transformer_status[7].text()
+    inputs["transf_7_length_m"].setValue(100)
+    with patch.object(QtWidgets.QMessageBox, "warning") as warning:
+        parameter_window._update_svg()
+    assert "Элемент 1" in warning.call_args.args[2]
+    assert "нет целого n" in parameter_window._transformer_status[7].text()
+
+
+def test_legacy_transformer_round_trip_preserves_discretization(parameter_window: MainWindow, tmp_path) -> None:
+    from aocapp.domain.s21_models import S21Config
+
+    legacy = S21Config(transf_7_dwdl_um=1.7, transf_7_dl_m=0.125e-6, transf_7_w_start_m=49.123456e-6)
+    source = tmp_path / "legacy.aocdesign"
+    destination = tmp_path / "saved.aocdesign"
+    parameter_window._design_files.save(source, legacy)
+    parameter_window.load_design_from_path(source)
+    parameter_window.save_design_to_path(destination)
+    saved = parameter_window._design_files.load(destination)
+    for name, value in legacy.__dict__.items():
+        if name.startswith("transf_"):
+            assert getattr(saved, name) == value
+
+
+def test_s21_output_filename_folder_and_worker(parameter_window: MainWindow, tmp_path) -> None:
+    from aocapp.api.io import IOService
+    from aocapp.domain.s21_models import S21Result
+    from aocapp.ui.app import _default_s21_output_directory
+
+    folder = tmp_path / "Папка результатов"
+    folder.mkdir()
+    picker = parameter_window.findChild(QtWidgets.QPushButton, "select_s21_directory")
+    with patch.object(QtWidgets.QFileDialog, "getExistingDirectory", return_value=str(folder)) as dialog:
+        QTest.mouseClick(picker, QtCore.Qt.LeftButton)
+    dialog.assert_called_once()
+    assert parameter_window._s21_output_directory.isReadOnly()
+    assert _default_s21_output_directory() == folder
+    parameter_window._s21_output.setText("результат.tab")
+    destination = folder / "результат.tab"
+
+    def execute(config, output_path, progress_callback):
+        config.validate()
+        progress_callback("Проверка выбранной папки")
+        assert output_path == str(destination)
+        IOService().write(output_path, ([100, 110], [-12, -9]))
+        return S21Result([100, 110], [-12, -9])
+
+    parameter_window._s21_use_case.execute.side_effect = execute
+    parameter_window._run_s21()
+    for _ in range(100):
+        QTest.qWait(10)
+        if parameter_window._s21_thread is None:
+            break
+    assert parameter_window._s21_thread is None
+    assert destination.read_text() == "100\t-12\n110\t-9\n"
+    assert parameter_window._s21_output.text() == "результат.tab"
+    assert str(destination) in parameter_window._s21_status.text()
+    with patch.object(QtWidgets.QFileDialog, "getExistingDirectory", return_value=""):
+        parameter_window._select_s21_output_directory()
+    assert parameter_window._s21_output_directory.text() == str(folder)
+    for invalid in ("../escape.tab", "/tmp/escape.tab", "C:\\escape.tab", "..", "CON.tab"):
+        parameter_window._s21_output.setText(invalid)
+        with patch.object(QtWidgets.QMessageBox, "warning") as warning:
+            parameter_window._run_s21()
+        warning.assert_called_once()
+        assert parameter_window._s21_thread is None
+    parameter_window._s21_output.clear()
+    assert parameter_window._s21_result_path() is None

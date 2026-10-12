@@ -36,7 +36,7 @@ class ImpedanceTransformerCalculator:
             frequency_ghz: Frequency in GHz.
             width_start_m: Start width in meters.
             width_end_m: End width in meters.
-            width_step_per_length_um: Width change per unit length in um/um.
+            width_step_per_length_um: Width increment between slices in µm (legacy argument name).
             dielectric_constant: Relative permittivity.
             insulator_thickness_m: Insulator thickness in meters.
             top_film: Top film conductivity dataset.
