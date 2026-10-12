@@ -1,0 +1,25 @@
+Release 006, commit c7e0867bdf570a567af6a5ffeee0e9cdf284087e
+CI https://github.com/atepart/SMC_app/actions/runs/38315603881
+All three builds and release job: completed / success.
+Release https://github.com/atepart/SMC_app/releases/tag/006
+Release notes match the prepared description; three assets, no x86-labelled duplicate.
+
+Downloaded ZIPs passed CRC/integrity checks. Main application and updater
+PE/Mach-O headers match the platform. Embedded application.version contains
+006; embedded UI contains QImageWriter export and QThread.wait cleanup.
+SHA-256 and byte sizes match GitHub release asset metadata.
+
+SMC_app_macOS_arm64_006.zip
+size=285892330, main/updater CPU=0x100000c (arm64)
+SHA256=ead5d42582f15a5ce9087b4ed7a4b6578ea35d5ab08d431b5448f5d810fde875
+
+SMC_app_macOS_x64_006.zip
+size=325926307, main/updater CPU=0x1000007 (x86_64)
+SHA256=8f80e6ecc2f59598437dce1e6b17dc546fa5aa1adf372a74bf47f2f16274add3
+
+SMC_app_Windows_x64_006.zip
+size=148637511, main/updater PE machine=0x8664 (AMD64)
+SHA256=2c782e9c1b118bbf7235c7a4d02e0200221fd1da22284e9f8701748f0aa26e79
+
+The previous tag 005 was not moved. Its CI run 38312501420 remains cancelled;
+its release remains an unpublished draft without assets.
