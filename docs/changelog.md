@@ -4,6 +4,15 @@
 
 ## Unreleased
 
+### Fixed
+
+- `WP-017`, `BUG-007` — устранено повреждение памяти после PNG-экспорта, вызывавшее SIGABRT при закрытии/удалении окна или создании следующего графика.
+  - Guard Malloc локализовал запись в освобождённый receiver внутри `PySide::onPysideReceiverSlotDestroyed` при освобождении обработчиков временного Parameter tree `pyqtgraph.ImageExporter`. На исходном коде PNG/закрытие падает на первом/втором цикле; без PNG 40 циклов проходят.
+  - Экспорт выполняется напрямую `QGraphicsScene → QImage → QImageWriter`, без временных обработчиков экспортера. QPainter завершается в `finally`; разрешение, текущий масштаб, оси, сетка, подписи и легенда сохранены. Ошибка записи PNG теперь сообщает причину и позволяет повторить экспорт.
+  - Проверка: Ruff/Black/isort/compileall/diff-check, 57 тестов. Регрессия включает 120 окон/240 PNG в трёх отдельных процессах с проверкой настоящей кривой, масштаба, единиц и реального уничтожения Qt-объектов; дополнительно 40 циклов диагностического сценария и 5 циклов под Guard Malloc завершились с exit 0.
+  - Нативный запуск через uv и свежая локальная сборка: реальный S21, два одинаковых PNG 2018×496, Home после экспорта и нормальное закрытие приложения (exit 0). [Экспорт PNG](screenshots/WP-017/native-export.png), [окно после экспорта](screenshots/WP-017/after-native-export.png).
+  - Диагностика: [нативный стек до исправления](screenshots/WP-017/aoc-png-native-backtrace.txt), [Guard Malloc до](screenshots/WP-017/aoc-png-guardmalloc.txt), [40 циклов после](screenshots/WP-017/aoc-png-lifecycle-after.txt), [Guard Malloc после](screenshots/WP-017/aoc-png-guardmalloc-after.txt).
+
 ## 005 — 2026-10-13
 
 ### Added

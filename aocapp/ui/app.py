@@ -12,10 +12,9 @@ from pathlib import Path
 from typing import Dict
 
 import pyqtgraph as pg
-import pyqtgraph.exporters
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import QByteArray, QObject, QSettings, Qt, QThread, Signal, Slot
-from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPainter, QWheelEvent
+from PySide6.QtGui import QAction, QDesktopServices, QIcon, QImage, QImageWriter, QPainter, QWheelEvent
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtSvgWidgets import QGraphicsSvgItem
 from PySide6.QtWidgets import (
@@ -942,9 +941,29 @@ class MainWindow(QMainWindow):
         """Export the current plot item at twice its on-screen width."""
         destination = Path(path).expanduser()
         destination.parent.mkdir(parents=True, exist_ok=True)
-        exporter = pyqtgraph.exporters.ImageExporter(self._plot.getPlotItem())
-        exporter.parameters()["width"] = max(1200, self._plot.width() * 2)
-        exporter.export(str(destination))
+        source = self._plot.getPlotItem().sceneBoundingRect()
+        if source.width() <= 0 or source.height() <= 0:
+            raise ValueError("График имеет пустую область экспорта")
+        width = max(1200, self._plot.width() * 2)
+        height = max(1, round(width * source.height() / source.width()))
+        image = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
+        if image.isNull():
+            raise OSError("Не удалось выделить память для PNG графика")
+        image.fill(self._plot.backgroundBrush().color())
+        # ImageExporter creates a temporary Parameter tree connected to a
+        # plain Python receiver. PySide 6.8 can write to a freed receiver when
+        # these callbacks are destroyed, corrupting the heap after export.
+        # Render the same plot rectangle with Qt and end painting before save.
+        painter = QPainter(image)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+            self._plot.scene().render(painter, QtCore.QRectF(0, 0, width, height), source)
+        finally:
+            painter.end()
+        writer = QImageWriter(str(destination), b"png")
+        if not writer.write(image):
+            raise OSError(f"Не удалось сохранить PNG: {writer.errorString()}")
         self._remember_file_directory(destination)
         return destination
 

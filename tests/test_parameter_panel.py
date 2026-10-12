@@ -314,3 +314,16 @@ def test_s21_output_filename_folder_and_worker(parameter_window: MainWindow, tmp
         assert parameter_window._s21_thread is None
     parameter_window._s21_output.clear()
     assert parameter_window._s21_result_path() is None
+
+
+def test_png_write_failure_is_reported_without_changing_plot(parameter_window: MainWindow, tmp_path) -> None:
+    plot = parameter_window._plot.getPlotItem()
+    original_range = plot.vb.viewRange()
+    directory = tmp_path / "directory.png"
+    directory.mkdir()
+    with pytest.raises(OSError, match="Не удалось сохранить PNG"):
+        parameter_window.export_plot_to_path(directory)
+    assert plot.vb.viewRange() == original_range
+    destination = tmp_path / "valid.png"
+    parameter_window.export_plot_to_path(destination)
+    assert destination.read_bytes().startswith(b"\x89PNG")

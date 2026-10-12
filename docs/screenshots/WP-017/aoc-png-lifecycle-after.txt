@@ -1,0 +1,165 @@
+Detected locale "C" with character encoding "US-ASCII", which is not UTF-8.
+Qt depends on a UTF-8 locale, and has switched to "UTF-8" instead.
+If this causes problems, reconfigure your locale. See the locale(1) manual
+for more information.
+qt.qpa.fonts: Populating font family aliases took 109 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost.
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+0: exported; closing
+0: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+1: exported; closing
+1: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+2: exported; closing
+2: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+3: exported; closing
+3: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+4: exported; closing
+4: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+5: exported; closing
+5: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+6: exported; closing
+6: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+7: exported; closing
+7: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+8: exported; closing
+8: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+9: exported; closing
+9: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+10: exported; closing
+10: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+11: exported; closing
+11: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+12: exported; closing
+12: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+13: exported; closing
+13: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+14: exported; closing
+14: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+15: exported; closing
+15: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+16: exported; closing
+16: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+17: exported; closing
+17: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+18: exported; closing
+18: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+19: exported; closing
+19: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+20: exported; closing
+20: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+21: exported; closing
+21: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+22: exported; closing
+22: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+23: exported; closing
+23: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+24: exported; closing
+24: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+25: exported; closing
+25: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+26: exported; closing
+26: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+27: exported; closing
+27: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+28: exported; closing
+28: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+29: exported; closing
+29: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+30: exported; closing
+30: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+31: exported; closing
+31: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+32: exported; closing
+32: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+33: exported; closing
+33: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+34: exported; closing
+34: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+35: exported; closing
+35: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+36: exported; closing
+36: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+37: exported; closing
+37: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+38: exported; closing
+38: destroyed
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+39: exported; closing
+39: destroyed
