@@ -327,3 +327,24 @@ def test_png_write_failure_is_reported_without_changing_plot(parameter_window: M
     destination = tmp_path / "valid.png"
     parameter_window.export_plot_to_path(destination)
     assert destination.read_bytes().startswith(b"\x89PNG")
+
+
+def test_s21_cleanup_waits_for_native_worker_destruction(parameter_window: MainWindow) -> None:
+    worker = Mock()
+    thread = Mock()
+
+    def finish_native_cleanup():
+        # Qt's finished signal can reach the GUI before worker deferred
+        # deletion completes. Neither wrapper may be released in that phase.
+        assert parameter_window._s21_worker is worker
+        assert parameter_window._s21_thread is thread
+        return True
+
+    thread.wait.side_effect = finish_native_cleanup
+    parameter_window._s21_worker = worker
+    parameter_window._s21_thread = thread
+    parameter_window._on_s21_thread_finished()
+    thread.wait.assert_called_once_with()
+    assert parameter_window._s21_worker is None
+    assert parameter_window._s21_thread is None
+    assert parameter_window._run_s21_button.isEnabled()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import os
 import sys
+import time
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -13,6 +14,7 @@ from PIL import Image
 from PySide6 import QtCore, QtWidgets
 
 from aocapp.application.use_cases import GenerateStructureUseCase
+from aocapp.domain.s21_models import S21Result
 from aocapp.infrastructure.geometry import IntegratedStructureCalculator
 from aocapp.infrastructure.svg_renderer import SvgRendererImpl
 from aocapp.ui.app import MainWindow
@@ -29,10 +31,20 @@ def main() -> None:
     QtCore.QSettings.setPath(QtCore.QSettings.Format.IniFormat, QtCore.QSettings.Scope.UserScope, str(directory))
     for iteration in range(40):
         gc.collect()
-        window = MainWindow(GenerateStructureUseCase(IntegratedStructureCalculator(), SvgRendererImpl()), Mock())
+        use_case = Mock()
+        use_case.execute.return_value = S21Result([100, 300, 500, 700, 900], [-18, -8, -4, -7, -15])
+        window = MainWindow(GenerateStructureUseCase(IntegratedStructureCalculator(), SvgRendererImpl()), use_case)
         window.show()
         app.processEvents()
-        window._update_s21_plot([100, 300, 500, 700, 900], [-18, -8, -4, -7, -15])
+        window._s21_output.clear()
+        for _ in range(5):
+            window._run_s21()
+            deadline = time.monotonic() + 5
+            while window._s21_thread is not None and time.monotonic() < deadline:
+                app.processEvents()
+            assert window._s21_thread is None
+            assert window._s21_worker is None
+            assert window._run_s21_button.isEnabled()
         window._plot_scale_inputs["x_max"].setValue(1100)
         window._apply_plot_scale()
         vb = window._plot.getPlotItem().vb

@@ -1148,6 +1148,12 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_s21_thread_finished(self) -> None:
+        # finished is emitted before the native thread processes its final
+        # deferred deletions. Keep both Python wrappers alive until that cleanup
+        # completes, so Shiboken cannot destroy a wrapper concurrently with its
+        # QObject on the worker thread.
+        if self._s21_thread is not None:
+            self._s21_thread.wait()
         self._s21_thread = None
         self._s21_worker = None
         if self._run_s21_button is not None:
