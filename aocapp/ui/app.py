@@ -457,15 +457,6 @@ class MainWindow(QMainWindow):
         self.actions_box = controls_box
         controls_layout = QVBoxLayout(controls_box)
 
-        design_hint = QLabel(
-            "Файл параметров SMC_app (.aocdesign/.json) хранит входы расчёта; "
-            "это не файл Mathcad и не готовая топология для производства."
-        )
-        design_hint.setObjectName("parameter_file_hint")
-        design_hint.setWordWrap(True)
-        design_hint.setStyleSheet("color: #555;")
-        controls_layout.addWidget(design_hint)
-
         design_row = QHBoxLayout()
         load_design_button = QPushButton("Открыть параметры…")
         load_design_button.setObjectName("load_parameters_button")
