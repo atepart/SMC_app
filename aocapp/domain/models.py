@@ -35,6 +35,7 @@ class DimensionLine:
     label: str
     label_pos: Point
     label_rotation_deg: float = 0.0
+    element_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -68,19 +69,6 @@ class RectShape:
 
 
 @dataclass(frozen=True)
-class GroupBoxShape:
-    """Dotted frame that relates visible geometry to one ABCD matrix group."""
-
-    rect: Rect
-    title: str
-    title_position: Point
-    title_rotation_deg: float = -90.0
-    stroke: str = "#6b7280"
-    stroke_width: float = 0.7
-    dash_array: str = "2 2"
-
-
-@dataclass(frozen=True)
 class CircleShape:
     center: Point
     radius: float
@@ -108,6 +96,45 @@ class TextLabel:
 
 
 @dataclass(frozen=True)
+class SectionPort:
+    """A section's join plane in SVG coordinates; unequal widths form a step."""
+
+    center: Point
+    width: float
+
+    @property
+    def top(self) -> Point:
+        return Point(self.center.x, self.center.y - self.width / 2)
+
+    @property
+    def bottom(self) -> Point:
+        return Point(self.center.x, self.center.y + self.width / 2)
+
+
+@dataclass(frozen=True)
+class ElementParameter:
+    label: str
+    value: float
+    unit: str = "µm"
+
+
+@dataclass(frozen=True)
+class SchematicElement:
+    """Inspectable layout result shared by metal, labels and dimensions."""
+
+    element_id: str
+    title: str
+    bounds: Rect
+    parameters: tuple[ElementParameter, ...]
+    input_port: SectionPort | None = None
+    output_port: SectionPort | None = None
+    number: int | None = None
+    # Local copies of the actual contour support dimensioned enlarged views.
+    polygon: tuple[Point, ...] = ()
+    auxiliary_lines: tuple[LineShape, ...] = ()
+
+
+@dataclass(frozen=True)
 class StructureGeometry:
     polygons: List[PolygonShape]
     rects: List[RectShape]
@@ -116,9 +143,9 @@ class StructureGeometry:
     labels: List[TextLabel]
     dimensions: List[DimensionLine]
     bounds: Rect
-    groups: List[GroupBoxShape] = field(default_factory=list)
     overview: StructureGeometry | None = None
     paths: List[PathShape] = field(default_factory=list)
+    elements: List[SchematicElement] = field(default_factory=list)
 
 
 def bounds_from_points(points: Iterable[Point]) -> Rect:

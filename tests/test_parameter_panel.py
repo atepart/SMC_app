@@ -265,9 +265,30 @@ def test_schematic_details_toggle_keeps_overview_large(parameter_window: MainWin
     app.processEvents()
     detailed = parameter_window._view._svg_item.boundingRect()
     assert detailed.height() > compact.height() * 1.5
+    view = parameter_window._view
+    assert view._fit_width
+    assert view.transform().mapRect(detailed).width() > view.viewport().width() * 0.9
+    assert view.verticalScrollBar().maximum() > view.viewport().height()
+    wheel = QtGui.QWheelEvent(
+        QtCore.QPointF(view.viewport().rect().center()),
+        QtCore.QPointF(view.mapToGlobal(view.rect().center())),
+        QtCore.QPoint(),
+        QtCore.QPoint(0, -120),
+        QtCore.Qt.NoButton,
+        QtCore.Qt.NoModifier,
+        QtCore.Qt.NoScrollPhase,
+        False,
+    )
+    old_scale = view.transform().m11()
+    QtWidgets.QApplication.sendEvent(view.viewport(), wheel)
+    assert view.verticalScrollBar().value() > 0
+    assert view.transform().m11() == old_scale
+    view.reset_view()
+    assert view.verticalScrollBar().value() == 0
     QTest.mouseClick(toggle, QtCore.Qt.LeftButton, pos=QtCore.QPoint(8, toggle.height() // 2))
     app.processEvents()
     assert parameter_window._view._svg_item.boundingRect() == compact
+    assert not parameter_window._view._fit_width
 
 
 def test_issue_5_steps_and_sigma_keyboard_input(parameter_window: MainWindow) -> None:
@@ -315,6 +336,37 @@ def test_issue_6_order_conversion_and_invalid_length(parameter_window: MainWindo
         parameter_window._update_svg()
     assert "Элемент 1" in warning.call_args.args[2]
     assert "нет целого n" in parameter_window._transformer_status[7].text()
+
+
+def test_preview_button_uses_current_fields_for_dimensions(parameter_window: MainWindow) -> None:
+    window = parameter_window
+    window._schematic_details.setChecked(True)
+    inputs = window._config_inputs
+    for name, value in {
+        "transf_1_w_end_m": 22,
+        "transf_1_w_start_m": 8,
+        "transf_1_length_m": 8,
+        "mex4_len_m": 12,
+        "mex4_width_m": 9,
+        "dw_m": 0.75,
+        "sis_width_um": 25,
+    }.items():
+        inputs[name].setValue(value)
+    preview = next(b for b in window.findChildren(QtWidgets.QPushButton) if b.text() == "Update Preview")
+    with patch.object(window._view, "set_svg", wraps=window._view.set_svg) as displayed:
+        QTest.mouseClick(preview, QtCore.Qt.MouseButton.LeftButton)
+    svg = displayed.call_args.args[0]
+    for expected in (
+        "W1=22 µm; W2=8 µm; L=8 µm",
+        "W1эфф=22.75",
+        "W2эфф=8.75",
+        "W=9 µm; L=12 µm",
+        "Wэфф=9.75",
+        "W SIS (расч.)=25 µm",
+    ):
+        assert expected in svg
+    labels = {label.text() for label in window.findChildren(QtWidgets.QLabel)}
+    assert {"Линия у SIS · L", "Линия у SIS · W"} <= labels
 
 
 def test_legacy_transformer_round_trip_preserves_discretization(parameter_window: MainWindow, tmp_path) -> None:

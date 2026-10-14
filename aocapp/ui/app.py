@@ -101,8 +101,9 @@ class SvgGraphicsView(QGraphicsView):
         self._svg_item: QGraphicsSvgItem | None = None
         self._renderer: QSvgRenderer | None = None
         self._zoom_level = 0
+        self._fit_width = False
 
-    def set_svg(self, svg_text: str) -> None:
+    def set_svg(self, svg_text: str, *, fit_width: bool = False) -> None:
         renderer = QSvgRenderer(QByteArray(svg_text.encode("utf-8")))
         item = QGraphicsSvgItem()
         item.setSharedRenderer(renderer)
@@ -117,6 +118,7 @@ class SvgGraphicsView(QGraphicsView):
 
         self._renderer = renderer
         self._svg_item = item
+        self._fit_width = fit_width
         self.reset_view()
 
     def reset_view(self) -> None:
@@ -124,7 +126,21 @@ class SvgGraphicsView(QGraphicsView):
             return
         self.resetTransform()
         self._zoom_level = 0
-        self.fitInView(self._svg_item.boundingRect(), Qt.KeepAspectRatio)
+        self._fit_default(reset_scroll=True)
+
+    def _fit_default(self, *, reset_scroll: bool = False) -> None:
+        if self._svg_item is None:
+            return
+        if self._fit_width:
+            scroll = self.verticalScrollBar()
+            fraction = scroll.value() / max(1, scroll.maximum())
+            self.resetTransform()
+            factor = max(1, self.viewport().width() - 24) / self._svg_item.boundingRect().width()
+            self.scale(factor, factor)
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().minimum())
+            scroll.setValue(scroll.minimum() if reset_scroll else round(fraction * scroll.maximum()))
+        else:
+            self.fitInView(self._svg_item.boundingRect(), Qt.KeepAspectRatio)
 
     def resizeEvent(self, event) -> None:
         """Keep the initial drawing fitted while QtAds settles dock sizes.
@@ -135,9 +151,12 @@ class SvgGraphicsView(QGraphicsView):
         """
         super().resizeEvent(event)
         if self._svg_item is not None and self._zoom_level == 0:
-            self.fitInView(self._svg_item.boundingRect(), Qt.KeepAspectRatio)
+            self._fit_default()
 
     def wheelEvent(self, event: QWheelEvent) -> None:
+        if self._fit_width and not event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            super().wheelEvent(event)
+            return
         if event.angleDelta().y() == 0:
             return
         zoom_in = 1.08
@@ -538,9 +557,15 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(home_button)
         self._schematic_details = QCheckBox("С обозначениями")
         self._schematic_details.setObjectName("schematic_details")
-        self._schematic_details.setToolTip("Показать типы элементов 1–12 и текущие размеры под схемой")
+        self._schematic_details.setToolTip(
+            "Показать размеры каждого элемента со стрелками в увеличенных выносках под схемой"
+        )
         self._schematic_details.toggled.connect(self._update_svg)
         toolbar.addWidget(self._schematic_details)
+        dimensions_hint = QLabel("Размеры ниже: прокрутка · Ctrl+колесо: масштаб", panel)
+        dimensions_hint.setVisible(False)
+        self._schematic_details.toggled.connect(dimensions_hint.setVisible)
+        toolbar.addWidget(dimensions_hint)
         toolbar.addStretch(1)
         vbox.addLayout(toolbar)
         return panel
@@ -1065,7 +1090,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid input", str(exc))
             return
 
-        self._view.set_svg(svg)
+        self._view.set_svg(svg, fit_width=self._schematic_details.isChecked())
 
     def _select_s21_output_directory(self) -> None:
         directory = QtWidgets.QFileDialog.getExistingDirectory(

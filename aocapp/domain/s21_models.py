@@ -431,7 +431,7 @@ class S21Config:
         metadata={
             "label": "Lso",
             "group": "DC block",
-            "description": "Offset between the slot center and the slot antenna feed section.",
+            "description": "Расстояние от вершины щели (точки питания) до начала участка, где две щели параллельны; A→B на размерной выноске.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -611,9 +611,9 @@ class S21Config:
     mex4_len_m: float = field(
         default=3.0e-6,
         metadata={
-            "label": "Mex4 L",
+            "label": "Линия у SIS · L",
             "group": "Radial Stub",
-            "description": "Length of the microstrip segment immediately after the radial stub shunt branch.",
+            "description": "Длина линии с символом SIS после элемента 12, слева от радиальных шлейфов.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -625,9 +625,9 @@ class S21Config:
     mex4_width_m: float = field(
         default=6.0e-6,
         metadata={
-            "label": "Mex4 W",
+            "label": "Линия у SIS · W",
             "group": "Radial Stub",
-            "description": "Width of the microstrip segment immediately after the radial stub shunt branch.",
+            "description": "Введённая ширина линии с символом SIS; металл на схеме имеет ширину W + DW.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,

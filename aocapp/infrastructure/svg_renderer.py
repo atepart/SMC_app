@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from aocapp.domain.models import GroupBoxShape, Point, PolygonShape, StructureGeometry, TextLabel
+from aocapp.domain.models import Point, PolygonShape, StructureGeometry, TextLabel
 from aocapp.domain.ports import SvgRenderer
 
 
@@ -23,20 +23,13 @@ class SvgRendererImpl(SvgRenderer):
         polygons = "\n".join(self._render_polygon(polygon) for polygon in geometry.polygons)
         paths = "\n".join(
             f'<path id="{self._escape(path.element_id)}" d="{path.data}" fill="{path.fill}" '
-            f'stroke="{path.stroke}" stroke-width="{path.stroke_width:g}" stroke-linejoin="miter" />'
+            f'stroke="{path.stroke}" stroke-width="{path.stroke_width:g}" stroke-linejoin="round" stroke-linecap="butt" />'
             for path in geometry.paths
         )
         rects = "\n".join(self._render_rect(rect_shape) for rect_shape in geometry.rects)
         circles = "\n".join(self._render_circle(circle) for circle in geometry.circles)
         lines = "\n".join(self._render_line(line) for line in geometry.lines)
         labels = "\n".join(self._render_label(label) for label in geometry.labels)
-        groups = "\n".join(self._render_group(group) for group in geometry.groups)
-        group_titles = "\n".join(
-            self._render_label(
-                TextLabel(group.title_position, group.title, font_size=12.0, anchor="middle", font_weight="bold")
-            )
-            for group in geometry.groups
-        )
 
         svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}" width="100%" height="100%" font-family="Arial">
   <defs>
@@ -49,9 +42,6 @@ class SvgRendererImpl(SvgRenderer):
   </defs>
   <rect x="{bounds.x:g}" y="{bounds.y:g}" width="{bounds.width:g}" height="{bounds.height:g}" fill="{self.background}" />
   <g>
-    {groups}
-  </g>
-  <g>
     {polygons}
     {rects}
     {paths}
@@ -63,31 +53,16 @@ class SvgRendererImpl(SvgRenderer):
   </g>
   <g>
     {labels}
-    {group_titles}
   </g>
 </svg>"""
         return svg
-
-    def _render_group(self, group: GroupBoxShape) -> str:
-        """Render a matrix boundary behind the electrical structure.
-
-        The dotted frames mirror the decomposition used by
-        :class:`S21CalculatorImpl`: each frame is a visual ABCD sub-network,
-        not an additional physical conductor.
-        """
-        rect = group.rect
-        return (
-            f'<rect x="{rect.x:g}" y="{rect.y:g}" width="{rect.width:g}" height="{rect.height:g}" '
-            f'fill="none" stroke="{group.stroke}" stroke-width="{group.stroke_width:g}" '
-            f'stroke-dasharray="{group.dash_array}" />'
-        )
 
     def _render_polygon(self, polygon: PolygonShape) -> str:
         points = " ".join(f"{point.x:g},{point.y:g}" for point in polygon.points)
         fill = f"url(#{polygon.fill_pattern})" if polygon.fill_pattern else polygon.fill
         return (
             f'<polygon points="{points}" fill="{fill}" stroke="{polygon.stroke}" '
-            f'stroke-width="{polygon.stroke_width:g}" />'
+            f'stroke-width="{polygon.stroke_width:g}" stroke-linejoin="round" />'
         )
 
     def _render_rect(self, rect_shape) -> str:
@@ -126,17 +101,13 @@ class SvgRendererImpl(SvgRenderer):
 
     def _render_label(self, label: TextLabel) -> str:
         lines = label.text.splitlines() or [label.text]
-        escaped_lines = [self._escape(line) for line in lines]
-        tspan_items = []
-        for index, line in enumerate(escaped_lines):
-            # QtSvg does not consistently apply CSS ``em`` units to tspan
-            # baselines.  Numeric user units keep multiline registers legible.
-            dy = "0" if index == 0 else f"{label.font_size * 1.25:g}"
-            tspan_items.append(f'<tspan x="{label.position.x:g}" dy="{dy}">{line}</tspan>')
-        tspan_markup = "".join(tspan_items)
-        return (
-            f'<text x="{label.position.x:g}" y="{label.position.y:g}" font-size="{label.font_size:g}" '
-            f'text-anchor="{label.anchor}" fill="{label.fill}" font-weight="{label.font_weight}">{tspan_markup}</text>'
+        # Separate text nodes have reliable baselines in QtSvg, which can
+        # concatenate tspan lines despite their x/dy positioning.
+        return "\n".join(
+            f'<text x="{label.position.x:g}" y="{label.position.y + index * label.font_size * 1.25:g}" '
+            f'font-size="{label.font_size:g}" text-anchor="{label.anchor}" '
+            f'fill="{label.fill}" font-weight="{label.font_weight}">{self._escape(line)}</text>'
+            for index, line in enumerate(lines)
         )
 
     def _escape(self, text: str) -> str:
