@@ -43,7 +43,7 @@ class S21Config:
         "EL2 Material",
         "Dielectrics",
         "Block 1 / Block 2",
-        "DC Break",
+        "DC block",
         "Radial Stub",
         *tuple(
             f"{number} · {'Трансформатор' if element.startswith('T') else 'Линия'}"
@@ -262,7 +262,7 @@ class S21Config:
         metadata={
             "label": "ε sub",
             "group": "Dielectrics",
-            "description": "Relative permittivity of the substrate used for the slot/DC-break model.",
+            "description": "Relative permittivity of the substrate used for the slot/DC-block model.",
             "suffix": "",
             "minimum": 1.0,
             "maximum": 50.0,
@@ -275,7 +275,7 @@ class S21Config:
         metadata={
             "label": "h sub",
             "group": "Dielectrics",
-            "description": "Substrate thickness for the slot/DC-break model.",
+            "description": "Substrate thickness for the slot/DC-block model.",
             "suffix": " um",
             "minimum": 0.01,
             "maximum": 5000.0,
@@ -387,7 +387,7 @@ class S21Config:
         default=0.5e-6,
         metadata={
             "label": "DW",
-            "group": "DC Break",
+            "group": "DC block",
             "description": "Common fabrication width correction added to microstrip widths and subtracted from slot width.",
             "suffix": " um",
             "minimum": 0.0,
@@ -402,8 +402,8 @@ class S21Config:
         default=4.0e-6,
         metadata={
             "label": "Wslot",
-            "group": "DC Break",
-            "description": "Slot width in the DC-break/slot antenna element.",
+            "group": "DC block",
+            "description": "Slot width in the DC-block/slot antenna element.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -416,8 +416,8 @@ class S21Config:
         default=36.0e-6,
         metadata={
             "label": "Lslot",
-            "group": "DC Break",
-            "description": "Slot length in the DC-break/slot antenna element.",
+            "group": "DC block",
+            "description": "Slot length in the DC-block/slot antenna element.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 10000.0,
@@ -430,7 +430,7 @@ class S21Config:
         default=8.0e-6,
         metadata={
             "label": "Lso",
-            "group": "DC Break",
+            "group": "DC block",
             "description": "Offset between the slot center and the slot antenna feed section.",
             "suffix": " um",
             "minimum": 0.1,
@@ -444,8 +444,8 @@ class S21Config:
         default=9.0e-6,
         metadata={
             "label": "Wms",
-            "group": "DC Break",
-            "description": "Microstrip width inside the DC-break section before the bridge/slot coupling.",
+            "group": "DC block",
+            "description": "Microstrip width inside the DC-block section before the bridge/slot coupling.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -458,8 +458,8 @@ class S21Config:
         default=14.0e-6,
         metadata={
             "label": "Lms",
-            "group": "DC Break",
-            "description": "Microstrip length inside the DC-break section before the slot element.",
+            "group": "DC block",
+            "description": "Microstrip length inside the DC-block section before the slot element.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 10000.0,
@@ -1331,7 +1331,7 @@ class S21Config:
         if self.block_neck_height_um > self.block_body_height_um:
             errors.append("block_neck_height_um must be <= block_body_height_um")
         if self.w_slot_m <= self.dw_m:
-            errors.append("w_slot_m must be > dw_m so the corrected DC-break slot stays positive")
+            errors.append("w_slot_m must be > dw_m so the corrected DC-block slot stays positive")
         if errors:
             raise ValueError("; ".join(errors))
 
@@ -1363,7 +1363,7 @@ class S21Config:
                 continue
             if info.suffix == " GHz":
                 info = replace(info, step=1.0 if "step" in info.name else 10.0)
-            if info.suffix == " um" and info.group in {"DC Break", "Radial Stub", "SIS"}:
+            if info.suffix == " um" and info.group in {"DC block", "Radial Stub", "SIS"}:
                 info = replace(info, step=0.5)
             if info.name == "sis_rn_area_ohm_um2":
                 info = replace(info, step=0.5, label="RnS")

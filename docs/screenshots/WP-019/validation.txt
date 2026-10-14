@@ -1,0 +1,57 @@
+WP-019 / BUG-013 / GitHub #7 — 2026-10-14
+Environment: macOS 15.3 arm64, Python 3.11.13, PySide6 6.8.2.1.
+
+Final pre-commit checks:
+rtk uv run ruff check . — PASS
+rtk uv run black --check . — PASS (62 files)
+rtk uv run isort --check-only . — PASS
+rtk uv run pytest — PASS (67 tests, 25.52 s)
+rtk uv run python -m compileall -q aocapp backend — PASS
+rtk git diff --check — PASS
+Workflow YAML parsed with Ruby/Psych: exactly windows-2022/x64.
+Commands used UV_CACHE_DIR=/tmp/aoc-uv-cache and uv --no-sync with the existing
+environment. Qt tests ran outside sandbox: sandbox Qt exits with SIGABRT,
+as recorded previously in WP-012. No quality checks were weakened.
+
+An intermediate full run found a too-small initial preview (459.57 px with
+viewport 1067 px). Vertical annotation spacing was reduced; the unchanged
+dock-size test and final full suite pass. Final overview rechecked natively.
+
+Native source launched with rtk uv run python -m aocapp. Manual interactions
+were performed in a temporary PyInstaller bundle of the same implementation
+under /tmp/aoc-wp019 (not a macOS release asset).
+
+Manual scenarios:
+1. Default parameters: actual S21 sweep 100..895 GHz, 160 points, one blue
+   curve and red -5 dB line. Table saved outside repository.
+2. SIS area 0.8 -> 1.2 um^2 and first transformer L 9.6 -> 12 um:
+   preview updated; second actual sweep produces new blue + old gray curve.
+   Two saved (160,2) tables are finite; max absolute S21 difference 8.91255 dB.
+3. Y line changed by keyboard to -7.5 dB; Home retains threshold and curves.
+   Native Save dialog produced export.png, 2018x442, visually verified with
+   two curves, threshold, legend and axes. The native dialog treats a pasted
+   absolute Save As name as a colon-separated filename; the resulting file
+   was moved into this folder. No application defect inferred from that.
+4. L=100 um: Update Preview reports element 1 and rejects invalid subdivision.
+   invalid-length.png captures the real warning dialog.
+5. L restored to 12 um: preview + successful actual sweep. L changed to
+   10 um: next successful actual sweep and blue/gray comparison. Both tables
+   contain 160 finite points. two-curves.png records this comparison.
+6. Overview, full legend and DC block/n labels visually verified. Header and
+   numbered leaders occupy separate lanes. Final tightened overview and
+   annotated-structure.png were recaptured after the last spacing change.
+7. Test bundle closed normally; process exit verified. No release or CI run
+   was triggered and no existing GitHub release assets were changed.
+
+All four generated result tables remain in /tmp, outside the commit.
+Existing SciPy IntegrationWarning about quadrature roundoff was reported,
+but all four computations completed successfully.
+After the native Save dialog, the UI control tool timed out reading the
+window; process sampling showed a healthy idle Qt/AppKit event loop, and
+the actual PNG had been written successfully. The tool was reconnected by
+restarting the temporary bundle; later native scenarios passed.
+
+Automatic regressions additionally verify three successive result rotations,
+different grids/sample counts, ownership of mutable input samples, preserved
+history on redraw/failure/start, pen alpha 0.6 and previous z-order below blue,
+the default and edited threshold and exact unclamped geometry dimensions.

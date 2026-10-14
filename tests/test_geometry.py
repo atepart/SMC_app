@@ -71,7 +71,7 @@ def test_svg_renders_dotted_matrix_frames_and_engineering_labels() -> None:
     assert "щелевая антенна" in svg
     assert "Радиальные шлейфы ×2" in svg
     assert "SIS · туннельный переход" in svg
-    assert "схема не в масштабе" in svg
+    assert "размеры в едином масштабе" in svg
 
 
 def test_size_register_uses_raw_inputs_and_backend_corrected_widths() -> None:
@@ -171,5 +171,50 @@ def test_every_number_and_size_matches_config_and_backend() -> None:
         # Metal envelope uses the same reversed endpoints plus DW as calculation.
         assert shape.points[3].y - shape.points[0].y == pytest.approx((w1 + config.dw_m) * 1e6 * 2)
         assert shape.points[2].y - shape.points[1].y == pytest.approx((w2 + config.dw_m) * 1e6 * 2)
+        assert shape.points[1].x - shape.points[0].x == pytest.approx(length * 2)
     for text in ("Ww1=7.5", "Lw1=61", "Ww3=5.5", "Lw3=6.5", "Ww4=8.5", "Lw4=7.5"):
         assert text in svg
+
+
+@pytest.mark.parametrize("length_um,width_um", [(0.001, 0.5), (23, 41), (500, 200)])
+def test_line_dimensions_are_unclamped_and_share_transformer_scale(length_um, width_um) -> None:
+    from aocapp.infrastructure.geometry import CONDUCTOR_FILL, LENGTH_SCALE, WIDTH_SCALE
+
+    config = S21Config(msl_8_len_m=length_um * 1e-6, msl_8_width_m=width_um * 1e-6)
+    geometry = IntegratedStructureCalculator().calculate(config)
+    line = next(shape.rect for shape in geometry.rects if shape.fill == CONDUCTOR_FILL)
+    assert LENGTH_SCALE == WIDTH_SCALE
+    assert line.width == pytest.approx(length_um * LENGTH_SCALE)
+    assert line.height == pytest.approx((width_um + config.dw_m * 1e6) * WIDTH_SCALE)
+
+
+def test_dc_slot_and_sis_dimensions_follow_calculation_inputs() -> None:
+    config = S21Config(w_slot_m=2e-6, l_slot_m=120e-6, sis_area_um2=8, sis_width_um=2, mex4_len_m=20e-6)
+    geometry = IntegratedStructureCalculator().calculate(config)
+    slot_width = next(dim for dim in geometry.dimensions if dim.label == "Wslot")
+    slot_length = next(dim for dim in geometry.dimensions if dim.label == "Lslot")
+    assert slot_width.end.x - slot_width.start.x == pytest.approx((2 - config.dw_m * 1e6) * 2)
+    assert slot_length.end.y - slot_length.start.y == pytest.approx(120 * 2)
+    sis = next(shape.rect for shape in geometry.rects if shape.stroke_width == 1.2)
+    assert sis.height == pytest.approx(config.sis_width_um * 2)
+    assert sis.width == pytest.approx(config.sis_area_um2 / config.sis_width_um * 2)
+    feed = next(path.bounds for path in geometry.paths if path.element_id == "sis-feed")
+    assert feed.width == pytest.approx(config.mex4_len_m * 1e6 * 2)
+    assert feed.height == pytest.approx((config.mex4_width_m + config.dw_m) * 1e6 * 2)
+
+
+def test_radial_tuning_and_output_lines_have_calculated_dimensions() -> None:
+    import re
+
+    from aocapp.infrastructure.geometry import CONDUCTOR_FILL
+
+    config = S21Config(zrad1_len_m=100e-6, zrad1_width_m=20e-6, zrad3_len_m=1e-6, zrad4_len_m=80e-6)
+    geometry = IntegratedStructureCalculator().calculate(config)
+    tuning = [shape.rect for shape in geometry.rects if shape.fill == CONDUCTOR_FILL][-2:]
+    for rect, index in zip(tuning, (4, 3)):
+        assert rect.width == pytest.approx(getattr(config, f"zrad{index}_len_m") * 1e6 * 2)
+        assert rect.height == pytest.approx((getattr(config, f"zrad{index}_width_m") + config.dw_m) * 1e6 * 2)
+    output = next(path for path in geometry.paths if path.element_id == "radial-output")
+    points = [(float(x), float(y)) for x, y in re.findall(r"[ML]([\d.]+),([\d.]+)", output.data)]
+    assert points[2][0] - points[1][0] == pytest.approx(config.zrad1_len_m * 1e6 * 2)
+    assert points[3][1] - points[2][1] == pytest.approx((config.zrad1_width_m + config.dw_m) * 1e6 * 2)

@@ -307,6 +307,7 @@ class MainWindow(QMainWindow):
         self._trace_reader = TraceFileReader()
         self._comparison_traces: dict[str, ComparisonTrace] = {}
         self._theory_trace: tuple[object, object] | None = None
+        self._previous_theory_trace: tuple[object, object] | None = None
 
         self._build_menu()
         self._configure_plot()
@@ -551,15 +552,17 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(self._plot)
 
-        controls = QHBoxLayout()
+        controls = QtWidgets.QGridLayout()
         self._plot_scale_inputs: dict[str, QDoubleSpinBox] = {}
-        for name, label, value in (
-            ("x_min", "X min", 100.0),
-            ("x_max", "X max", 900.0),
-            ("y_min", "Y min", -20.0),
-            ("y_max", "Y max", 0.0),
+        for column, (name, label, value) in enumerate(
+            (
+                ("x_min", "X min", 100.0),
+                ("x_max", "X max", 900.0),
+                ("y_min", "Y min", -20.0),
+                ("y_max", "Y max", 0.0),
+            )
         ):
-            controls.addWidget(QLabel(label))
+            controls.addWidget(QLabel(label), 0, column * 2)
             spin = SafeDoubleSpinBox(panel)
             spin.setRange(-1_000_000.0, 1_000_000.0)
             spin.setDecimals(2)
@@ -567,19 +570,29 @@ class MainWindow(QMainWindow):
             spin.setSingleStep(10.0 if name.startswith("x_") else 5.0)
             spin.setFixedWidth(90)
             self._plot_scale_inputs[name] = spin
-            controls.addWidget(spin)
+            controls.addWidget(spin, 0, column * 2 + 1)
+        controls.addWidget(QLabel("Y line"), 1, 0)
+        self._plot_threshold_input = SafeDoubleSpinBox(panel)
+        self._plot_threshold_input.setRange(-1_000_000.0, 1_000_000.0)
+        self._plot_threshold_input.setDecimals(2)
+        self._plot_threshold_input.setSuffix(" dB")
+        self._plot_threshold_input.setValue(-5.0)
+        self._plot_threshold_input.setSingleStep(1.0)
+        self._plot_threshold_input.setFixedWidth(90)
+        self._plot_threshold_input.valueChanged.connect(self._plot_threshold_line.setValue)
+        controls.addWidget(self._plot_threshold_input, 1, 1)
         apply_scale = QPushButton("Задать Home", panel)
         apply_scale.clicked.connect(self._apply_plot_scale)
-        controls.addWidget(apply_scale)
+        controls.addWidget(apply_scale, 1, 2, 1, 2)
         home = QPushButton(panel)
         home.setIcon(self.style().standardIcon(QStyle.SP_DirHomeIcon))
         home.setToolTip("Вернуть заданный исходный масштаб графика")
         home.clicked.connect(self._restore_plot_scale)
-        controls.addWidget(home)
+        controls.addWidget(home, 1, 4)
         export = QPushButton("Экспорт PNG", panel)
         export.clicked.connect(self._export_plot_dialog)
-        controls.addWidget(export)
-        controls.addStretch(1)
+        controls.addWidget(export, 1, 5, 1, 3)
+        controls.setColumnStretch(8, 1)
         layout.addLayout(controls)
         return panel
 
@@ -867,6 +880,9 @@ class MainWindow(QMainWindow):
         self._plot.showGrid(x=True, y=True, alpha=0.10)
         self._plot.setMenuEnabled(False)
         self._plot_legend = self._plot.addLegend(offset=(10, 10))
+        self._plot_threshold_line = pg.InfiniteLine(pos=-5.0, angle=0, pen=pg.mkPen("#dc2626", width=1))
+        self._plot_threshold_line.setZValue(-1)
+        self._plot.addItem(self._plot_threshold_line, ignoreBounds=True)
         self._plot.getPlotItem().setContentsMargins(12, 12, 12, 12)
         axis_pen = pg.mkPen("#7f7f7f", width=1)
         for axis_name in ("left", "bottom"):
@@ -1015,10 +1031,10 @@ class MainWindow(QMainWindow):
                 if current == self._transformer_baselines[index]:
                     n = getattr(self._defaults, f"transf_{index}_dwdl_um")
                     dl_um = getattr(self._defaults, f"transf_{index}_dl_m") * 1e6
-                    status.setText(f"n={n:g} µm; dl={dl_um:g} µm (из файла/исходных параметров)")
+                    status.setText(f"n={n:g}; dl={dl_um:g} µm (из файла/исходных параметров)")
                 else:
                     steps = derive_transformer_steps(*(value * 1e-6 for value in current))
-                    status.setText(f"n={steps.n_um} µm; ступеней: {steps.intervals + 1}; dl={steps.dl_m * 1e6:g} µm")
+                    status.setText(f"n={steps.n_um}; ступеней: {steps.intervals + 1}; dl={steps.dl_m * 1e6:g} µm")
                 status.setStyleSheet("color: #555;")
             except ValueError as error:
                 status.setText(str(error))
@@ -1092,9 +1108,6 @@ class MainWindow(QMainWindow):
             return
 
         self._active_s21_output_path = output_path
-        self._plot.clear()
-        self._theory_trace = None
-        self._redraw_plot()
         self._s21_status.setText("Computing S21...")
         self._set_log_messages(
             [
@@ -1160,17 +1173,26 @@ class MainWindow(QMainWindow):
             self._run_s21_button.setEnabled(True)
 
     def _update_s21_plot(self, frequencies, s21_db) -> None:
-        """Store theory separately so imported traces survive recalculation."""
-        self._theory_trace = (frequencies, s21_db)
+        """Rotate only successful calculations; own the samples independently."""
+        self._previous_theory_trace = self._theory_trace
+        self._theory_trace = (list(frequencies), list(s21_db))
         self._redraw_plot()
 
     def _redraw_plot(self) -> None:
         """Render theory and all optional comparisons with a shared legend."""
         self._plot.clear()
+        self._plot.addItem(self._plot_threshold_line, ignoreBounds=True)
+        if self._previous_theory_trace is not None:
+            previous = self._plot.plot(
+                *self._previous_theory_trace,
+                pen=pg.mkPen(color=(70, 70, 70, 153), width=2),
+                name="Previous theory",
+            )
+            previous.setZValue(0)
         if self._theory_trace is not None:
             frequencies, s21_db = self._theory_trace
             pen = pg.mkPen(color="#1f77b4", width=2)
-            self._plot.plot(
+            current = self._plot.plot(
                 frequencies,
                 s21_db,
                 pen=pen,
@@ -1180,6 +1202,7 @@ class MainWindow(QMainWindow):
                 symbolPen="#1f77b4",
                 name="Theory",
             )
+            current.setZValue(1)
 
         styles = {
             "Experiment": ("#2ca02c", Qt.PenStyle.DotLine),

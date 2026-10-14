@@ -19,10 +19,6 @@ jobs:
         include:
           - os: windows-2022
             arch: x64
-          - os: macos-latest
-            arch: arm64
-          - os: macos-15-intel
-            arch: x64
 
     steps:
       - name: Checkout code
@@ -43,26 +39,9 @@ jobs:
         if: runner.os == 'Windows'
         run: .\build.bat
 
-      - name: Run build script (macOS/Linux)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: bash ./build.sh
-
       - name: Archive Release Asset (Windows)
         if: runner.os == 'Windows'
         run: Compress-Archive -Path ./dist/SMC_app -DestinationPath ./dist/SMC_app_${{ runner.os }}_${{ matrix.arch }}_${{ github.ref_name }}.zip
-
-      - name: Archive Release Asset (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          cd dist
-          if [ -d "SMC_app.app" ]; then
-            zip -r SMC_app_${{ runner.os }}_${{ matrix.arch }}_${{ github.ref_name }}.zip SMC_app.app
-          else
-            zip -r SMC_app_${{ runner.os }}_${{ matrix.arch }}_${{ github.ref_name }}.zip SMC_app
-          fi
-          ls -l
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v6
@@ -79,7 +58,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Download Artifacts (all OS)
+      - name: Download Windows Artifacts
         uses: actions/download-artifact@v7
         with:
           pattern: SMC_app_*_${{ github.ref_name }}
@@ -98,5 +77,3 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             SMC_app_Windows_x64_${{ github.ref_name }}.zip
-            SMC_app_macOS_arm64_${{ github.ref_name }}.zip
-            SMC_app_macOS_x64_${{ github.ref_name }}.zip

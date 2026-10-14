@@ -194,6 +194,68 @@ def test_plot_home_hover_and_png_export(parameter_window: MainWindow, tmp_path) 
     assert destination.read_bytes().startswith(b"\x89PNG")
 
 
+def test_successful_calculations_keep_only_one_owned_previous_trace(parameter_window: MainWindow, tmp_path) -> None:
+    x, first = [100, 200], [-12, -8]
+    parameter_window._update_s21_plot(x, first)
+    assert parameter_window._previous_theory_trace is None
+    first[0] = 999  # Samples must not change with the caller's mutable buffer.
+    parameter_window._update_s21_plot([110, 210, 310], [-11, -7, -9])
+    assert parameter_window._previous_theory_trace == ([100, 200], [-12, -8])
+    curves = {item.name(): item for item in parameter_window._plot.listDataItems()}
+    previous, current = curves["Previous theory"], curves["Theory"]
+    assert previous.zValue() < current.zValue()
+    assert previous.opts["pen"].color().alphaF() == pytest.approx(0.6)
+    assert previous.opts["pen"].color().red() == 70
+    assert previous.xData.tolist() == [100, 200]
+    assert current.xData.tolist() == [110, 210, 310]
+    parameter_window._redraw_plot()  # Import/redraw must not rotate history.
+    assert parameter_window._previous_theory_trace == ([100, 200], [-12, -8])
+    with patch.object(QtWidgets.QMessageBox, "critical"):
+        parameter_window._on_s21_failed("test failure")
+    assert parameter_window._previous_theory_trace == ([100, 200], [-12, -8])
+    parameter_window._update_s21_plot([120, 220], [-10, -6])
+    assert parameter_window._previous_theory_trace == ([110, 210, 310], [-11, -7, -9])
+    assert len(parameter_window._plot.listDataItems()) == 2
+    parameter_window.export_plot_to_path(tmp_path / "two-curves.png")
+
+
+def test_y_threshold_survives_redraw_and_home_without_affecting_history(parameter_window: MainWindow) -> None:
+    line = parameter_window._plot_threshold_line
+    spin = parameter_window._plot_threshold_input
+    assert line.value() == spin.value() == -5
+    assert line.pen.color().name() == "#dc2626"
+    assert line.pen.widthF() == 1
+    spin.setValue(-7.5)
+    parameter_window._update_s21_plot([100, 200], [-12, -8])
+    parameter_window._restore_plot_scale()
+    assert line.value() == -7.5
+    assert line in parameter_window._plot.getPlotItem().items
+    assert parameter_window._previous_theory_trace is None
+    assert parameter_window._plot_initial_range == (100, 900, -20, 0)
+    parameter_window._update_s21_plot([100, 200], [-10, -6])
+    assert line.value() == -7.5
+
+
+def test_starting_calculation_does_not_clear_successful_results(parameter_window: MainWindow) -> None:
+    parameter_window._update_s21_plot([100, 200], [-12, -8])
+    parameter_window._update_s21_plot([100, 200], [-10, -6])
+    parameter_window._s21_output.clear()
+    with patch("aocapp.ui.app.QThread"), patch("aocapp.ui.app.S21Worker"):
+        parameter_window._run_s21()
+        assert parameter_window._theory_trace == ([100, 200], [-10, -6])
+        assert parameter_window._previous_theory_trace == ([100, 200], [-12, -8])
+        assert len(parameter_window._plot.listDataItems()) == 2
+        parameter_window._on_s21_thread_finished()
+
+
+def test_issue_7_element_labels(parameter_window: MainWindow) -> None:
+    assert "DC block" in parameter_window._parameter_groups
+    assert "DC Break" not in parameter_window._parameter_groups
+    assert parameter_window._transformer_status[7].text().startswith("n=5;")
+    parameter_window._config_inputs["transf_7_w_end_m"].setValue(15)
+    assert " µm; ступеней" not in parameter_window._transformer_status[7].text()
+
+
 def test_schematic_details_toggle_keeps_overview_large(parameter_window: MainWindow) -> None:
     app = QtWidgets.QApplication.instance()
     compact = parameter_window._view._svg_item.boundingRect()

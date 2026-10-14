@@ -15,7 +15,7 @@ physical chain in the orientation used by the reference drawing.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from math import radians, sin
+from math import ceil, radians, sin
 from typing import Iterable
 
 from aocapp.domain.models import (
@@ -38,7 +38,6 @@ from aocapp.domain.transformers import ELEMENT_NUMBERS, SCHEMATIC_SECTIONS, tran
 
 LENGTH_SCALE = 2.0
 WIDTH_SCALE = 2.0
-MIN_SEGMENT_LENGTH = 44.0
 CONDUCTOR_FILL = "#e8f1f5"
 TRANSFORMER_FILL = "#dbeafe"
 RADIAL_FILL = "#fde68a"
@@ -91,15 +90,21 @@ class IntegratedStructureCalculator(StructureCalculator):
         toward ``Mex1``.
         """
         canvas = _Canvas()
-        center_y = 185.0
+        widths_m = [
+            value for name, value in vars(config).items() if name.endswith(("_width_m", "_w_start_m", "_w_end_m"))
+        ]
+        half_height = max(
+            max(widths_m) * 1e6 * WIDTH_SCALE / 2,
+            config.radial_r_max_m * 1e6 * WIDTH_SCALE * 1.4,
+        )
+        center_y = max(185.0, 75.0 + half_height)
         frame_top = 35.0
-        frame_bottom = 325.0
+        frame_bottom = max(325.0, center_y + half_height + 30.0)
         dw_um = config.dw_m * 1e6
         x = 28.0
 
         # Start at the first taper. The far-left flange/partial feed in the
         # supplied structure_clean.svg is explicitly outside this schematic.
-        input_width = max(8.0, min(126.0, (config.transf_7_w_end_m * 1e6 + dw_um) * WIDTH_SCALE))
         canvas.labels.append(TextLabel(Point(x, center_y + 80.0), "ФФО", font_size=12.0))
 
         mex1_start = x
@@ -203,14 +208,14 @@ class IntegratedStructureCalculator(StructureCalculator):
         )
         canvas.labels.append(
             TextLabel(
-                Point(28.0, 14.0),
-                "Структура HD35 · от ФФО к SIS · схема не в масштабе",
+                Point(28.0, -50.0),
+                "Структура HD35 · от ФФО к SIS · размеры в едином масштабе",
                 font_size=13.0,
                 font_weight="bold",
             )
         )
 
-        canvas.bounds_points.append(Point(28.0, -3.0))
+        canvas.bounds_points.append(Point(28.0, -67.0))
         overview = self._snapshot(canvas)
         legend_top = max(point.y for point in canvas.bounds_points) + 32.0
         self._add_parameter_register(canvas, config, dw_um, 28.0, max(x, 1128.0), legend_top)
@@ -257,10 +262,9 @@ class IntegratedStructureCalculator(StructureCalculator):
         ``N = abs(W_end - W_start) / n + 1`` for integral subdivisions.
 
         and gives every slice the configured longitudinal step ``dL``.
-        Consequently the physical transformer length is ``L = N * dL``.  The
+        Consequently the physical transformer length is ``L = N * dL``.
         For legacy fractional inputs it also includes the backend's 0.01 µm
-        endpoint tolerance. The schematic clamps visual
-        lengths to keep short sections identifiable; it is not a mask layout.
+        endpoint tolerance. Both axes use the same physical scale.
         """
         start_um = start_width_m * 1e6 + dw_um
         end_um = end_width_m * 1e6 + dw_um
@@ -270,9 +274,9 @@ class IntegratedStructureCalculator(StructureCalculator):
             width_step_um,
             length_step_m,
         )
-        visual_length = max(MIN_SEGMENT_LENGTH, min(150.0, physical_length_um * LENGTH_SCALE))
-        start_height = max(8.0, min(126.0, start_um * WIDTH_SCALE))
-        end_height = max(8.0, min(126.0, end_um * WIDTH_SCALE))
+        visual_length = physical_length_um * LENGTH_SCALE
+        start_height = start_um * WIDTH_SCALE
+        end_height = end_um * WIDTH_SCALE
         points = [
             Point(x, center_y - start_height / 2.0),
             Point(x + visual_length, center_y - end_height / 2.0),
@@ -297,8 +301,8 @@ class IntegratedStructureCalculator(StructureCalculator):
         """Draw an MSL section using ``L`` and the corrected width ``W + DW``."""
         length_um = length_m * 1e6
         width_um = width_m * 1e6 + dw_um
-        visual_length = max(78.0, min(180.0, length_um * LENGTH_SCALE))
-        visual_width = max(8.0, min(126.0, width_um * WIDTH_SCALE))
+        visual_length = length_um * LENGTH_SCALE
+        visual_width = width_um * WIDTH_SCALE
         rect = Rect(x, center_y - visual_width / 2.0, visual_length, visual_width)
         canvas.rects.append(RectShape(rect, fill=CONDUCTOR_FILL))
         canvas.include_rect(rect)
@@ -309,11 +313,17 @@ class IntegratedStructureCalculator(StructureCalculator):
         """Connect each left-to-right number to exactly one section, clear of the metal."""
         if element not in ELEMENT_NUMBERS:
             return
-        y = 98.0
+        # Offset crowded labels, never the physical conductor dimensions.
+        previous = [label.position.x for label in canvas.labels if label.text.isdigit()]
+        label_x = ceil(max(x, previous[-1] + 38.0) if previous else x)
+        y = -8.0 if ELEMENT_NUMBERS[element] % 2 else -28.0
         canvas.labels.append(
-            TextLabel(Point(x, y), str(ELEMENT_NUMBERS[element]), font_size=14.0, anchor="middle", font_weight="bold")
+            TextLabel(
+                Point(label_x, y), str(ELEMENT_NUMBERS[element]), font_size=12.0, anchor="middle", font_weight="bold"
+            )
         )
-        canvas.lines.append(LineShape(Point(x, y + 6.0), Point(x, edge_y - 4.0), stroke="#64748b"))
+        canvas.lines.append(LineShape(Point(label_x, y + 6.0), Point(x, edge_y - 4.0), stroke="#64748b"))
+        canvas.bounds_points.append(Point(label_x + 8.0, y - 14.0))
         canvas.circles.append(CircleShape(Point(x, edge_y - 3.0), radius=1.5, fill="#64748b", stroke="#64748b"))
 
     def _add_dc_block(self, canvas: _Canvas, config: S21Config, x: float, center_y: float, dw_um: float) -> float:
@@ -323,17 +333,17 @@ class IntegratedStructureCalculator(StructureCalculator):
         polygons remain disjoint; the slot is not a third metal component.
         Actual dimensions and the Wslot-DW correction are reported below.
         """
-        gap = max(9.0, min(24.0, (config.w_slot_m * 1e6 - dw_um) * WIDTH_SCALE))
-        feed_h = max(10.0, min(30.0, (config.w_ms_m * 1e6 + dw_um) * WIDTH_SCALE))
-        finger = 18.0
-        shoulder = 18.0
-        length = max(75.0, min(104.0, config.l_slot_m * 1e6 * WIDTH_SCALE))
+        gap = (config.w_slot_m * 1e6 - dw_um) * WIDTH_SCALE
+        feed_h = (config.w_ms_m * 1e6 + dw_um) * WIDTH_SCALE
+        finger = feed_h
+        shoulder = config.l_ms_m * 1e6 * LENGTH_SCALE
+        length = config.l_slot_m * 1e6 * LENGTH_SCALE
         top, bottom = center_y - feed_h / 2.0, center_y + feed_h / 2.0
         inner = x + shoulder + finger
         end = inner + gap + finger + shoulder
         left = [
             Point(x, top),
-            Point(inner - 8.0, top),
+            Point(inner - finger / 2.0, top),
             Point(inner, bottom),
             Point(inner, bottom + length),
             Point(inner - finger, bottom + length),
@@ -342,7 +352,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         ]
         right = [
             Point(end, top),
-            Point(inner + gap + 8.0, top),
+            Point(inner + gap + finger / 2.0, top),
             Point(inner + gap, bottom),
             Point(inner + gap, bottom + length),
             Point(inner + gap + finger, bottom + length),
@@ -354,7 +364,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         # Separate lateral leads are visible in the reference; they do not
         # bridge the central gap and are schematic, without invented sizes.
         for start, outside in ((inner - finger, x - 8.0), (inner + gap + finger, end + 8.0)):
-            y = bottom + 20.0
+            y = bottom + config.lso_m * 1e6 * LENGTH_SCALE
             canvas.lines.extend(
                 (
                     LineShape(Point(start, y), Point(outside, y), stroke_width=2.5),
@@ -399,26 +409,35 @@ class IntegratedStructureCalculator(StructureCalculator):
         is drawn beyond the two radial sectors, outside the Mex04 frame.
         """
         start = x
-        # Coordinates are taken from the user's clean SVG, whose SIS circle
-        # is (1037,276). Scale the footprint but retain its asymmetric curved
-        # rims, inclined sides and stepped neck; do not use annular wedges.
-        radius = max(72.0, min(88.0, config.radial_r_max_m * 1e6 * WIDTH_SCALE))
+        # Retain the reference's curved rims. Map the fan using R/angle,
+        # independently of the calculated MLsis and output-line dimensions.
+        radius = config.radial_r_max_m * 1e6 * WIDTH_SCALE
         sy = radius / 138.0
         sx = sy * sin(radians(config.radial_angle_deg / 2.0)) / sin(radians(113.0 / 2.0))
-        sx = max(0.5, min(0.9, sx))
-        h = max(10.0, min(20.0, (config.mex4_width_m * 1e6 + dw_um) * WIDTH_SCALE))
+        h = (config.mex4_width_m * 1e6 + dw_um) * WIDTH_SCALE
+        neck_h = config.radial_r_min_m * 1e6 * WIDTH_SCALE
+        feed_length = config.mex4_len_m * 1e6 * LENGTH_SCALE
+        feed_end = start + feed_length
+        radial_origin = feed_end + (config.zrad4_len_m + config.zrad3_len_m) * 1e6 * LENGTH_SCALE
 
         def point(rx: float, ry: float) -> Point:
-            # Keep the thin neck legible even when the fan is small.
             dy = ry - 276.0
-            y = center_y + (dy * h / 18.0 if abs(dy) <= 14.0 else dy * sy)
-            return Point(start + (rx - 1023.0) * sx, y)
+            y = center_y + (dy * neck_h / 18.0 if abs(dy) <= 14.0 else dy * sy)
+            return Point(radial_origin + (rx - 1067) * sx, y)
 
         def path(element_id: str, commands: list[tuple[str, tuple[float, ...]]]) -> None:
             parts = []
             points = []
             for command, coordinates in commands:
                 mapped = [point(*coordinates[i : i + 2]) for i in range(0, len(coordinates), 2)]
+                if element_id == "sis-feed":
+                    mapped = [
+                        Point(
+                            start + (coordinates[i] - 1023) / 44 * feed_length,
+                            center_y + (coordinates[i + 1] - 276) * h / 18,
+                        )
+                        for i in range(0, len(coordinates), 2)
+                    ]
                 parts.append(command + " ".join(f"{p.x:g},{p.y:g}" for p in mapped))
                 points.extend(mapped)
             bounds = bounds_from_points(points)
@@ -428,30 +447,37 @@ class IntegratedStructureCalculator(StructureCalculator):
         path("radial-upper", [("M", (1067, 266)), ("L", (976, 166)), ("Q", (1059, 106, 1147, 170)), ("L", (1074, 265))])
         path("radial-lower", [("M", (1067, 284)), ("L", (975, 386)), ("Q", (1059, 465, 1148, 381)), ("L", (1074, 289))])
         path("sis-feed", [("M", (1023, 266)), ("L", (1067, 266)), ("M", (1023, 284)), ("L", (1067, 284))])
-        # Upper and lower stepped contours from the reference, extended to
-        # the current output-line length without adding an inner circular arc.
+        tuning_x = feed_end
+        for index in (4, 3):
+            length = getattr(config, f"zrad{index}_len_m") * 1e6 * LENGTH_SCALE
+            width = (getattr(config, f"zrad{index}_width_m") * 1e6 + dw_um) * WIDTH_SCALE
+            rect = Rect(tuning_x, center_y - width / 2, length, width)
+            canvas.rects.append(RectShape(rect, fill=CONDUCTOR_FILL))
+            canvas.include_rect(rect)
+            tuning_x += length
+        # Keep the output neck attached to the reference's fan contours.
         neck = point(1074, 276).x
         output_start = point(1079, 276).x
-        output_end = output_start + max(104.0, min(180.0, config.zrad1_len_m * 1e6 * LENGTH_SCALE))
-        rx_end = 1023.0 + (output_end - start) / sx
-        path(
-            "radial-output",
-            [
-                ("M", (1074, 265)),
-                ("L", (1074, 267)),
-                ("L", (1079, 267)),
-                ("L", (1079, 270)),
-                ("L", (rx_end, 270)),
-                ("M", (rx_end, 283)),
-                ("L", (1074, 283)),
-                ("L", (1074, 289)),
-                ("M", (1079, 270)),
-                ("L", (1079, 283)),
-            ],
+        output_end = output_start + config.zrad1_len_m * 1e6 * LENGTH_SCALE
+        # The reference's output steps are annotations of the topology; the
+        # actual transmission-line width is Ww1 + DW over its full Lw1.
+        output_width = (config.zrad1_width_m * 1e6 + dw_um) * WIDTH_SCALE
+        output_rect = Rect(output_start, center_y - output_width / 2, output_end - output_start, output_width)
+        output_data = (
+            f"M{neck:g},{center_y - neck_h / 2:g} L{output_start:g},{output_rect.y:g} L{output_end:g},{output_rect.y:g} "
+            f"M{output_end:g},{output_rect.bottom:g} L{output_start:g},{output_rect.bottom:g} L{neck:g},{center_y + neck_h / 2:g} "
+            f"M{output_start:g},{output_rect.y:g} L{output_start:g},{output_rect.bottom:g}"
         )
-        sis = point(1037, 276)
-        sis_top = point(1023, 266)
-        sis_bottom = point(1049, 284)
+        output_bounds = Rect(
+            neck, min(output_rect.y, center_y - neck_h / 2), output_end - neck, max(output_width, neck_h)
+        )
+        canvas.paths.append(PathShape(output_data, output_bounds, "radial-output"))
+        canvas.include_rect(output_rect)
+        sis_width = config.sis_width_um * WIDTH_SCALE
+        sis_length = config.sis_area_um2 / config.sis_width_um * LENGTH_SCALE
+        sis = Point(start + feed_length / 2.0, center_y)
+        sis_top = Point(sis.x - sis_length / 2.0, center_y - sis_width / 2.0)
+        sis_bottom = Point(sis.x + sis_length / 2.0, center_y + sis_width / 2.0)
         canvas.rects.append(
             RectShape(
                 Rect(sis_top.x, sis_top.y, sis_bottom.x - sis_top.x, sis_bottom.y - sis_top.y),
@@ -459,7 +485,7 @@ class IntegratedStructureCalculator(StructureCalculator):
                 stroke_width=1.2,
             )
         )
-        canvas.circles.append(CircleShape(sis, radius=5.0 * sy, fill="#fff"))
+        canvas.circles.append(CircleShape(sis, radius=min(sis_length, sis_width) / 4.0, fill="#fff"))
         canvas.labels.append(TextLabel(Point(start - 38, center_y + 49), "SIS", font_size=12.0, anchor="end"))
         canvas.lines.append(
             LineShape(Point(sis.x, sis_bottom.y + 3), Point(start - 34, center_y + 40), stroke="#64748b")
@@ -468,19 +494,24 @@ class IntegratedStructureCalculator(StructureCalculator):
             TextLabel(Point(neck + 12, center_y + radius + 35), "Радиальные шлейфы ×2", font_size=12.0, anchor="middle")
         )
         self._add_group(canvas, start - 10, output_end, frame_top + 26, frame_bottom - 18, "Mrad", "left")
-        self._add_group(canvas, start, sis_bottom.x + 2, center_y - 23, center_y + 15, "MLsis", "left")
+        self._add_group(canvas, start, feed_end, center_y - h / 2.0 - 5, center_y + h / 2.0 + 5, "MLsis", "left")
         # Give MLsis its own leader/title lane instead of squeezing the title
         # into a short metal section or placing it on the output line.
         group = canvas.groups[-1]
-        canvas.groups[-1] = GroupBoxShape(group.rect, "MLsis", Point(start + 18, 92.0), 0.0)
-        canvas.lines.append(LineShape(Point(start + 18, 99.0), Point(sis.x, center_y - 24), stroke="#64748b"))
+        canvas.groups[-1] = GroupBoxShape(
+            Rect(group.rect.x, group.rect.y, group.rect.width - 5, group.rect.height),
+            "MLsis",
+            Point(start + 18, 80.0),
+            0.0,
+        )
+        canvas.lines.append(LineShape(Point(start + 18, 87.0), Point(sis.x, center_y - h / 2.0 - 5), stroke="#64748b"))
         self._add_group(canvas, start - 18, output_end + 8, frame_top, frame_bottom, "Mex04", "right")
         port_height = 32.0
         pts = [
-            Point(output_end, point(rx_end, 270).y),
+            Point(output_end, output_rect.y),
             Point(output_end + 26, center_y - port_height / 2),
             Point(output_end + 26, center_y + port_height / 2),
-            Point(output_end, point(rx_end, 283).y),
+            Point(output_end, output_rect.bottom),
         ]
         canvas.polygons.append(PolygonShape(pts, fill="#f8fafc"))
         rect = Rect(output_end + 26, center_y - port_height / 2, 44, port_height)
@@ -537,7 +568,7 @@ class IntegratedStructureCalculator(StructureCalculator):
             f"MLsis · линия у SIS: W={config.mex4_width_m * 1e6:g}; L={config.mex4_len_m * 1e6:g}.  SIS · туннельный переход.  DW={dw_um:g}",
             f"Radial feed · Ww1={config.zrad1_width_m * 1e6:g}; Lw1={config.zrad1_len_m * 1e6:g}; Zrad0={config.zrad0_ohm:g} Ω",
             f"Radial tuning · Ww3={config.zrad3_width_m * 1e6:g}; Lw3={config.zrad3_len_m * 1e6:g}; Ww4={config.zrad4_width_m * 1e6:g}; Lw4={config.zrad4_len_m * 1e6:g}",
-            f"SIS · W SIS={config.sis_width_um:g}; площадь={config.sis_area_um2:g} µm². Геометрия показана условно; точные входные размеры приведены здесь.",
+            f"SIS · W SIS={config.sis_width_um:g}; площадь={config.sis_area_um2:g} µm². Контур радиального узла следует референсу HD35.",
             "Номера 1–12 соответствуют группам параметров слева направо. W1 — слева, W2 — справа; L — общая длина.",
         )
         for row, text in enumerate(explanations):

@@ -8,6 +8,7 @@
 - SVG-preview геометрии с масштабированием и панорамированием.
 - Расчёт S21 по тем же параметрам, которые используются для preview.
 - График S21 vs Frequency и текстовый лог расчёта.
+- Последний успешный расчёт серым за текущей синей кривой; редактируемый красный порог Y line (−5 dB по умолчанию).
 - Сохранение результата S21 в `.tab` файл.
 - Версификация приложения через `aocapp/application/version.py` и GitHub-теги.
 
@@ -70,7 +71,7 @@ Windows:
 rtk release.bat v0.1.0
 ```
 
-После push тега GitHub Actions собирает архивы для Windows и macOS и публикует их в GitHub Release.
+После push тега GitHub Actions собирает архив для Windows x64 и публикует его в GitHub Release.
 
 ## GitHub Actions
 
@@ -81,11 +82,7 @@ Workflow находится в `.github/workflows/build.yml`.
 - при push любого тега;
 - вручную через `workflow_dispatch`.
 
-Матрица сборки повторяет подход `RnSApp`:
-
-- Windows 2022: `x86`, `x64`;
-- macOS latest: `arm64`;
-- macOS Intel: `x64`.
+Релиз собирается только для Windows 2022, архитектура `x64`.
 
 ## Структура проекта
 
