@@ -12,6 +12,8 @@ from PySide6.QtTest import QTest
 
 from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
+from aocapp.domain.s21_models import S21Config
+from aocapp.domain.transformers import ELEMENT_NUMBERS, ELEMENT_ORDER, element_group
 from aocapp.infrastructure.geometry import IntegratedStructureCalculator
 from aocapp.infrastructure.svg_renderer import SvgRendererImpl
 from aocapp.ui.app import MainWindow
@@ -84,7 +86,7 @@ def test_greek_labels_fixed_orders_and_design_round_trip(parameter_window: MainW
     assert {"α EL1", "σ EL1", "ε₁₂"} <= labels
 
     order = parameter_window._engineering_orders["d_top_m"]
-    assert order.isReadOnly()
+    assert isinstance(order, QtWidgets.QLabel)
     assert order.text() == "×10^-6 m"
     assert int(order.text().split("^")[1].split()[0]) % 3 == 0
 
@@ -107,11 +109,12 @@ def test_greek_labels_fixed_orders_and_design_round_trip(parameter_window: MainW
 
 
 def test_issue_4_group_order_and_sis_capacitance_units(parameter_window: MainWindow) -> None:
-    assert list(parameter_window._parameter_groups)[:3] == ["LO", "Backend Grid", "SIS"]
+    assert list(parameter_window._parameter_groups)[:3] == ["LO", "Backend Grid", "EL1 Material"]
 
     capacitance = parameter_window._config_inputs["sis_cap_f_per_um2"]
     assert capacitance.value() == pytest.approx(0.083)
-    assert capacitance.suffix() == " pF/µm²"
+    assert capacitance.suffix() == ""
+    assert parameter_window._parameter_units["sis_cap_f_per_um2"].text() == "pF/µm²"
     assert parameter_window._build_config().sis_cap_f_per_um2 == pytest.approx(8.3e-14)
 
 
@@ -151,6 +154,105 @@ def test_open_file_menu_imports_experiment_and_rejects_hfss(parameter_window: Ma
     assert len(parameter_window._plot.listDataItems()) == 2
     legend_labels = {label.text for _, label in parameter_window._plot_legend.items}
     assert legend_labels == {"Theory", "Experiment"}
+
+
+@pytest.mark.parametrize("name,value", [("x_min", 150), ("x_max", 800), ("y_min", -30), ("y_max", 5)])
+@pytest.mark.parametrize("key", [QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter])
+def test_enter_applies_plot_bounds(parameter_window: MainWindow, name, value, key) -> None:
+    spin = parameter_window._plot_scale_inputs[name]
+    spin.lineEdit().selectAll()
+    QTest.keyClicks(spin.lineEdit(), str(value))
+    QTest.keyClick(spin.lineEdit(), key)
+    expected = {"x_min": 100, "x_max": 900, "y_min": -20, "y_max": 0}
+    expected[name] = value
+    ranges = parameter_window._plot.getPlotItem().vb.viewRange()
+    assert ranges[0] == pytest.approx([expected["x_min"], expected["x_max"]])
+    assert ranges[1] == pytest.approx([expected["y_min"], expected["y_max"]])
+
+
+def test_enter_rejects_reversed_plot_bounds(parameter_window: MainWindow) -> None:
+    spin = parameter_window._plot_scale_inputs["x_min"]
+    spin.lineEdit().selectAll()
+    QTest.keyClicks(spin.lineEdit(), "950")
+    with patch.object(QtWidgets.QMessageBox, "warning") as warning:
+        QTest.keyClick(spin.lineEdit(), QtCore.Qt.Key_Return)
+    warning.assert_called_once()
+    assert parameter_window._plot_initial_range == (100, 900, -20, 0)
+
+
+def test_all_element_fields_have_matching_numbers_and_external_units(parameter_window: MainWindow) -> None:
+    window = parameter_window
+    groups = [name for name in window._parameter_groups if " · " in name]
+    assert groups == [element_group(element) for element in ELEMENT_ORDER]
+    labels = {label.text() for label in window.findChildren(QtWidgets.QLabel)}
+    fields = S21Config.ui_fields()
+    correction = next(info for info in fields if info.name == "dw_m")
+    assert correction.element_id is None and correction.group == "Dielectrics"
+    assert {info.element_id for info in fields if info.element_id} == set(ELEMENT_ORDER)
+    for info in fields:
+        spin = window._config_inputs[info.name]
+        assert spin.suffix() == ""
+        assert float(spin.lineEdit().text()) == pytest.approx(spin.value())
+        if info.suffix:
+            assert window._parameter_units[info.name].text()
+        if info.element_id:
+            assert f"{ELEMENT_NUMBERS[info.element_id]} · {info.label}" in labels
+            assert window._parameter_groups[info.group].isAncestorOf(spin)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "mex4_width_m",
+        "mex4_len_m",
+        "lso_m",
+        "w_ms_m",
+        "l_ms_m",
+        "w_slot_m",
+        "l_slot_m",
+        "radial_r_min_m",
+        "radial_r_max_m",
+        "radial_angle_deg",
+        *(f"zrad{i}_{suffix}" for i in (1, 3, 4) for suffix in ("width_m", "len_m")),
+        *(f"msl_{i}_{suffix}" for i in (4, 5, 6, 7, 8) for suffix in ("width_m", "len_m")),
+    ],
+)
+def test_enter_updates_each_geometry_field(parameter_window: MainWindow, name) -> None:
+    window = parameter_window
+    original = window._use_case.execute(window._build_config(), show_details=False)
+    spin = window._config_inputs[name]
+    value = spin.value() + 1
+    spin.lineEdit().selectAll()
+    QTest.keyClicks(spin.lineEdit(), str(value))
+    with patch.object(window._view, "set_svg", wraps=window._view.set_svg) as displayed:
+        QTest.keyClick(spin.lineEdit(), QtCore.Qt.Key_Return)
+    displayed.assert_called_once()
+    assert displayed.call_args.args[0] != original
+    assert getattr(window._build_config(), name) == pytest.approx(value / S21Config.field_scale(name))
+
+
+@pytest.mark.parametrize("width", [0.1, 9, 500])
+def test_sis_feed_width_enter_changes_actual_metal(parameter_window: MainWindow, width) -> None:
+    spin = parameter_window._config_inputs["mex4_width_m"]
+    spin.lineEdit().selectAll()
+    QTest.keyClicks(spin.lineEdit(), str(width))
+    QTest.keyClick(spin.lineEdit(), QtCore.Qt.Key_Return)
+    config = parameter_window._build_config()
+    geometry = IntegratedStructureCalculator().calculate(config)
+    feed = next(e for e in geometry.elements if e.element_id == "SIS-line")
+    assert feed.bounds.height == pytest.approx((width + config.dw_m * 1e6) * 2)
+
+
+def test_enter_invalid_geometry_retains_last_preview(parameter_window: MainWindow) -> None:
+    spin = parameter_window._config_inputs["w_slot_m"]
+    spin.lineEdit().selectAll()
+    QTest.keyClicks(spin.lineEdit(), "0.1")
+    with patch.object(QtWidgets.QMessageBox, "warning") as warning, patch.object(
+        parameter_window._view, "set_svg"
+    ) as shown:
+        QTest.keyClick(spin.lineEdit(), QtCore.Qt.Key_Return)
+    warning.assert_called_once()
+    shown.assert_not_called()
 
 
 def test_plot_home_hover_and_png_export(parameter_window: MainWindow, tmp_path) -> None:
@@ -249,7 +351,7 @@ def test_starting_calculation_does_not_clear_successful_results(parameter_window
 
 
 def test_issue_7_element_labels(parameter_window: MainWindow) -> None:
-    assert "DC block" in parameter_window._parameter_groups
+    assert "8 · DC block" in parameter_window._parameter_groups
     assert "DC Break" not in parameter_window._parameter_groups
     assert parameter_window._transformer_status[7].text().startswith("n=5;")
     parameter_window._config_inputs["transf_7_w_end_m"].setValue(15)
@@ -313,7 +415,7 @@ def test_issue_5_steps_and_sigma_keyboard_input(parameter_window: MainWindow) ->
 
 def test_issue_6_order_conversion_and_invalid_length(parameter_window: MainWindow) -> None:
     groups = [name for name in parameter_window._parameter_groups if " · " in name]
-    assert [int(name.split()[0]) for name in groups] == list(range(1, 13))
+    assert [int(name.split()[0]) for name in groups] == list(range(1, 20))
     inputs = parameter_window._config_inputs
     assert "transf_7_dwdl_um" not in inputs
     assert inputs["transf_7_w_end_m"].value() == 14  # W1 on the drawing's left
@@ -366,7 +468,7 @@ def test_preview_button_uses_current_fields_for_dimensions(parameter_window: Mai
     ):
         assert expected in svg
     labels = {label.text() for label in window.findChildren(QtWidgets.QLabel)}
-    assert {"Линия у SIS · L", "Линия у SIS · W"} <= labels
+    assert {"14 · Линия у SIS · L", "14 · Линия у SIS · W"} <= labels
 
 
 def test_legacy_transformer_round_trip_preserves_discretization(parameter_window: MainWindow, tmp_path) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields as dataclass_fields, replace
 from typing import ClassVar
 
-from aocapp.domain.transformers import SCHEMATIC_SECTIONS, transformer_length_m
+from aocapp.domain.transformers import ELEMENT_ORDER, SCHEMATIC_SECTIONS, element_group, transformer_length_m
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,7 @@ class ConfigFieldInfo:
     step: float = 0.1
     decimals: int = 3
     visible: bool = True
+    element_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -38,18 +39,11 @@ class S21Config:
     GROUP_ORDER: ClassVar[tuple[str, ...]] = (
         "LO",
         "Backend Grid",
-        "SIS",
         "EL1 Material",
         "EL2 Material",
         "Dielectrics",
         "Block 1 / Block 2",
-        "DC block",
-        "Radial Stub",
-        *tuple(
-            f"{number} · {'Трансформатор' if element.startswith('T') else 'Линия'}"
-            for sections in SCHEMATIC_SECTIONS.values()
-            for number, element in sections
-        ),
+        *tuple(element_group(element) for element in ELEMENT_ORDER),
     )
 
     temperature_k: float = field(
@@ -431,7 +425,7 @@ class S21Config:
         metadata={
             "label": "Lso",
             "group": "DC block",
-            "description": "Расстояние от вершины щели (точки питания) до начала участка, где две щели параллельны; A→B на размерной выноске.",
+            "description": "Расстояние от вершины щели (точки питания) до начала участка, где две щели параллельны. Привязка к чёрным отводам схемы не установлена.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -613,7 +607,7 @@ class S21Config:
         metadata={
             "label": "Линия у SIS · L",
             "group": "Radial Stub",
-            "description": "Длина линии с символом SIS после элемента 12, слева от радиальных шлейфов.",
+            "description": "Длина линии с символом SIS после последнего трансформатора, слева от радиальных шлейфов.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -1367,11 +1361,26 @@ class S21Config:
                 info = replace(info, step=0.5)
             if info.name == "sis_rn_area_ohm_um2":
                 info = replace(info, step=0.5, label="RnS")
+            element = None
+            if info.name == "dw_m":
+                info = replace(info, group="Dielectrics")
+            elif info.group == "DC block":
+                element = "DC"
+            elif info.group == "SIS":
+                element = "SIS"
+            elif info.name.startswith("mex4_"):
+                element = "SIS-line"
+            elif info.name.startswith("zrad") and info.name[4] in "134":
+                element = f"Ww{info.name[4]}"
+            elif info.group == "Radial Stub":
+                element = "Radial"
+            if element is not None:
+                info = replace(info, element_id=element, group=element_group(element))
             visible.append(info)
         by_name = {info.name: info for info in result}
         for sections in SCHEMATIC_SECTIONS.values():
             for number, element in sections:
-                group = f"{number} · {'Трансформатор' if element.startswith('T') else 'Линия'}"
+                group = element_group(element)
                 if element.startswith("T"):
                     prefix = f"transf_{element[1:]}"
                     # Backend width direction is opposite to the drawing.
@@ -1381,6 +1390,7 @@ class S21Config:
                                 by_name[f"{prefix}_{suffix}"],
                                 label=label,
                                 group=group,
+                                element_id=element,
                                 step=0.5,
                                 description=f"Элемент {number}: ширина {'слева (от ФФО)' if label == 'W1' else 'справа (к SIS)'}, до поправки DW.",
                             )
@@ -1396,6 +1406,7 @@ class S21Config:
                             maximum=10000,
                             step=0.5,
                             decimals=6,
+                            element_id=element,
                         )
                     )
                 else:
@@ -1406,6 +1417,7 @@ class S21Config:
                                 by_name[f"{prefix}_{suffix}"],
                                 label=label,
                                 group=group,
+                                element_id=element,
                                 step=0.5,
                                 description=f"Элемент {number}: {'ширина линии до поправки DW' if label == 'W' else 'длина линии'}.",
                             )

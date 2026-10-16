@@ -34,7 +34,7 @@ def _endpoints(data):
 
 def test_preview_contains_every_section_without_matrix_frames() -> None:
     geometry = IntegratedStructureCalculator().calculate(S21Config())
-    assert [e.number for e in geometry.elements if e.number is not None] == list(range(1, 13))
+    assert [e.number for e in geometry.elements] == list(range(1, 20))
     assert len([e for e in geometry.elements if e.element_id.startswith("T")]) == 7
     assert len(geometry.elements) == 19
     assert set(_elements(geometry)) >= {"DC", "SIS", "SIS-line", "Ww1", "Ww3", "Ww4", "Radial"}
@@ -239,25 +239,18 @@ def test_dc_slot_and_feed_dimensions_follow_calculation_inputs() -> None:
     feed = _elements(geometry)["SIS-line"]
     assert feed.bounds.width == pytest.approx(20 * 2)
     assert feed.bounds.height == pytest.approx((config.mex4_width_m + config.dw_m) * 1e6 * 2)
-    assert len([d for d in geometry.dimensions if d.element_id == "DC"]) == 5
+    assert len([d for d in geometry.dimensions if d.element_id == "DC"]) == 4
 
 
 @pytest.mark.parametrize("offset_um", [8, 16])
-def test_lso_arrow_is_tied_to_marked_apex_and_parallel_start(offset_um) -> None:
+def test_dc_does_not_claim_unverified_lead_dimensions(offset_um) -> None:
     geometry = IntegratedStructureCalculator().calculate(S21Config(lso_m=offset_um * 1e-6))
     dc = _elements(geometry)["DC"]
-    apex, parallel = [c.center for c in geometry.circles if c.fill == "#64748b"]
-    arrow = next(d for d in geometry.dimensions if d.element_id == "DC" and d.label.startswith("Lso="))
-    assert arrow.start.y == apex.y
-    assert arrow.end.y == parallel.y
-    assert arrow.label == f"Lso={offset_um}"
-    assert {label.text for label in geometry.labels} >= {"A", "B", "Lso: A (питание) → B (параллельный участок)"}
-    for point, end in ((apex, arrow.start), (parallel, arrow.end)):
-        assert any(line.start == point and line.end.x > end.x and line.end.y == end.y for line in geometry.lines)
-    length = next(d for d in geometry.dimensions if d.element_id == "DC" and d.label.startswith("Lslot="))
-    zoom = (length.end.y - length.start.y) / (36 * LENGTH_SCALE)
-    assert arrow.end.y - arrow.start.y == pytest.approx(offset_um * LENGTH_SCALE * zoom)
-    # Both overview and enlargement share these auxiliary lead records.
+    assert not any(d.element_id == "DC" and d.label.startswith("Lso=") for d in geometry.dimensions)
+    assert not {"A", "B"} & {label.text for label in geometry.labels}
+    assert any("Чёрные отводы условные" in label.text for label in geometry.labels)
+    # Lso remains a calculation input and is listed with its current value.
+    assert next(p.value for p in dc.parameters if p.label == "Lso") == pytest.approx(offset_um)
     assert len(dc.auxiliary_lines) == 4
     assert all(line in geometry.overview.lines for line in dc.auxiliary_lines)
 

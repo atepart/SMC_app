@@ -28,7 +28,7 @@ from aocapp.domain.models import (
 )
 from aocapp.domain.ports import StructureCalculator
 from aocapp.domain.s21_models import S21Config
-from aocapp.domain.transformers import SCHEMATIC_SECTIONS, transformer_length_m
+from aocapp.domain.transformers import ELEMENT_NUMBERS, SCHEMATIC_SECTIONS, transformer_length_m
 
 LENGTH_SCALE = WIDTH_SCALE = 2.0
 CONDUCTOR_FILL = "#e8f1f5"
@@ -130,6 +130,16 @@ class IntegratedStructureCalculator(StructureCalculator):
             if matrix == "Mex02":
                 x = self._dc_block(canvas, config, x, y, dw)
         x = self._radial_and_sis(canvas, config, x, y, dw)
+        canvas.elements = [
+            replace(
+                element,
+                number=ELEMENT_NUMBERS[element.element_id],
+                title=f"{ELEMENT_NUMBERS[element.element_id]} · {element.title}"
+                if element.number is None
+                else element.title,
+            )
+            for element in canvas.elements
+        ]
         self._metal_outline(canvas)
         self._number_labels(canvas)
         metal = bounds_from_points(canvas.bounds_points)
@@ -573,15 +583,6 @@ class IntegratedStructureCalculator(StructureCalculator):
         width, lead = (values["Wms"] + dw) * WIDTH_SCALE * zoom, values["Lms"] * LENGTH_SCALE * zoom
         inner, gap = origin.x + lead + width, (values["Wslot"] - dw) * WIDTH_SCALE * zoom
         bottom, depth = origin.y + width, values["Lslot"] * LENGTH_SCALE * zoom
-        apex = Point(inner + gap / 2, bottom)
-        parallel = mapped_point(element.auxiliary_lines[2].end)
-        dimension_x = parallel.x + 14
-        canvas.lines.extend(
-            LineShape(p, Point(dimension_x + 3, p.y), stroke="#64748b", stroke_width=0.4) for p in (apex, parallel)
-        )
-        for point, name, dx, dy in ((apex, "A", -12, -3), (parallel, "B", -10, 11)):
-            canvas.circles.append(CircleShape(point, 1.3, fill="#64748b", stroke="#64748b", stroke_width=0.3))
-            canvas.labels.append(TextLabel(Point(point.x + dx, point.y + dy), name, 9, fill="#64748b"))
         canvas.dimensions.extend(
             (
                 DimensionLine(
@@ -609,13 +610,6 @@ class IntegratedStructureCalculator(StructureCalculator):
                     f"Wmsэфф={values['Wms'] + dw:g}",
                     Point(x + 165, origin.y - 20),
                 ),
-                DimensionLine(
-                    Point(dimension_x, apex.y),
-                    Point(dimension_x, parallel.y),
-                    f"Lso={values['Lso']:g}",
-                    Point(dimension_x + 13, (apex.y + parallel.y) / 2),
-                    -90,
-                ),
             )
         )
         canvas.lines.append(
@@ -630,7 +624,7 @@ class IntegratedStructureCalculator(StructureCalculator):
             TextLabel(Point(x, y + 245), f"Масштаб выноски ×{zoom:.3g} · щель остаётся раздельной", 9, fill="#64748b")
         )
         canvas.labels.append(
-            TextLabel(Point(x, y + 230), "Lso: A (питание) → B (параллельный участок)", 9, fill="#64748b")
+            TextLabel(Point(x, y + 230), "Чёрные отводы условные; их размеры не заданы", 9, fill="#64748b")
         )
 
     @staticmethod

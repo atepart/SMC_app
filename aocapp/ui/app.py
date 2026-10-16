@@ -182,11 +182,18 @@ class SafeDoubleSpinBox(QDoubleSpinBox):
     arrow buttons and keyboard input continue to work as normal.
     """
 
+    returnPressed = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._wheel_armed = False
         self.setLocale(QtCore.QLocale.c())
         self.setKeyboardTracking(False)
+
+    def keyPressEvent(self, event) -> None:
+        super().keyPressEvent(event)
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.returnPressed.emit()
 
     def validate(self, text: str, pos: int):
         state, _, _ = super().validate(text.replace(",", "."), pos)
@@ -300,7 +307,8 @@ class MainWindow(QMainWindow):
         self._plot = pg.PlotWidget(axisItems={"bottom": self._frequency_axis})
         self._config_inputs: Dict[str, QDoubleSpinBox] = {}
         self._parameter_groups: Dict[str, CollapsibleParameterGroup] = {}
-        self._engineering_orders: Dict[str, QLineEdit] = {}
+        self._engineering_orders: Dict[str, QLabel] = {}
+        self._parameter_units: Dict[str, QLabel] = {}
         self._transformer_baselines: dict[int, tuple[float, ...]] = {}
         self._transformer_status: dict[int, QLabel] = {}
         self._s21_output: QLineEdit | None = None
@@ -407,7 +415,8 @@ class MainWindow(QMainWindow):
         vbox.addWidget(title)
 
         subtitle = QLabel(
-            "Номера элементов идут слева направо от ФФО. W1 — ширина слева, W2 — справа; L — общая длина."
+            "Номера элементов идут слева направо от ФФО. W1 — ширина слева, W2 — справа; L — общая длина. "
+            "Enter в поле обновляет схему; Run S21 пересчитывает график."
         )
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("color: #555;")
@@ -434,11 +443,17 @@ class MainWindow(QMainWindow):
 
             for field_info in group_fields:
                 spin = self._create_spinbox(field_info.name, field_info)
-                label = QLabel(field_info.label)
+                prefix = f"{ELEMENT_NUMBERS[field_info.element_id]} · " if field_info.element_id else ""
+                label = QLabel(prefix + field_info.label)
                 label.setToolTip(field_info.description)
                 spin.setToolTip(field_info.description)
                 self._config_inputs[field_info.name] = spin
-                form.addRow(label, self._build_parameter_editor(field_info.name, spin))
+                form.addRow(label, self._build_parameter_editor(field_info.name, spin, field_info.suffix))
+
+            if group_fields[0].element_id == "SIS":
+                hint = QLabel("W SIS — расчётная ширина. Ширина металла рядом с SIS: элемент 14, «Линия у SIS · W».")
+                hint.setWordWrap(True)
+                form.addRow(hint)
 
             if group_fields[0].name.startswith("transf_"):
                 index = int(group_fields[0].name.split("_")[1])
@@ -475,6 +490,11 @@ class MainWindow(QMainWindow):
         save_design_button.clicked.connect(self._save_design_dialog)
         design_row.addWidget(save_design_button)
         controls_layout.addLayout(design_row)
+
+        parameter_hint = QLabel("Файл параметров SMC_app — не файл Mathcad; S21 рассчитывается отдельно.")
+        parameter_hint.setObjectName("parameter_file_hint")
+        parameter_hint.setWordWrap(True)
+        controls_layout.addWidget(parameter_hint)
 
         self._s21_output = QLineEdit(_default_s21_output_path().name)
         self._s21_output.setObjectName("s21_output_filename")
@@ -572,10 +592,10 @@ class MainWindow(QMainWindow):
         self._plot_scale_inputs: dict[str, QDoubleSpinBox] = {}
         for column, (name, label, value) in enumerate(
             (
-                ("x_min", "X min", 100.0),
-                ("x_max", "X max", 900.0),
-                ("y_min", "Y min", -20.0),
-                ("y_max", "Y max", 0.0),
+                ("x_min", "X min, GHz", 100.0),
+                ("x_max", "X max, GHz", 900.0),
+                ("y_min", "Y min, dB", -20.0),
+                ("y_max", "Y max, dB", 0.0),
             )
         ):
             controls.addWidget(QLabel(label), 0, column * 2)
@@ -585,13 +605,13 @@ class MainWindow(QMainWindow):
             spin.setValue(value)
             spin.setSingleStep(10.0 if name.startswith("x_") else 5.0)
             spin.setFixedWidth(90)
+            spin.returnPressed.connect(self._apply_plot_scale)
             self._plot_scale_inputs[name] = spin
             controls.addWidget(spin, 0, column * 2 + 1)
-        controls.addWidget(QLabel("Y line"), 1, 0)
+        controls.addWidget(QLabel("Y line, dB"), 1, 0)
         self._plot_threshold_input = SafeDoubleSpinBox(panel)
         self._plot_threshold_input.setRange(-1_000_000.0, 1_000_000.0)
         self._plot_threshold_input.setDecimals(2)
-        self._plot_threshold_input.setSuffix(" dB")
         self._plot_threshold_input.setValue(-5.0)
         self._plot_threshold_input.setSingleStep(1.0)
         self._plot_threshold_input.setFixedWidth(90)
@@ -851,38 +871,38 @@ class MainWindow(QMainWindow):
 
     def _create_spinbox(self, name: str, field_info) -> SafeDoubleSpinBox:
         spin = SafeDoubleSpinBox()
-        scale = S21Config.field_scale(name)
         spin.setDecimals(field_info.decimals)
         spin.setRange(field_info.minimum, field_info.maximum)
         spin.setSingleStep(field_info.step)
         spin.setValue(self._defaults.ui_value(name))
-        # Scaled metric dimensions get a separate immutable engineering-order
-        # field, so the editable number remains uncluttered and unambiguous.
-        if scale == 1.0 or name == "sis_cap_f_per_um2":
-            spin.setSuffix(field_info.suffix)
+        spin.returnPressed.connect(self._update_svg)
         if name in self._material_sync_map:
             spin.valueChanged.connect(self._apply_material_sync)
         return spin
 
-    def _build_parameter_editor(self, name: str, spin: SafeDoubleSpinBox) -> QWidget:
-        """Add an immutable ``×10^n`` field for SI values shown with a scale."""
+    def _build_parameter_editor(self, name: str, spin: SafeDoubleSpinBox, suffix: str) -> QWidget:
+        """Keep units outside every numeric editor, preserving SI conversions."""
         scale = S21Config.field_scale(name)
-        if scale == 1.0 or name == "sis_cap_f_per_um2":
+        if not suffix:
             return spin
-
-        exponent = -round(math.log10(scale))
         editor = QWidget(self)
         layout = QHBoxLayout(editor)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         layout.addWidget(spin, stretch=1)
-        unit = "1/(Ω·m)" if name.startswith("sigma0_") else "m"
-        order = QLineEdit(f"×10^{exponent} {unit}", editor)
-        order.setReadOnly(True)
-        order.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        order.setFixedWidth(112 if name.startswith("sigma0_") else 78)
-        order.setToolTip("Фиксированный инженерный порядок; показатель всегда кратен 3.")
-        self._engineering_orders[name] = order
+        scaled = scale != 1.0 and name != "sis_cap_f_per_um2"
+        if scaled:
+            exponent = -round(math.log10(scale))
+            unit = "1/(Ω·m)" if name.startswith("sigma0_") else "m"
+            text = f"×10^{exponent} {unit}"
+        else:
+            text = suffix.strip().replace("Ohm", "Ω").replace("um", "µm").replace("^2", "²").replace("*", "·")
+            text = text.replace("deg", "°")
+        order = QLabel(text, editor)
+        order.setMinimumWidth(78)
+        self._parameter_units[name] = order
+        if scaled:
+            self._engineering_orders[name] = order
         layout.addWidget(order)
         return editor
 

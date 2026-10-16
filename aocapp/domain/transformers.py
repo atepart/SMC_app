@@ -7,9 +7,45 @@ from math import floor, isclose, isfinite
 SCHEMATIC_SECTIONS = {
     "Mex01": ((1, "T7"), (2, "MSL8"), (3, "T6")),
     "Mex02": ((4, "MSL7"), (5, "T5"), (6, "MSL6"), (7, "T4")),
-    "Mex03": ((8, "T3"), (9, "MSL5"), (10, "T2"), (11, "MSL4"), (12, "T1")),
+    "Mex03": ((9, "T3"), (10, "MSL5"), (11, "T2"), (12, "MSL4"), (13, "T1")),
 }
-ELEMENT_NUMBERS = {element: number for sections in SCHEMATIC_SECTIONS.values() for number, element in sections}
+ELEMENT_ORDER = (
+    "T7",
+    "MSL8",
+    "T6",
+    "MSL7",
+    "T5",
+    "MSL6",
+    "T4",
+    "DC",
+    "T3",
+    "MSL5",
+    "T2",
+    "MSL4",
+    "T1",
+    "SIS-line",
+    "SIS",
+    "Ww4",
+    "Ww3",
+    "Radial",
+    "Ww1",
+)
+ELEMENT_NUMBERS = {element: number for number, element in enumerate(ELEMENT_ORDER, 1)}
+
+
+def element_group(element: str) -> str:
+    """One display number shared by parameter groups, diagnostics and drawing."""
+    titles = {
+        "DC": "DC block",
+        "SIS-line": "Линия у SIS",
+        "SIS": "SIS",
+        "Ww4": "Radial Stub · Lw4/Ww4",
+        "Ww3": "Radial Stub · Lw3/Ww3",
+        "Radial": "Radial Stub",
+        "Ww1": "Radial Stub · Lw1/Ww1",
+    }
+    title = titles.get(element, "Трансформатор" if element.startswith("T") else "Линия")
+    return f"{ELEMENT_NUMBERS[element]} · {title}"
 
 
 def transformer_length_m(w1_m: float, w2_m: float, n_um: float, dl_m: float) -> float:
