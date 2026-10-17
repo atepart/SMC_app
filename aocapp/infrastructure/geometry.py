@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from math import cos, isfinite, radians, sin
 
+from aocapp.api.dc_block import BASE_DISTANCE_CONSTANT_M, base_distance_m
 from aocapp.domain.models import (
     CircleShape,
     DimensionLine,
@@ -35,6 +36,10 @@ CONDUCTOR_FILL = "#e8f1f5"
 TRANSFORMER_FILL = "#dbeafe"
 RADIAL_FILL = "#e8f1f5"
 DC_FILL = "#d7edf5"
+SLOT_FILL = "#111111"
+# Mathcad does not fix where the Π-slot crosses the stubs; draw its upper
+# edge at this fraction of Lms below the transformer ends (schematic only).
+SLOT_POSITION_FRACTION = 0.2
 
 
 def _um(value_m: float) -> float:
@@ -49,6 +54,7 @@ def _path(points: list[Point], close: bool = False) -> str:
 class _Canvas:
     polygons: list[PolygonShape] = field(default_factory=list)
     paths: list[PathShape] = field(default_factory=list)
+    underlay_paths: list[PathShape] = field(default_factory=list)
     rects: list[RectShape] = field(default_factory=list)
     circles: list[CircleShape] = field(default_factory=list)
     lines: list[LineShape] = field(default_factory=list)
@@ -80,6 +86,7 @@ class _Canvas:
             labels=list(self.labels),
             dimensions=list(self.dimensions),
             elements=list(self.elements),
+            underlay_paths=list(self.underlay_paths),
             bounds=Rect(bounds.x - 20, bounds.y - 20, bounds.width + 40, bounds.height + 40),
         )
 
@@ -95,6 +102,8 @@ class IntegratedStructureCalculator(StructureCalculator):
                 raise ValueError(f"{name}: размер должен быть положительным конечным числом")
         if not isfinite(config.dw_m) or config.dw_m < 0 or config.w_slot_m <= config.dw_m:
             raise ValueError("Щель Wslot − DW должна быть положительной; DW — неотрицательным")
+        if config.l_slot_m <= config.lso_m:
+            raise ValueError("Lslot должна быть больше Lso: Lso — начальный горизонтальный участок плеча щели")
         if not isfinite(config.radial_angle_deg) or not 0 < config.radial_angle_deg < 360:
             raise ValueError("Угол радиального шлейфа должен лежать между 0 и 360°")
         canvas = _Canvas()
@@ -188,46 +197,87 @@ class IntegratedStructureCalculator(StructureCalculator):
         canvas.elements.append(SchematicElement(name, title, bounds, params, start, end, number, tuple(points)))
         return end.center.x
 
+    @staticmethod
+    def _section_input_width_um(config: S21Config, name: str, dw: float) -> float:
+        """Metal width at the FFO-side face of a schematic section (with DW)."""
+        if name.startswith("T"):
+            return _um(getattr(config, f"transf_{name[1:]}_w_end_m")) + dw
+        return _um(getattr(config, f"msl_{name[3:]}_width_m")) + dw
+
     def _dc_block(self, canvas: _Canvas, config: S21Config, x: float, y: float, dw: float) -> float:
+        """Two isolated electrodes with open stubs over a Π-shaped ground slot.
+
+        Dimensions follow the Mathcad DC_BREAK definitions:
+
+        * ``Ws`` — slot width, equal to the separation of the two stubs;
+        * ``Wms``/``Lms`` — width/length of each open-ended microstrip stub
+          (the vertical part of an electrode);
+        * ``Ls`` — length of each slot arm along its axis, measured from the
+          feed point at the outer stub edge;
+        * ``Lso`` — first, horizontal part of that arm, up to the point where
+          the two arms become parallel (lower limit of the mutual impedance);
+        * ``Pibase = 2·Wms + 2·Lso + 4 µm`` — distance between parallel arms.
+
+        The horizontal metal above the stubs is the end of the neighbouring
+        transformers, so its height follows their ports rather than ``Wms``.
+        Mathcad does not fix the slot height along the stubs; it is schematic.
+        """
         gap = (_um(config.w_slot_m) - dw) * WIDTH_SCALE
-        width = (_um(config.w_ms_m) + dw) * WIDTH_SCALE
-        lead, depth = _um(config.l_ms_m) * LENGTH_SCALE, _um(config.l_slot_m) * LENGTH_SCALE
-        left_port = SectionPort(Point(x, y), width)
-        inner = x + lead + width
-        right_x = inner + gap + width + lead
-        right_port = SectionPort(Point(right_x, y), width)
-        top, bottom = left_port.top.y, left_port.bottom.y
+        stub_w = (_um(config.w_ms_m) + dw) * WIDTH_SCALE
+        stub_l = _um(config.l_ms_m) * LENGTH_SCALE
+        previous = canvas.elements[-1].output_port if canvas.elements else None
+        left_port = SectionPort(Point(x, y), previous.width if previous is not None else stub_w)
+        right_width = self._section_input_width_um(config, SCHEMATIC_SECTIONS["Mex03"][0][1], dw)
+        inner_l = x + stub_w
+        inner_r = inner_l + gap
+        right_x = inner_r + stub_w
+        right_port = SectionPort(Point(right_x, y), right_width * WIDTH_SCALE)
         left = [
             left_port.top,
-            Point(inner - width / 2, top),
-            Point(inner, bottom),
-            Point(inner, bottom + depth),
-            Point(inner - width, bottom + depth),
-            Point(inner - width, bottom),
-            left_port.bottom,
+            Point(inner_l - stub_w / 2, left_port.top.y),
+            Point(inner_l, left_port.bottom.y),
+            Point(inner_l, left_port.bottom.y + stub_l),
+            Point(x, left_port.bottom.y + stub_l),
         ]
         right = [
             right_port.top,
-            Point(inner + gap + width / 2, top),
-            Point(inner + gap, bottom),
-            Point(inner + gap, bottom + depth),
-            Point(inner + gap + width, bottom + depth),
-            Point(inner + gap + width, bottom),
-            right_port.bottom,
+            Point(inner_r + stub_w / 2, right_port.top.y),
+            Point(inner_r, right_port.bottom.y),
+            Point(inner_r, right_port.bottom.y + stub_l),
+            Point(right_x, right_port.bottom.y + stub_l),
         ]
         canvas.polygon(left, DC_FILL)
         canvas.polygon(right, DC_FILL)
-        leads = []
-        for contact, outside in ((inner - width, x - 8), (inner + gap + width, right_x + 8)):
-            offset_y = bottom + _um(config.lso_m) * LENGTH_SCALE
-            leads.extend(
-                (
-                    LineShape(Point(contact, offset_y), Point(outside, offset_y), stroke_width=2),
-                    LineShape(Point(outside, offset_y), Point(outside, bottom + depth + 10), stroke_width=2),
-                )
+
+        # Π-shaped slot in the ground plane, width Ws (= Wslot − DW).
+        pibase = _um(base_distance_m(config.w_ms_m + config.dw_m, config.lso_m)) * WIDTH_SCALE
+        center_x = inner_l + gap / 2
+        arm_l, arm_r = center_x - pibase / 2, center_x + pibase / 2
+        stubs_top = max(left_port.bottom.y, right_port.bottom.y)
+        slot_top = stubs_top + min(SLOT_POSITION_FRACTION * stub_l, max(stub_l - gap, 0.0))
+        axis_y = slot_top + gap / 2
+        arm_end = axis_y + (_um(config.l_slot_m) - _um(config.lso_m)) * LENGTH_SCALE
+        slot = (
+            Rect(arm_l - gap / 2, slot_top, x - (arm_l - gap / 2), gap),
+            Rect(inner_l, slot_top, gap, gap),
+            Rect(right_x, slot_top, arm_r + gap / 2 - right_x, gap),
+            Rect(arm_l - gap / 2, slot_top, gap, arm_end - slot_top),
+            Rect(arm_r - gap / 2, slot_top, gap, arm_end - slot_top),
+        )
+        # The slot is in the bottom electrode: an underlay beneath the top-film
+        # metal, outside the metal outline. With Lso < Ws − 2 µm the 4 µm
+        # constant puts the arms under the stubs; that is drawn as computed.
+        for index, rect in enumerate(slot):
+            corners = [
+                Point(rect.x, rect.y),
+                Point(rect.right, rect.y),
+                Point(rect.right, rect.bottom),
+                Point(rect.x, rect.bottom),
+            ]
+            canvas.underlay_paths.append(
+                PathShape(_path(corners, close=True), rect, f"dc-slot-{index}", fill=SLOT_FILL, stroke="none")
             )
-        canvas.lines.extend(leads)
-        canvas.bounds_points.extend(point for line in leads for point in (line.start, line.end))
+            canvas.bounds_points.extend(corners)
         params = tuple(
             ElementParameter(label, _um(getattr(config, field_name)))
             for label, field_name in (
@@ -238,16 +288,18 @@ class IntegratedStructureCalculator(StructureCalculator):
                 ("Lms", "l_ms_m"),
             )
         )
+        params += (ElementParameter("Pibase (расч.)", pibase / WIDTH_SCALE),)
+        slot_points = [Point(r.x, r.y) for r in slot] + [Point(r.right, r.bottom) for r in slot]
         canvas.elements.append(
             SchematicElement(
                 "DC",
                 "DC block",
-                bounds_from_points(left + right),
+                bounds_from_points(left + right + slot_points),
                 params,
                 left_port,
                 right_port,
                 polygon=tuple(left + right),
-                auxiliary_lines=tuple(leads),
+                auxiliary_rects=slot,
             )
         )
         return right_x
@@ -507,7 +559,7 @@ class IntegratedStructureCalculator(StructureCalculator):
             return
         canvas.labels.append(TextLabel(Point(x, y + 60), f"Металл: Wэфф = W + DW; DW={dw:g} µm", 9, fill="#64748b"))
         if element.element_id == "DC":
-            self._dc_dimensions(canvas, element, dw, x, y)
+            self._dc_dimensions(canvas, element, dw, x, y, card_w)
             return
         assert element.input_port is not None and element.output_port is not None
         length = element.output_port.center.x - element.input_port.center.x
@@ -565,66 +617,116 @@ class IntegratedStructureCalculator(StructureCalculator):
         )
 
     @staticmethod
-    def _dc_dimensions(canvas: _Canvas, element: SchematicElement, dw: float, x: float, y: float) -> None:
+    def _dc_dimensions(
+        canvas: _Canvas, element: SchematicElement, dw: float, x: float, y: float, card_w: float
+    ) -> None:
         values = {p.label: p.value for p in element.parameters}
-        height = max(element.bounds.height, (values["Wms"] + dw + values["Lso"]) * WIDTH_SCALE)
-        zoom = min(160 / element.bounds.width, 90 / height)
-        origin = Point(x + 65, y + 100)
+        b = element.bounds
+        # Two dimension rows (48) plus the Pibase row (26) sit below the stubs;
+        # keep everything above the footnotes at y+236.
+        stub_bottom = max(p.y for p in element.polygon) - b.y
+        zoom = min(180 / b.width, 122 / b.height, 74 / stub_bottom)
+        origin = Point(x + (card_w - b.width * zoom) / 2, y + 78)
 
-        def mapped_point(p: Point) -> Point:
-            return Point(origin.x + (p.x - element.bounds.x) * zoom, origin.y + (p.y - element.bounds.y) * zoom)
+        def m(p: Point) -> Point:
+            return Point(origin.x + (p.x - b.x) * zoom, origin.y + (p.y - b.y) * zoom)
 
-        mapped = [mapped_point(p) for p in element.polygon]
-        canvas.polygons.extend((PolygonShape(mapped[:7], fill=DC_FILL), PolygonShape(mapped[7:], fill=DC_FILL)))
-        canvas.lines.extend(
-            replace(line, start=mapped_point(line.start), end=mapped_point(line.end), stroke_width=1)
-            for line in element.auxiliary_lines
-        )
-        width, lead = (values["Wms"] + dw) * WIDTH_SCALE * zoom, values["Lms"] * LENGTH_SCALE * zoom
-        inner, gap = origin.x + lead + width, (values["Wslot"] - dw) * WIDTH_SCALE * zoom
-        bottom, depth = origin.y + width, values["Lslot"] * LENGTH_SCALE * zoom
+        h_left, _gap_piece, _h_right, arm_left, arm_right = element.auxiliary_rects
+        for rect in element.auxiliary_rects:
+            corners = [Point(rect.x, rect.y), Point(rect.right, rect.y), Point(rect.right, rect.bottom)]
+            corners.append(Point(rect.x, rect.bottom))
+            canvas.polygons.append(PolygonShape([m(p) for p in corners], fill=SLOT_FILL, stroke="none"))
+        half = len(element.polygon) // 2
+        left, right = [m(p) for p in element.polygon[:half]], [m(p) for p in element.polygon[half:]]
+        canvas.polygons.extend((PolygonShape(left, fill=DC_FILL), PolygonShape(right, fill=DC_FILL)))
+
+        outer_l, inner_l, stub_top_l, stub_end_l = left[0].x, left[2].x, left[2].y, left[3].y
+        inner_r, outer_r, stub_end_r = right[2].x, right[4].x, right[3].y
+        axis_y = m(Point(0, h_left.y + h_left.height / 2)).y
+        slot_top, slot_bottom = m(Point(0, h_left.y)).y, m(Point(0, h_left.bottom)).y
+        arm_l_x = m(Point(arm_left.x + arm_left.width / 2, 0)).x
+        arm_r_x = m(Point(arm_right.x + arm_right.width / 2, 0)).x
+        arm_end = m(Point(0, arm_right.bottom)).y
+        stub_end = max(stub_end_l, stub_end_r)
+        lslot, lso = values["Lslot"], values["Lso"]
+        # Pibase uses the nominal 4 µm gap, the drawing the corrected Wslot−DW:
+        # the arm axis sits (4 − Wslotэфф)/2 beyond Lso. Label it, don't hide it.
+        axis_extra = (_um(BASE_DISTANCE_CONSTANT_M) - (values["Wslot"] - dw)) / 2
+        lso_label = f"Lso={lso:g}" + (f" ({axis_extra:+g})" if abs(axis_extra) > 1e-9 else "")
+        if arm_right.x < element.polygon[half:][4].x - 1e-9:
+            canvas.labels.append(
+                TextLabel(
+                    Point(x, y + 72),
+                    "Плечо щели под шлейфом: Lso < Wslotэфф − 2 µm (4 µm в Pibase)",
+                    9,
+                    fill="#b91c1c",
+                )
+            )
+        # Labels avoid the black arms: W labels are centred between the arms,
+        # Lso starts right of the stub, Lslot sits outside the left arm.
+        center_x = (inner_l + inner_r) / 2
+        arm_left_outer = m(Point(arm_left.x, 0)).x
+        lso_width = len(lso_label) * 5.5
+        lso_x = min(outer_r + 3 + lso_width / 2, x + card_w - 4 - lso_width / 2)
+        pibase_y = max(arm_end, stub_end + 48) + 12
         canvas.dimensions.extend(
             (
                 DimensionLine(
-                    Point(inner, bottom + depth + 12),
-                    Point(inner + gap, bottom + depth + 12),
-                    f"Wslotэфф={values['Wslot'] - dw:g}",
-                    Point(inner + gap / 2, bottom + depth + 28),
+                    Point(outer_l, stub_end + 12),
+                    Point(inner_l, stub_end + 12),
+                    f"Wmsэфф={values['Wms'] + dw:g}",
+                    Point(center_x, stub_end + 26),
                 ),
                 DimensionLine(
-                    Point(origin.x - 14, bottom),
-                    Point(origin.x - 14, bottom + depth),
-                    f"Lslot={values['Lslot']:g}",
-                    Point(origin.x - 22, bottom + depth / 2),
+                    Point(inner_l, stub_end + 34),
+                    Point(inner_r, stub_end + 34),
+                    f"Wslotэфф={values['Wslot'] - dw:g}",
+                    Point(center_x, stub_end + 48),
+                ),
+                DimensionLine(
+                    Point(outer_l + (inner_l - outer_l) * 0.25, stub_top_l),
+                    Point(outer_l + (inner_l - outer_l) * 0.25, stub_end_l),
+                    f"Lms={values['Lms']:g}",
+                    Point(outer_l + (inner_l - outer_l) * 0.75, (stub_top_l + stub_end_l) / 2),
                     -90,
                 ),
                 DimensionLine(
-                    Point(origin.x, origin.y - 12),
-                    Point(origin.x + lead, origin.y - 12),
-                    f"Lms={values['Lms']:g}",
-                    Point(origin.x + lead / 2, origin.y - 20),
+                    Point(outer_r, slot_bottom + 9),
+                    Point(arm_r_x, slot_bottom + 9),
+                    lso_label,
+                    Point(lso_x, slot_top - 5),
                 ),
                 DimensionLine(
-                    Point(origin.x + lead / 2, origin.y),
-                    Point(origin.x + lead / 2, bottom),
-                    f"Wmsэфф={values['Wms'] + dw:g}",
-                    Point(x + 165, origin.y - 20),
+                    Point(arm_left_outer - 10, axis_y),
+                    Point(arm_left_outer - 10, arm_end),
+                    f"Lslot={lslot:g}=Lso+{lslot - lso:g}",
+                    Point(arm_left_outer - 18, (axis_y + arm_end) / 2),
+                    -90,
+                ),
+                DimensionLine(
+                    Point(arm_l_x, pibase_y),
+                    Point(arm_r_x, pibase_y),
+                    f"Pibase={values['Pibase (расч.)']:g}=2·Wmsэфф+2·Lso+4",
+                    Point((arm_l_x + arm_r_x) / 2, pibase_y + 14),
                 ),
             )
         )
-        canvas.lines.append(
-            LineShape(
-                Point(x + 122, origin.y - 18),
-                Point(origin.x + lead / 2, origin.y + width / 2),
-                stroke="#64748b",
-                stroke_width=0.4,
+        canvas.circles.append(CircleShape(Point(outer_r, axis_y), 2.2, fill="#f59e0b"))
+        canvas.labels.append(
+            TextLabel(
+                Point(x, y + 236),
+                "Чёрное — щель в нижнем электроде; высота щели условная",
+                9,
+                fill="#64748b",
             )
         )
         canvas.labels.append(
-            TextLabel(Point(x, y + 245), f"Масштаб выноски ×{zoom:.3g} · щель остаётся раздельной", 9, fill="#64748b")
-        )
-        canvas.labels.append(
-            TextLabel(Point(x, y + 230), "Чёрные отводы условные; их размеры не заданы", 9, fill="#64748b")
+            TextLabel(
+                Point(x, y + 248),
+                f"Масштаб ×{zoom:.3g} · ● — питание щели · сверху — концы T",
+                9,
+                fill="#64748b",
+            )
         )
 
     @staticmethod

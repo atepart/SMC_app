@@ -14,6 +14,16 @@ from .models import FilmConductivity
 ETA0 = 120.0 * pi
 EPS0 = 8.8542e-12
 MU0 = 4.0 * pi * 1e-7
+# Constant term of the Mathcad base distance between the two parallel slot
+# arms: ``Pibase = 2·Wms + 2·Lso + 4 µm`` (DC_BREAK, "distance between the
+# folded slots").  It equals the nominal stub separation before the DW
+# correction and has no own input field in the worksheet.
+BASE_DISTANCE_CONSTANT_M = 4.0e-6
+
+
+def base_distance_m(microstrip_width_m: float, slot_offset_m: float) -> float:
+    """Mathcad ``Pibase``: distance between the parallel slot arms."""
+    return 2.0 * microstrip_width_m + 2.0 * slot_offset_m + BASE_DISTANCE_CONSTANT_M
 
 
 @dataclass
@@ -259,7 +269,7 @@ class DCBlockCalculator:
 
         # Reciprocity gives identical slot-antenna shunt impedances on either
         # side of the short central slot-line section.
-        base_distance = 2.0 * microstrip_width_m + 2.0 * slot_offset_m + 4.0e-6
+        base_distance = base_distance_m(microstrip_width_m, slot_offset_m)
         z_sa = self.slot_impedance(
             frequency_ghz,
             slot_width_m,

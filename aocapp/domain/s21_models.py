@@ -397,7 +397,7 @@ class S21Config:
         metadata={
             "label": "Wslot",
             "group": "DC block",
-            "description": "Slot width in the DC-block/slot antenna element.",
+            "description": "Ширина щели в нижнем электроде; по Mathcad равна зазору между двумя шлейфами. На металле применяется Wslot − DW.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -411,7 +411,7 @@ class S21Config:
         metadata={
             "label": "Lslot",
             "group": "DC block",
-            "description": "Slot length in the DC-block/slot antenna element.",
+            "description": "Длина плеча Π-образной щели по её оси от точки питания у внешней кромки шлейфа: Lso по горизонтали плюс вертикальное плечо. Должна быть больше Lso.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 10000.0,
@@ -425,7 +425,7 @@ class S21Config:
         metadata={
             "label": "Lso",
             "group": "DC block",
-            "description": "Расстояние от вершины щели (точки питания) до начала участка, где две щели параллельны. Привязка к чёрным отводам схемы не установлена.",
+            "description": "Горизонтальный начальный участок плеча щели: от точки питания у внешней кромки шлейфа до поворота, после которого два плеча параллельны. Входит в Pibase = 2·Wms + 2·Lso + 4 µm.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -439,7 +439,7 @@ class S21Config:
         metadata={
             "label": "Wms",
             "group": "DC block",
-            "description": "Microstrip width inside the DC-block section before the bridge/slot coupling.",
+            "description": "Ширина вертикального открытого МПЛ-шлейфа (ноги электрода) до поправки DW.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -453,7 +453,7 @@ class S21Config:
         metadata={
             "label": "Lms",
             "group": "DC block",
-            "description": "Microstrip length inside the DC-block section before the slot element.",
+            "description": "Длина вертикального открытого МПЛ-шлейфа от конца трансформатора до открытого конца.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 10000.0,

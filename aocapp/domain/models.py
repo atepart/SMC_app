@@ -132,6 +132,9 @@ class SchematicElement:
     # Local copies of the actual contour support dimensioned enlarged views.
     polygon: tuple[Point, ...] = ()
     auxiliary_lines: tuple[LineShape, ...] = ()
+    # Non-metal areas of the element (e.g. the DC-block slot in the ground
+    # plane).  They are drawn, but never take part in the metal outline.
+    auxiliary_rects: tuple[Rect, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -146,6 +149,9 @@ class StructureGeometry:
     overview: StructureGeometry | None = None
     paths: List[PathShape] = field(default_factory=list)
     elements: List[SchematicElement] = field(default_factory=list)
+    # Bottom-electrode features (the DC-block slot) lie beneath the top-film
+    # metal in plan view, so they are rendered before every metal shape.
+    underlay_paths: List[PathShape] = field(default_factory=list)
 
 
 def bounds_from_points(points: Iterable[Point]) -> Rect:
