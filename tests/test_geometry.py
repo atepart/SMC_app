@@ -230,29 +230,108 @@ def test_line_dimensions_are_unclamped_with_one_scale(length_um, width_um) -> No
 
 
 def test_dc_slot_and_feed_dimensions_follow_calculation_inputs() -> None:
-    config = S21Config(w_slot_m=2e-6, l_slot_m=120e-6, mex4_len_m=20e-6)
+    config = S21Config(w_slot_m=2e-6, l_slot_m=120e-6, l_ms_m=30e-6, mex4_len_m=20e-6)
     geometry = IntegratedStructureCalculator().calculate(config)
     dc = _elements(geometry)["DC"]
-    left, right = dc.polygon[:7], dc.polygon[7:]
-    assert min(p.x for p in right) - max(p.x for p in left) == pytest.approx((2 - config.dw_m * 1e6) * 2)
-    assert max(p.y for p in left) - left[2].y == pytest.approx(120 * 2)
+    left, right = dc.polygon[:5], dc.polygon[5:]
+    dw = config.dw_m * 1e6
+    # Ws: stub separation (= slot width) after the DW correction.
+    assert min(p.x for p in right) - max(p.x for p in left) == pytest.approx((2 - dw) * 2)
+    # Wms/Lms: the vertical open stubs, not the horizontal metal above them.
+    assert left[2].x - left[4].x == pytest.approx((config.w_ms_m * 1e6 + dw) * 2)
+    assert left[3].y - left[2].y == pytest.approx(30 * 2)
+    assert right[3].y - right[2].y == pytest.approx(30 * 2)
+    # Lslot is a slot length: it changes the black arms, never the electrodes.
+    _h_left, _gap, _h_right, arm_left, arm_right = dc.auxiliary_rects
+    axis = _h_left.y + _h_left.height / 2
+    assert arm_right.bottom - axis == pytest.approx((120 - config.lso_m * 1e6) * 2)
+    longer = _elements(IntegratedStructureCalculator().calculate(replace(config, l_slot_m=200e-6)))["DC"]
+    assert longer.polygon == dc.polygon
     feed = _elements(geometry)["SIS-line"]
     assert feed.bounds.width == pytest.approx(20 * 2)
     assert feed.bounds.height == pytest.approx((config.mex4_width_m + config.dw_m) * 1e6 * 2)
-    assert len([d for d in geometry.dimensions if d.element_id == "DC"]) == 4
+    labels = {d.label.split("=")[0] for d in geometry.dimensions if d.element_id == "DC"}
+    assert labels == {"Wmsэфф", "Wslotэфф", "Lms", "Lso", "Lslot", "Pibase"}
 
 
-@pytest.mark.parametrize("offset_um", [8, 16])
-def test_dc_does_not_claim_unverified_lead_dimensions(offset_um) -> None:
-    geometry = IntegratedStructureCalculator().calculate(S21Config(lso_m=offset_um * 1e-6))
+@pytest.mark.parametrize("offset_um", [2, 8, 16])
+def test_dc_slot_arms_follow_mathcad_lso_and_pibase(offset_um) -> None:
+    config = S21Config(lso_m=offset_um * 1e-6)
+    geometry = IntegratedStructureCalculator().calculate(config)
     dc = _elements(geometry)["DC"]
-    assert not any(d.element_id == "DC" and d.label.startswith("Lso=") for d in geometry.dimensions)
-    assert not {"A", "B"} & {label.text for label in geometry.labels}
-    assert any("Чёрные отводы условные" in label.text for label in geometry.labels)
-    # Lso remains a calculation input and is listed with its current value.
-    assert next(p.value for p in dc.parameters if p.label == "Lso") == pytest.approx(offset_um)
-    assert len(dc.auxiliary_lines) == 4
-    assert all(line in geometry.overview.lines for line in dc.auxiliary_lines)
+    left, right = dc.polygon[:5], dc.polygon[5:]
+    _h_left, _gap, _h_right, arm_left, arm_right = dc.auxiliary_rects
+    w_ms = config.w_ms_m * 1e6 + config.dw_m * 1e6
+    w_slot = config.w_slot_m * 1e6 - config.dw_m * 1e6
+    pibase = 2 * w_ms + 2 * offset_um + 4
+    arm_left_x = arm_left.x + arm_left.width / 2
+    arm_right_x = arm_right.x + arm_right.width / 2
+    # Pibase = 2·Wms + 2·Lso + 4 µm is the distance between the parallel arms.
+    assert arm_right_x - arm_left_x == pytest.approx(pibase * 2)
+    assert _parameters(dc)["Pibase (расч.)"] == pytest.approx(pibase)
+    # The arm turns Lso (+ the half-difference of the 4 µm constant) beyond the stub.
+    assert arm_right_x - right[4].x == pytest.approx((offset_um + (4 - w_slot) / 2) * 2)
+    assert left[4].x - arm_left_x == pytest.approx((offset_um + (4 - w_slot) / 2) * 2)
+    assert all(rect.width == pytest.approx(w_slot * 2) for rect in (arm_left, arm_right))
+    # The label states the 4 µm-constant offset instead of hiding it under "Lso".
+    lso_label = f"Lso={offset_um:g} (+{(4 - w_slot) / 2:g})"
+    assert any(d.element_id == "DC" and d.label == lso_label for d in geometry.dimensions)
+    # Slot pieces are a bottom-electrode underlay, outside the metal outline.
+    assert all(p.fill != "#111111" for p in geometry.overview.polygons)
+    assert not any(p.element_id.startswith("dc-slot-") for p in geometry.overview.paths)
+    assert len([p for p in geometry.overview.underlay_paths if p.element_id.startswith("dc-slot-")]) == 5
+
+
+def test_dc_slot_is_rendered_beneath_the_metal() -> None:
+    svg = SvgRendererImpl().render(IntegratedStructureCalculator().calculate(S21Config()))
+    first_slot = svg.index('id="dc-slot-0"')
+    assert first_slot < svg.index("<polygon")
+    assert first_slot < svg.index('id="metal-outline"')
+
+
+@pytest.mark.parametrize(("lso_um", "w_slot_um", "warned"), [(8, 4, False), (0.1, 4, True), (8, 30, True)])
+def test_dc_warns_when_pibase_puts_slot_arms_under_the_stubs(lso_um, w_slot_um, warned) -> None:
+    config = S21Config(lso_m=lso_um * 1e-6, w_slot_m=w_slot_um * 1e-6)
+    geometry = IntegratedStructureCalculator().calculate(config)
+    dc = _elements(geometry)["DC"]
+    right = dc.polygon[5:]
+    arm_right = dc.auxiliary_rects[4]
+    # Arm inner edge vs stub outer edge: overlap exactly when Lso < Wslotэфф − 2 µm.
+    assert (arm_right.x < right[4].x) is warned
+    assert any("Плечо щели под шлейфом" in label.text for label in geometry.labels) is warned
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {},
+        {"lso_m": 0.1e-6},
+        {"w_slot_m": 30e-6},
+        {"l_slot_m": 40e-6, "lso_m": 4e-6, "w_ms_m": 12e-6, "l_ms_m": 24e-6},
+        {"l_slot_m": 12e-6, "lso_m": 4e-6, "w_ms_m": 14e-6, "l_ms_m": 20e-6},
+    ],
+)
+def test_dc_dimension_view_stays_inside_its_card(changes) -> None:
+    geometry = IntegratedStructureCalculator().calculate(replace(S21Config(), **changes))
+    dims = {d.label.split("=")[0]: d for d in geometry.dimensions if d.element_id == "DC"}
+    footnote = next(label for label in geometry.labels if label.text.startswith("Чёрное — щель"))
+    # Every DC label ends above the footnotes, Pibase below both W rows.
+    assert all(d.label_pos.y < footnote.position.y - 8 for d in dims.values())
+    assert dims["Pibase"].start.y > dims["Wslotэфф"].label_pos.y
+    # Lslot is dimensioned outside the left arm, clear of the right-side Lso label.
+    assert dims["Lslot"].start.x < dims["Pibase"].start.x
+    assert dims["Lso"].label_pos.x > dims["Lso"].start.x
+    assert "+-" not in dims["Lso"].label
+
+
+def test_dc_horizontal_metal_continues_the_neighbouring_transformers() -> None:
+    config = S21Config(transf_4_w_start_m=12e-6, transf_3_w_end_m=8e-6)
+    elements = _elements(IntegratedStructureCalculator().calculate(config))
+    dc = elements["DC"]
+    # The tops of the electrodes are transformer ends, not Wms or Lms.
+    assert dc.input_port == elements["T4"].output_port
+    assert dc.output_port.width == pytest.approx(elements["T3"].input_port.width)
+    assert dc.output_port.center == elements["T3"].input_port.center
 
 
 def test_radial_lines_have_exact_lengths_widths_and_connected_ports() -> None:
@@ -309,6 +388,7 @@ def test_dimensioned_views_use_one_zoom_for_both_axes() -> None:
         ("radial_r_max_m", 0),
         ("radial_angle_deg", 360),
         ("radial_angle_deg", float("nan")),
+        ("l_slot_m", 8e-6),
     ],
 )
 def test_invalid_geometry_is_reported_instead_of_producing_broken_svg(field, value) -> None:

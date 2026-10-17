@@ -21,11 +21,8 @@ class SvgRendererImpl(SvgRenderer):
         font_size = 10.0
         dim_lines = "\n".join(self._render_dimension(dim, font_size) for dim in geometry.dimensions)
         polygons = "\n".join(self._render_polygon(polygon) for polygon in geometry.polygons)
-        paths = "\n".join(
-            f'<path id="{self._escape(path.element_id)}" d="{path.data}" fill="{path.fill}" '
-            f'stroke="{path.stroke}" stroke-width="{path.stroke_width:g}" stroke-linejoin="round" stroke-linecap="butt" />'
-            for path in geometry.paths
-        )
+        underlays = "\n".join(self._render_path(path) for path in geometry.underlay_paths)
+        paths = "\n".join(self._render_path(path) for path in geometry.paths)
         rects = "\n".join(self._render_rect(rect_shape) for rect_shape in geometry.rects)
         circles = "\n".join(self._render_circle(circle) for circle in geometry.circles)
         lines = "\n".join(self._render_line(line) for line in geometry.lines)
@@ -42,6 +39,7 @@ class SvgRendererImpl(SvgRenderer):
   </defs>
   <rect x="{bounds.x:g}" y="{bounds.y:g}" width="{bounds.width:g}" height="{bounds.height:g}" fill="{self.background}" />
   <g>
+    {underlays}
     {polygons}
     {rects}
     {paths}
@@ -56,6 +54,12 @@ class SvgRendererImpl(SvgRenderer):
   </g>
 </svg>"""
         return svg
+
+    def _render_path(self, path) -> str:
+        return (
+            f'<path id="{self._escape(path.element_id)}" d="{path.data}" fill="{path.fill}" '
+            f'stroke="{path.stroke}" stroke-width="{path.stroke_width:g}" stroke-linejoin="round" stroke-linecap="butt" />'
+        )
 
     def _render_polygon(self, polygon: PolygonShape) -> str:
         points = " ".join(f"{point.x:g},{point.y:g}" for point in polygon.points)
