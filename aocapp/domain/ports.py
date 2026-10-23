@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 
-from .models import StructureGeometry
+from .models import StructureGeometry, SvgColorScheme
 from .s21_models import S21Config, S21Result
 
 
@@ -15,7 +15,7 @@ class StructureCalculator(Protocol):
 
 
 class SvgRenderer(Protocol):
-    def render(self, geometry: StructureGeometry) -> str:
+    def render(self, geometry: StructureGeometry, scheme: SvgColorScheme | None = None) -> str:
         ...
 
 

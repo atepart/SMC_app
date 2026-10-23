@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, List
+from typing import Iterable, List, Mapping
 
 
 @dataclass(frozen=True)
@@ -152,6 +152,21 @@ class StructureGeometry:
     # Bottom-electrode features (the DC-block slot) lie beneath the top-film
     # metal in plan view, so they are rendered before every metal shape.
     underlay_paths: List[PathShape] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SvgColorScheme:
+    """Colour remapping applied when a drawing is rendered.
+
+    Geometry carries the colours of the light sheet; a scheme maps each of them
+    to its counterpart (e.g. for a dark sheet), so one layout serves both.
+    Keys are lower-case ``#rgb``/``#rrggbb`` strings; unmapped colours pass through.
+    """
+
+    colors: Mapping[str, str] = field(default_factory=dict)
+
+    def color(self, value: str) -> str:
+        return self.colors.get(value.lower(), value)
 
 
 def bounds_from_points(points: Iterable[Point]) -> Rect:

@@ -53,6 +53,7 @@ from PySide6QtAds import CDockManager, CDockWidget, DockWidgetArea
 from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
 from aocapp.application.version import REPO_SLUG, __version__
+from aocapp.domain.models import SvgColorScheme
 from aocapp.domain.s21_models import S21Config
 from aocapp.domain.transformers import ELEMENT_NUMBERS, derive_transformer_steps
 from aocapp.infrastructure.design_files import DesignFileService
@@ -388,6 +389,7 @@ class MainWindow(QMainWindow):
         self._theory_trace: tuple[object, object] | None = None
         self._previous_theory_trace: tuple[object, object] | None = None
         self._theme = load_theme()
+        self._svg_scheme: SvgColorScheme | None = None
         self._muted_labels: list[QLabel] = []
         self._heading_labels: list[QLabel] = []
 
@@ -851,9 +853,9 @@ class MainWindow(QMainWindow):
         """Recolour widgets, QtAds docks, the plot and the schematic backdrop."""
         self._theme = Theme(theme)
         colors = THEME_COLORS[self._theme]
-        dark_icons = _resource_path("assets", "theme-dark")
-        apply_application_theme(QApplication.instance(), self._theme, dark_icons)
-        self.dock_manager.setStyleSheet(dock_stylesheet(self._theme, self._default_dock_stylesheet, dark_icons))
+        assets = _resource_path("assets")
+        apply_application_theme(QApplication.instance(), self._theme, assets)
+        self.dock_manager.setStyleSheet(dock_stylesheet(self._theme, self._default_dock_stylesheet, assets))
         for label in self._muted_labels:
             label.setStyleSheet(f"color: {colors.muted_text};")
         heading = "font-weight: bold; font-size: 16px;"
@@ -861,9 +863,12 @@ class MainWindow(QMainWindow):
             heading += f" color: {colors.heading_text};"
         for label in self._heading_labels:
             label.setStyleSheet(heading)
-        # The SVG sheet keeps its own light background; only the area around it changes.
         backdrop = colors.schematic_backdrop
         self._view.setBackgroundBrush(QBrush(QColor(backdrop)) if backdrop else QBrush())
+        if colors.schematic_scheme != self._svg_scheme:
+            # Redraw the sheet in the theme's colours; set_svg keeps zoom and position.
+            with contextlib.suppress(ValueError, OSError):
+                self._render_svg()
         self._apply_plot_theme()
         self._refresh_transformer_status()
         self._theme_actions[self._theme].setChecked(True)
@@ -1229,13 +1234,17 @@ class MainWindow(QMainWindow):
 
     def _update_svg(self) -> None:
         try:
-            config = self._build_config()
-            svg = self._use_case.execute(config, show_details=self._schematic_details.isChecked())
+            self._render_svg()
         except (ValueError, OSError) as exc:
             QMessageBox.warning(self, "Invalid input", str(exc))
-            return
 
-        self._view.set_svg(svg, fit_width=self._schematic_details.isChecked())
+    def _render_svg(self) -> None:
+        """Draw the current parameters in the colours of the current theme."""
+        scheme = THEME_COLORS[self._theme].schematic_scheme
+        details = self._schematic_details.isChecked()
+        svg = self._use_case.execute(self._build_config(), show_details=details, scheme=scheme)
+        self._svg_scheme = scheme
+        self._view.set_svg(svg, fit_width=details)
 
     def _select_s21_output_directory(self) -> None:
         directory = QtWidgets.QFileDialog.getExistingDirectory(

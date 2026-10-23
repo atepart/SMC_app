@@ -36,7 +36,8 @@ CONDUCTOR_FILL = "#e8f1f5"
 TRANSFORMER_FILL = "#dbeafe"
 RADIAL_FILL = "#e8f1f5"
 DC_FILL = "#d7edf5"
-SLOT_FILL = "#111111"
+# Near-black, but its own colour so a dark sheet can soften the slot separately.
+SLOT_FILL = "#1a1a1a"
 CENTRE_LINE_COLOR = "#f59e0b"
 WARNING_COLOR = "#b91c1c"
 # As in the HFSS model: stub tops 1 µm below the lowest adjacent line edge

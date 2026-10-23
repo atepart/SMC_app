@@ -2,10 +2,32 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
-from aocapp.domain.models import Point, PolygonShape, StructureGeometry, TextLabel
+from aocapp.domain.models import Point, PolygonShape, StructureGeometry, SvgColorScheme, TextLabel
 from aocapp.domain.ports import SvgRenderer
+
+# Dark sheet: every colour of the light drawing has a dark counterpart.  Metal
+# stays a set of distinguishable muted blues, lines and text turn light.
+DARK_SVG_SCHEME = SvgColorScheme(
+    {
+        "#fdfdfd": "#1f2329",  # sheet
+        "#fff": "#1f2329",  # SIS symbol
+        "#ffffff": "#1f2329",
+        "#111111": "#e5e7eb",  # metal outline, text
+        "#1a1a1a": "#8b95a5",  # slot in the ground plane
+        "#000000": "#d1d5db",  # dimension lines, arrows and values
+        "#64748b": "#94a3b8",  # seams, leaders, notes
+        "#6b7280": "#9ca3af",  # hatching
+        "#e8f1f5": "#2c3e4c",  # lines, radial stubs
+        "#dbeafe": "#2d4566",  # transformers
+        "#d7edf5": "#28505e",  # DC-block stubs
+        "#cfeef5": "#28505e",
+        "#f8fafc": "#353b44",  # 50 Ω port
+        "#b91c1c": "#f87171",  # warnings
+        "#f59e0b": "#fbbf24",  # centre lines
+    }
+)
 
 
 @dataclass
@@ -13,8 +35,12 @@ class SvgRendererImpl(SvgRenderer):
     stroke: str = "#000000"
     dimension_color: str = "#000000"
     background: str = "#fdfdfd"
+    scheme: SvgColorScheme = field(default_factory=SvgColorScheme)
 
-    def render(self, geometry: StructureGeometry) -> str:
+    def render(self, geometry: StructureGeometry, scheme: SvgColorScheme | None = None) -> str:
+        if scheme is not None and scheme != self.scheme:
+            return replace(self, scheme=scheme).render(geometry)
+        c = self.scheme.color
         bounds = geometry.bounds
         view_box = f"{bounds.x:g} {bounds.y:g} {bounds.width:g} {bounds.height:g}"
 
@@ -31,13 +57,13 @@ class SvgRendererImpl(SvgRenderer):
         svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}" width="100%" height="100%" font-family="Arial">
   <defs>
     <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth">
-      <path d="M 0 0 L 6 3 L 0 6 Z" fill="{self.dimension_color}" />
+      <path d="M 0 0 L 6 3 L 0 6 Z" fill="{c(self.dimension_color)}" />
     </marker>
     <pattern id="hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(135)">
-      <line x1="0" y1="0" x2="0" y2="8" stroke="#6b7280" stroke-width="1" />
+      <line x1="0" y1="0" x2="0" y2="8" stroke="{c('#6b7280')}" stroke-width="1" />
     </pattern>
   </defs>
-  <rect x="{bounds.x:g}" y="{bounds.y:g}" width="{bounds.width:g}" height="{bounds.height:g}" fill="{self.background}" />
+  <rect x="{bounds.x:g}" y="{bounds.y:g}" width="{bounds.width:g}" height="{bounds.height:g}" fill="{c(self.background)}" />
   <g>
     {underlays}
     {polygons}
@@ -46,7 +72,7 @@ class SvgRendererImpl(SvgRenderer):
     {circles}
     {lines}
   </g>
-  <g stroke="{self.dimension_color}" stroke-width="0.5" fill="none">
+  <g stroke="{c(self.dimension_color)}" stroke-width="0.5" fill="none">
     {dim_lines}
   </g>
   <g>
@@ -56,37 +82,38 @@ class SvgRendererImpl(SvgRenderer):
         return svg
 
     def _render_path(self, path) -> str:
+        c = self.scheme.color
         return (
-            f'<path id="{self._escape(path.element_id)}" d="{path.data}" fill="{path.fill}" '
-            f'stroke="{path.stroke}" stroke-width="{path.stroke_width:g}" stroke-linejoin="round" stroke-linecap="butt" />'
+            f'<path id="{self._escape(path.element_id)}" d="{path.data}" fill="{c(path.fill)}" '
+            f'stroke="{c(path.stroke)}" stroke-width="{path.stroke_width:g}" stroke-linejoin="round" stroke-linecap="butt" />'
         )
 
     def _render_polygon(self, polygon: PolygonShape) -> str:
         points = " ".join(f"{point.x:g},{point.y:g}" for point in polygon.points)
-        fill = f"url(#{polygon.fill_pattern})" if polygon.fill_pattern else polygon.fill
+        fill = f"url(#{polygon.fill_pattern})" if polygon.fill_pattern else self.scheme.color(polygon.fill)
         return (
-            f'<polygon points="{points}" fill="{fill}" stroke="{polygon.stroke}" '
+            f'<polygon points="{points}" fill="{fill}" stroke="{self.scheme.color(polygon.stroke)}" '
             f'stroke-width="{polygon.stroke_width:g}" stroke-linejoin="round" />'
         )
 
     def _render_rect(self, rect_shape) -> str:
         rect = rect_shape.rect
-        fill = f"url(#{rect_shape.fill_pattern})" if rect_shape.fill_pattern else rect_shape.fill
+        fill = f"url(#{rect_shape.fill_pattern})" if rect_shape.fill_pattern else self.scheme.color(rect_shape.fill)
         return (
             f'<rect x="{rect.x:g}" y="{rect.y:g}" width="{rect.width:g}" height="{rect.height:g}" '
-            f'fill="{fill}" stroke="{rect_shape.stroke}" stroke-width="{rect_shape.stroke_width:g}" />'
+            f'fill="{fill}" stroke="{self.scheme.color(rect_shape.stroke)}" stroke-width="{rect_shape.stroke_width:g}" />'
         )
 
     def _render_circle(self, circle) -> str:
         return (
             f'<circle cx="{circle.center.x:g}" cy="{circle.center.y:g}" r="{circle.radius:g}" '
-            f'fill="{circle.fill}" stroke="{circle.stroke}" stroke-width="{circle.stroke_width:g}" />'
+            f'fill="{self.scheme.color(circle.fill)}" stroke="{self.scheme.color(circle.stroke)}" stroke-width="{circle.stroke_width:g}" />'
         )
 
     def _render_line(self, line) -> str:
         return (
             f'<line x1="{line.start.x:g}" y1="{line.start.y:g}" x2="{line.end.x:g}" y2="{line.end.y:g}" '
-            f'stroke="{line.stroke}" stroke-width="{line.stroke_width:g}" />'
+            f'stroke="{self.scheme.color(line.stroke)}" stroke-width="{line.stroke_width:g}" />'
         )
 
     def _render_dimension(self, dim, font_size: float) -> str:
@@ -100,7 +127,7 @@ class SvgRendererImpl(SvgRenderer):
             f'<line x1="{dim.start.x:g}" y1="{dim.start.y:g}" x2="{dim.end.x:g}" y2="{dim.end.y:g}" '
             f'marker-start="url(#arrow)" marker-end="url(#arrow)" />\n'
             f'<text x="{dim.label_pos.x:g}" y="{dim.label_pos.y:g}" font-size="{font_size:g}" '
-            f'text-anchor="middle" fill="{self.dimension_color}"{transform}>{label}</text>'
+            f'text-anchor="middle" fill="{self.scheme.color(self.dimension_color)}"{transform}>{label}</text>'
         )
 
     def _render_label(self, label: TextLabel) -> str:
@@ -110,7 +137,7 @@ class SvgRendererImpl(SvgRenderer):
         return "\n".join(
             f'<text x="{label.position.x:g}" y="{label.position.y + index * label.font_size * 1.25:g}" '
             f'font-size="{label.font_size:g}" text-anchor="{label.anchor}" '
-            f'fill="{label.fill}" font-weight="{label.font_weight}">{self._escape(line)}</text>'
+            f'fill="{self.scheme.color(label.fill)}" font-weight="{label.font_weight}">{self._escape(line)}</text>'
             for index, line in enumerate(lines)
         )
 

@@ -10,11 +10,11 @@ from xml.etree import ElementTree
 import pytest
 from numpy import arange
 
-from aocapp.domain.models import Point, Rect, StructureGeometry, TextLabel
+from aocapp.domain.models import Point, Rect, StructureGeometry, SvgColorScheme, TextLabel
 from aocapp.domain.s21_models import S21Config
 from aocapp.domain.transformers import ELEMENT_NUMBERS
-from aocapp.infrastructure.geometry import DC_FILL, LENGTH_SCALE, WIDTH_SCALE, IntegratedStructureCalculator
-from aocapp.infrastructure.svg_renderer import SvgRendererImpl
+from aocapp.infrastructure.geometry import DC_FILL, LENGTH_SCALE, SLOT_FILL, WIDTH_SCALE, IntegratedStructureCalculator
+from aocapp.infrastructure.svg_renderer import DARK_SVG_SCHEME, SvgRendererImpl
 
 
 def _elements(geometry):
@@ -303,7 +303,7 @@ def test_dc_slot_arms_follow_mathcad_lso_and_pibase(offset_um, gap_um) -> None:
     assert all(rect.width == pytest.approx(w_slot * 2) for rect in (arm_left, arm_right))
     assert any(d.element_id == "DC" and d.label == f"Lso={offset_um:g}" for d in geometry.dimensions)
     # Slot pieces are a bottom-electrode underlay, outside the metal outline.
-    assert all(p.fill != "#111111" for p in geometry.overview.polygons)
+    assert all(p.fill != SLOT_FILL for p in geometry.overview.polygons)
     assert not any(p.element_id.startswith("dc-slot-") for p in geometry.overview.paths)
     assert len([p for p in geometry.overview.underlay_paths if p.element_id.startswith("dc-slot-")]) == 5
 
@@ -547,3 +547,24 @@ def test_dimensioned_views_use_one_zoom_for_both_axes() -> None:
 def test_invalid_geometry_is_reported_instead_of_producing_broken_svg(field, value) -> None:
     with pytest.raises(ValueError):
         IntegratedStructureCalculator().calculate(replace(S21Config(), **{field: value}))
+
+
+@pytest.mark.parametrize("details", [False, True])
+def test_dark_scheme_recolours_every_colour_of_the_sheet(details) -> None:
+    geometry = IntegratedStructureCalculator().calculate(S21Config())
+    if not details:
+        geometry = geometry.overview
+    light_svg = SvgRendererImpl().render(geometry)
+    dark_svg = SvgRendererImpl().render(geometry, DARK_SVG_SCHEME)
+    ElementTree.fromstring(dark_svg)
+
+    def colours(svg: str) -> set[str]:
+        return {value.lower() for value in re.findall(r'(?:fill|stroke)="(#[0-9a-fA-F]{3,6})"', svg)}
+
+    light = colours(light_svg)
+    # Every colour the light sheet uses has a dark counterpart, and none survives.
+    assert light <= set(DARK_SVG_SCHEME.colors)
+    assert colours(dark_svg) <= set(DARK_SVG_SCHEME.colors.values())
+    assert 'fill="#1f2329"' in dark_svg  # dark sheet background
+    # The light rendering stays unchanged by default.
+    assert SvgRendererImpl().render(geometry, SvgColorScheme()) == light_svg

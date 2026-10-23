@@ -1,4 +1,4 @@
-"""Light/dark theme switching and persistence (WP-024)."""
+"""Theme switching and persistence (WP-024, WP-027)."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def _window_color() -> str:
 
 @pytest.fixture
 def make_window():
-    """Create windows after the test prepares QSettings; restore light afterwards."""
+    """Create windows after the test prepares QSettings; restore the default afterwards."""
     gc.collect()
     QtCore.QSettings().clear()
     app = QtWidgets.QApplication.instance()
@@ -58,8 +58,8 @@ def make_window():
         window.close()
         window.deleteLater()
     QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete.value)
-    # The palette and style sheet are application-wide: leave other tests in light.
-    apply_application_theme(app, Theme.LIGHT, ASSETS / "theme-dark")
+    # The palette and style sheet are application-wide: leave other tests in the default.
+    apply_application_theme(app, Theme.DEFAULT, ASSETS)
     QtCore.QSettings().clear()
     app.processEvents()
 
@@ -67,11 +67,12 @@ def make_window():
 def test_switching_theme_recolours_application_docks_and_plot_and_is_saved(make_window) -> None:
     window = make_window()
     app = QtWidgets.QApplication.instance()
-    light_palette = _window_color()
+    native_palette = _window_color()
     default_docks = window.dock_manager.styleSheet()
-    assert window.theme is Theme.LIGHT
+    assert window.theme is Theme.DEFAULT
     assert app.styleSheet() == ""
-    assert window._theme_actions[Theme.LIGHT].isChecked()
+    assert window._theme_actions[Theme.DEFAULT].isChecked()
+    assert [action.text() for action in window.theme_menu.actions()] == ["По умолчанию", "Светлая", "Тёмная"]
 
     window._theme_actions[Theme.DARK].trigger()
     app.processEvents()
@@ -89,12 +90,25 @@ def test_switching_theme_recolours_application_docks_and_plot_and_is_saved(make_
     window._theme_actions[Theme.LIGHT].trigger()
     app.processEvents()
 
-    assert _window_color() == light_palette
+    # The light theme has the dark theme's design in light colours.
+    assert window.theme is Theme.LIGHT
+    assert _window_color() == "#f3f3f3"
+    assert "QMenu::item:selected" in app.styleSheet()
+    assert 'ads--CDockWidgetTab[activeTab="true"] { background: #f39c12; }' in window.dock_manager.styleSheet()
+    assert "theme-dark" not in window.dock_manager.styleSheet()  # QtAds' dark icons suit it
+    assert window._plot.backgroundBrush().color().name() == "#ffffff"
+    assert window._view.backgroundBrush().color().name() == THEME_COLORS[Theme.LIGHT].schematic_backdrop
+    assert QtCore.QSettings().value(THEME_SETTINGS_KEY) == "light"
+
+    window._theme_actions[Theme.DEFAULT].trigger()
+    app.processEvents()
+
+    assert _window_color() == native_palette
     assert app.styleSheet() == ""
     assert window.dock_manager.styleSheet() == default_docks
     assert window._plot.backgroundBrush().color().name() == "#ffffff"
     assert window._view.backgroundBrush().style() == QtCore.Qt.BrushStyle.NoBrush
-    assert QtCore.QSettings().value(THEME_SETTINGS_KEY) == "light"
+    assert QtCore.QSettings().value(THEME_SETTINGS_KEY) == "default"
 
 
 def test_theme_switch_recolours_existing_curves_without_resetting_zoom(make_window) -> None:
@@ -131,26 +145,54 @@ def test_saved_dark_theme_is_applied_to_a_new_window(make_window) -> None:
     assert window._plot.backgroundBrush().color().name() == THEME_COLORS[Theme.DARK].plot_background
 
 
-def test_unknown_saved_theme_falls_back_to_light() -> None:
+def test_dark_theme_draws_a_dark_sheet_and_keeps_the_view(make_window) -> None:
+    window = make_window()
+    view = window._view
+    view.scale(2.0, 2.0)
+    view._zoom_level = 9
+    transform = view.transform()
+    svg = Mock(wraps=view.set_svg)
+    view.set_svg = svg
+
+    window.set_theme(Theme.DARK)
+
+    dark_svg = svg.call_args.args[0]
+    assert 'fill="#1f2329"' in dark_svg and 'fill="#fdfdfd"' not in dark_svg
+    assert view.transform() == transform
+    svg.reset_mock()
+    window.set_theme(Theme.LIGHT)  # same light sheet as the default: no redraw needed
+    assert 'fill="#fdfdfd"' in svg.call_args.args[0]
+    svg.reset_mock()
+    window.set_theme(Theme.DEFAULT)
+    svg.assert_not_called()
+    # Parameter edits keep drawing in the current theme's colours.
+    window.set_theme(Theme.DARK)
+    window._update_svg()
+    assert 'fill="#1f2329"' in svg.call_args.args[0]
+
+
+@pytest.mark.parametrize("saved", ["solarized", None])
+def test_unknown_or_missing_saved_theme_falls_back_to_default(saved) -> None:
     settings = QtCore.QSettings()
-    settings.setValue(THEME_SETTINGS_KEY, "solarized")
-    assert load_theme(settings) is Theme.LIGHT
     settings.remove(THEME_SETTINGS_KEY)
-    assert load_theme(settings) is Theme.LIGHT
+    if saved is not None:
+        settings.setValue(THEME_SETTINGS_KEY, saved)
+    assert load_theme(settings) is Theme.DEFAULT
+    settings.remove(THEME_SETTINGS_KEY)
 
 
-def test_dark_icons_referenced_by_style_sheets_exist() -> None:
+@pytest.mark.parametrize("theme,count", [(Theme.LIGHT, 3), (Theme.DARK, 8)])
+def test_icons_referenced_by_style_sheets_exist(theme, count) -> None:
     app = QtWidgets.QApplication.instance()
-    icons = ASSETS / "theme-dark"
-    assert dock_stylesheet(Theme.LIGHT, "base", icons) == "base"
+    assert dock_stylesheet(Theme.DEFAULT, "base", ASSETS) == "base"
     try:
-        apply_application_theme(app, Theme.DARK, icons)
-        sheets = dock_stylesheet(Theme.DARK, "base", icons) + app.styleSheet()
+        apply_application_theme(app, theme, ASSETS)
+        sheets = dock_stylesheet(theme, "base", ASSETS) + app.styleSheet()
     finally:
-        apply_application_theme(app, Theme.LIGHT, icons)
+        apply_application_theme(app, Theme.DEFAULT, ASSETS)
     assert app.styleSheet() == ""
     referenced = set(re.findall(r'url\("([^"]+)"\)', sheets))
-    assert len(referenced) == 8
+    assert len(referenced) == count
     for path in referenced:
         assert Path(path).is_file(), path
 
