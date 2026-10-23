@@ -236,20 +236,9 @@ class IntegratedStructureCalculator(StructureCalculator):
         ]
         self._metal_outline(canvas)
         self._number_labels(canvas)
-        metal = bounds_from_points(canvas.bounds_points)
-        canvas.labels.extend(
-            (
-                TextLabel(
-                    Point(28, metal.y - 24),
-                    "Структура HD35 · от ФФО к SIS · геометрические размеры в µm",
-                    12,
-                    font_weight="bold",
-                ),
-                TextLabel(Point(28, metal.bottom + 24), "ФФО", 11),
-                TextLabel(Point(x - 34, -24), "50 Ω", 11, anchor="middle"),
-            )
-        )
-        canvas.include(Rect(28, metal.y - 40, x - 28, metal.height + 75))
+        canvas.labels.append(TextLabel(Point(x - 34, -24), "50 Ω", 11, anchor="middle"))
+        # Cap height of the 11 px "50 Ω" label above its baseline.
+        canvas.bounds_points.append(Point(x - 34, -24 - 11))
         overview = canvas.snapshot()
         self._dimensioned_views(canvas, dw)
         return replace(canvas.snapshot(), overview=overview)
@@ -390,7 +379,6 @@ class IntegratedStructureCalculator(StructureCalculator):
             )
             canvas.bounds_points.extend(corners_of_rect)
 
-        warnings_y = max(arm_end, contact_y + stub_l) + 18
         for name in CORNER_TRANSFORMERS:
             contour, centre, line_w, contact_w, layout, number, joint = corners[name]
             l1, l2, l3 = (piece / LENGTH_SCALE for piece in (layout.l1, layout.l2, layout.l3))
@@ -408,12 +396,6 @@ class IntegratedStructureCalculator(StructureCalculator):
                 ElementParameter("L2", round(l2, 4)),
                 ElementParameter("L3", round(l3, 4)),
             )
-            short = length < layout.minimum / LENGTH_SCALE - 1e-9
-            if short:
-                text = f"{number}: L={length:g} < Lmin={layout.minimum / LENGTH_SCALE:.3g} µm — L1+L2+L3 длиннее L"
-                canvas.labels.append(TextLabel(Point(arm_l, warnings_y), text, 9, fill=WARNING_COLOR))
-                canvas.bounds_points.append(Point(arm_l, warnings_y + 4))
-                warnings_y += 13
             port = SectionPort(Point(joint, y), line_w)
             canvas.elements.append(
                 SchematicElement(

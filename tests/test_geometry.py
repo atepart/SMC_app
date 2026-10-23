@@ -57,8 +57,10 @@ def test_svg_has_element_dimensions_and_no_calculation_boxes() -> None:
     ElementTree.fromstring(svg)
     for obsolete in ("Mex01", "Mex02", "Mex03", "Mex04", "Mrad", "Mdcb", "MLsis", "stroke-dasharray"):
         assert obsolete not in svg
+    # No sheet title and no ФФО caption: the drawing speaks for itself.
+    assert "Структура HD35" not in svg
+    assert ">ФФО<" not in svg
     for label in (
-        "ФФО",
         "50 Ω",
         "DC block",
         "Радиальные шлейфы ×2",
@@ -435,8 +437,12 @@ def test_short_corner_length_is_drawn_at_its_minimum_with_a_warning() -> None:
     assert values["L1"] + values["L2"] + values["L3"] == pytest.approx(minimum, abs=1e-3)
     # No horizontal part: the foot starts right at the line end.
     assert t4.auxiliary_lines[-1].end.x == pytest.approx(t4.input_port.center.x + (10 + dw))
-    assert any(label.text.startswith(f"7: L=6 < Lmin={minimum:.3g}") for label in geometry.overview.labels)
-    assert any(label.text.startswith("L=6 меньше минимума") for label in geometry.labels)
+    # No "7/9: L < Lmin" lines under the DC block in either mode; only the
+    # corner card next to the element warns.
+    assert not any("Lmin" in label.text for label in geometry.labels)
+    warnings = [label.text for label in geometry.labels if "меньше минимума" in label.text]
+    assert warnings == [f"L=6 меньше минимума {minimum:.3g}: ступня сразу у торца"] * 2
+    assert not any("меньше минимума" in label.text for label in geometry.overview.labels)
 
 
 def test_corner_contacts_must_not_close_the_stub_gap() -> None:
