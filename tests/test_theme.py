@@ -1,4 +1,4 @@
-"""Theme switching and persistence (WP-024, WP-027)."""
+"""Theme switching and persistence (WP-024, WP-027) and plot hover (BUG-022)."""
 
 from __future__ import annotations
 
@@ -195,6 +195,25 @@ def test_icons_referenced_by_style_sheets_exist(theme, count) -> None:
     assert len(referenced) == count
     for path in referenced:
         assert Path(path).is_file(), path
+
+
+def test_hover_label_hides_outside_the_data_area_and_on_leave(make_window) -> None:
+    """BUG-022: the title strip above the data had coordinates; leaving kept the label."""
+    window = make_window()
+    label = window._plot_hover_label
+    view_box = window._plot.getPlotItem().vb
+    inside = view_box.sceneBoundingRect().center()
+    title = QtCore.QPointF(inside.x(), window._plot.getPlotItem().sceneBoundingRect().top() + 3)
+    assert not view_box.sceneBoundingRect().contains(title)
+
+    window._on_plot_mouse_moved(inside)
+    assert label.isVisible() and label.text().startswith("f = ")
+    window._on_plot_mouse_moved(title)
+    assert not label.isVisible()
+
+    window._on_plot_mouse_moved(inside)
+    QtWidgets.QApplication.sendEvent(window._plot.viewport(), QtCore.QEvent(QtCore.QEvent.Type.Leave))
+    assert not label.isVisible()
 
 
 def test_closed_window_legend_no_longer_reads_its_deleted_viewbox(make_window, monkeypatch) -> None:

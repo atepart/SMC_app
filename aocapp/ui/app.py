@@ -1040,8 +1040,15 @@ class MainWindow(QMainWindow):
         self._plot_hover_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._plot_hover_label.hide()
         self._plot.scene().sigMouseMoved.connect(self._on_plot_mouse_moved)
+        # Leaving the widget sends no further moves, so hide the label on leave.
+        self._plot.viewport().installEventFilter(self)
         self._plot.getPlotItem().vb.sigXRangeChanged.connect(self._sync_frequency_axis_unit)
         self._restore_plot_scale()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API
+        if event.type() == QtCore.QEvent.Type.Leave and watched == self._plot.viewport():
+            self._plot_hover_label.hide()
+        return super().eventFilter(watched, event)
 
     def _apply_plot_theme(self) -> None:
         """Recolour the plot in place, keeping curves and the current range."""
@@ -1099,11 +1106,12 @@ class MainWindow(QMainWindow):
 
     def _on_plot_mouse_moved(self, scene_position) -> None:
         """Show frequency and S21 coordinates next to the cursor."""
-        plot_item = self._plot.getPlotItem()
-        if not plot_item.sceneBoundingRect().contains(scene_position):
+        view_box = self._plot.getPlotItem().vb
+        # Only the data area has coordinates; the title and axes around it do not.
+        if not view_box.sceneBoundingRect().contains(scene_position):
             self._plot_hover_label.hide()
             return
-        cursor_value = plot_item.vb.mapSceneToView(scene_position)
+        cursor_value = view_box.mapSceneToView(scene_position)
         self._plot_hover_label.setText(f"f = {cursor_value.x():.3f} GHz; S21 = {cursor_value.y():.3f} dB")
         self._plot_hover_label.adjustSize()
         local = self._plot.mapFromScene(scene_position)
