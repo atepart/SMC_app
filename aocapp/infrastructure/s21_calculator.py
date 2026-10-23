@@ -130,6 +130,7 @@ class S21CalculatorImpl(S21Calculator):
                 bot_film,
                 config.d_top_m,
                 config.d_bot_m,
+                config.dc_gap_m,
             )
 
             # Mrad/MLsis: transform the nominal Zrad0, add two identical radial

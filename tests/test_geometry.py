@@ -205,7 +205,8 @@ def test_every_transformer_size_matches_actual_backend_slices() -> None:
                 f"transf_{i}_dl_m": (0.5 + i * 0.1) * 1e-6,
             }
         )
-    config = S21Config(**values)
+    # Wide stubs keep the 19.5 µm contact of T3 clear of T4 across the gap.
+    config = S21Config(w_ms_m=20e-6, **values)
     geometry = IntegratedStructureCalculator().calculate(config)
     elements = _elements(geometry)
     for i in range(1, 8):
@@ -214,7 +215,12 @@ def test_every_transformer_size_matches_actual_backend_slices() -> None:
         dl = getattr(config, f"transf_{i}_dl_m")
         length = len(arange(min(w1, w2), max(w1, w2) + 0.01e-6, 2e-6)) * dl * 1e6
         assert element.number == ELEMENT_NUMBERS[f"T{i}"]
-        assert _parameters(element) == pytest.approx({"W1": w1 * 1e6, "W2": w2 * 1e6, "L": length})
+        parameters = _parameters(element)
+        assert {k: parameters[k] for k in ("W1", "W2", "L")} == pytest.approx(
+            {"W1": w1 * 1e6, "W2": w2 * 1e6, "L": length}
+        )
+        if i in (3, 4):
+            continue  # corner transformers: see the dedicated tests below
         assert element.input_port.width == pytest.approx((w1 + config.dw_m) * 1e6 * 2)
         assert element.output_port.width == pytest.approx((w2 + config.dw_m) * 1e6 * 2)
         assert element.bounds.width == pytest.approx(length * 2)
@@ -229,53 +235,57 @@ def test_line_dimensions_are_unclamped_with_one_scale(length_um, width_um) -> No
     assert line.bounds.height == pytest.approx((width_um + config.dw_m * 1e6) * WIDTH_SCALE)
 
 
+def _dc_parts(geometry):
+    elements = _elements(geometry)
+    dc = elements["DC"]
+    return elements, dc, dc.polygon[:4], dc.polygon[4:]
+
+
 def test_dc_slot_and_feed_dimensions_follow_calculation_inputs() -> None:
-    config = S21Config(w_slot_m=2e-6, l_slot_m=120e-6, l_ms_m=30e-6, mex4_len_m=20e-6)
+    config = S21Config(w_slot_m=2e-6, l_slot_m=120e-6, l_ms_m=30e-6, mex4_len_m=20e-6, dc_gap_m=6e-6)
     geometry = IntegratedStructureCalculator().calculate(config)
-    dc = _elements(geometry)["DC"]
-    left, right = dc.polygon[:5], dc.polygon[5:]
+    _elements_by_id, dc, left, right = _dc_parts(geometry)
     dw = config.dw_m * 1e6
-    # Ws: stub separation (= slot width) after the DW correction.
-    assert min(p.x for p in right) - max(p.x for p in left) == pytest.approx((2 - dw) * 2)
-    # Wms/Lms: the vertical open stubs, not the horizontal metal above them.
-    assert left[2].x - left[4].x == pytest.approx((config.w_ms_m * 1e6 + dw) * 2)
-    assert left[3].y - left[2].y == pytest.approx(30 * 2)
-    assert right[3].y - right[2].y == pytest.approx(30 * 2)
-    # Lslot is a slot length: it changes the black arms, never the electrodes.
-    _h_left, _gap, _h_right, arm_left, arm_right = dc.auxiliary_rects
-    axis = _h_left.y + _h_left.height / 2
-    assert arm_right.bottom - axis == pytest.approx((120 - config.lso_m * 1e6) * 2)
+    # The stub gap is its own field; Wslot − DW is the black slot thickness.
+    assert right[0].x - left[1].x == pytest.approx(6 * 2)
+    _h_left, gap_piece, _h_right, arm_left, arm_right = dc.auxiliary_rects
+    for rect in (_h_left, gap_piece, _h_right):
+        assert rect.height == pytest.approx((2 - dw) * 2)
+    assert arm_left.width == arm_right.width == pytest.approx((2 - dw) * 2)
+    # Wms/Lms: the two vertical open stubs, nothing else belongs to DC block.
+    assert left[1].x - left[0].x == pytest.approx((config.w_ms_m * 1e6 + dw) * 2)
+    assert left[2].y - left[1].y == pytest.approx(30 * 2)
+    assert right[2].y - right[1].y == pytest.approx(30 * 2)
+    assert dc.input_port is None and dc.output_port is None
+    # Lslot is the arm length from the slot top: it changes the black arms only.
+    assert arm_right.bottom - _h_left.y == pytest.approx(120 * 2)
+    assert arm_left.y == arm_right.y == _h_left.y
     longer = _elements(IntegratedStructureCalculator().calculate(replace(config, l_slot_m=200e-6)))["DC"]
     assert longer.polygon == dc.polygon
     feed = _elements(geometry)["SIS-line"]
     assert feed.bounds.width == pytest.approx(20 * 2)
     assert feed.bounds.height == pytest.approx((config.mex4_width_m + config.dw_m) * 1e6 * 2)
     labels = {d.label.split("=")[0] for d in geometry.dimensions if d.element_id == "DC"}
-    assert labels == {"Wmsэфф", "Wslotэфф", "Lms", "Lso", "Lslot", "Pibase"}
+    assert labels == {"Wmsэфф", "Зазор", "Wslotэфф", "Lms", "Lso", "Lslot", "Pibase"}
 
 
-@pytest.mark.parametrize("offset_um", [2, 8, 16])
-def test_dc_slot_arms_follow_mathcad_lso_and_pibase(offset_um) -> None:
-    config = S21Config(lso_m=offset_um * 1e-6)
+@pytest.mark.parametrize(("offset_um", "gap_um"), [(2, 4), (8, 4), (16, 4), (8, 7.5)])
+def test_dc_slot_arms_follow_mathcad_lso_and_pibase(offset_um, gap_um) -> None:
+    config = S21Config(lso_m=offset_um * 1e-6, dc_gap_m=gap_um * 1e-6)
     geometry = IntegratedStructureCalculator().calculate(config)
-    dc = _elements(geometry)["DC"]
-    left, right = dc.polygon[:5], dc.polygon[5:]
+    _elements_by_id, dc, left, right = _dc_parts(geometry)
     _h_left, _gap, _h_right, arm_left, arm_right = dc.auxiliary_rects
     w_ms = config.w_ms_m * 1e6 + config.dw_m * 1e6
     w_slot = config.w_slot_m * 1e6 - config.dw_m * 1e6
-    pibase = 2 * w_ms + 2 * offset_um + 4
-    arm_left_x = arm_left.x + arm_left.width / 2
-    arm_right_x = arm_right.x + arm_right.width / 2
-    # Pibase = 2·Wms + 2·Lso + 4 µm is the distance between the parallel arms.
-    assert arm_right_x - arm_left_x == pytest.approx(pibase * 2)
+    pibase = 2 * w_ms + 2 * offset_um + gap_um
+    # Pibase = 2·Wms + 2·Lso + gap is the distance between the inner arm edges.
+    assert arm_right.x - arm_left.right == pytest.approx(pibase * 2)
     assert _parameters(dc)["Pibase (расч.)"] == pytest.approx(pibase)
-    # The arm turns Lso (+ the half-difference of the 4 µm constant) beyond the stub.
-    assert arm_right_x - right[4].x == pytest.approx((offset_um + (4 - w_slot) / 2) * 2)
-    assert left[4].x - arm_left_x == pytest.approx((offset_um + (4 - w_slot) / 2) * 2)
+    # Lso: from the inner edge of each arm to the outer edge of its stub.
+    assert arm_right.x - right[1].x == pytest.approx(offset_um * 2)
+    assert left[0].x - arm_left.right == pytest.approx(offset_um * 2)
     assert all(rect.width == pytest.approx(w_slot * 2) for rect in (arm_left, arm_right))
-    # The label states the 4 µm-constant offset instead of hiding it under "Lso".
-    lso_label = f"Lso={offset_um:g} (+{(4 - w_slot) / 2:g})"
-    assert any(d.element_id == "DC" and d.label == lso_label for d in geometry.dimensions)
+    assert any(d.element_id == "DC" and d.label == f"Lso={offset_um:g}" for d in geometry.dimensions)
     # Slot pieces are a bottom-electrode underlay, outside the metal outline.
     assert all(p.fill != "#111111" for p in geometry.overview.polygons)
     assert not any(p.element_id.startswith("dc-slot-") for p in geometry.overview.paths)
@@ -289,16 +299,15 @@ def test_dc_slot_is_rendered_beneath_the_metal() -> None:
     assert first_slot < svg.index('id="metal-outline"')
 
 
-@pytest.mark.parametrize(("lso_um", "w_slot_um", "warned"), [(8, 4, False), (0.1, 4, True), (8, 30, True)])
-def test_dc_warns_when_pibase_puts_slot_arms_under_the_stubs(lso_um, w_slot_um, warned) -> None:
+@pytest.mark.parametrize(("lso_um", "w_slot_um"), [(8, 4), (0.1, 4), (8, 30)])
+def test_dc_slot_arms_stay_outside_the_stubs(lso_um, w_slot_um) -> None:
     config = S21Config(lso_m=lso_um * 1e-6, w_slot_m=w_slot_um * 1e-6)
     geometry = IntegratedStructureCalculator().calculate(config)
-    dc = _elements(geometry)["DC"]
-    right = dc.polygon[5:]
-    arm_right = dc.auxiliary_rects[4]
-    # Arm inner edge vs stub outer edge: overlap exactly when Lso < Wslotэфф − 2 µm.
-    assert (arm_right.x < right[4].x) is warned
-    assert any("Плечо щели под шлейфом" in label.text for label in geometry.labels) is warned
+    _elements_by_id, dc, left, right = _dc_parts(geometry)
+    arm_left, arm_right = dc.auxiliary_rects[3:]
+    assert arm_left.right < left[0].x
+    assert arm_right.x > right[1].x
+    assert not any("Плечо щели под шлейфом" in label.text for label in geometry.labels)
 
 
 @pytest.mark.parametrize(
@@ -309,29 +318,137 @@ def test_dc_warns_when_pibase_puts_slot_arms_under_the_stubs(lso_um, w_slot_um, 
         {"w_slot_m": 30e-6},
         {"l_slot_m": 40e-6, "lso_m": 4e-6, "w_ms_m": 12e-6, "l_ms_m": 24e-6},
         {"l_slot_m": 12e-6, "lso_m": 4e-6, "w_ms_m": 14e-6, "l_ms_m": 20e-6},
+        {"l_slot_m": 200e-6, "dc_gap_m": 20e-6},
     ],
 )
 def test_dc_dimension_view_stays_inside_its_card(changes) -> None:
     geometry = IntegratedStructureCalculator().calculate(replace(S21Config(), **changes))
     dims = {d.label.split("=")[0]: d for d in geometry.dimensions if d.element_id == "DC"}
     footnote = next(label for label in geometry.labels if label.text.startswith("Чёрное — щель"))
-    # Every DC label ends above the footnotes, Pibase below both W rows.
+    # Every DC label ends above the footnotes, Pibase below the gap row.
     assert all(d.label_pos.y < footnote.position.y - 8 for d in dims.values())
+    assert dims["Pibase"].start.y > dims["Зазор"].label_pos.y
     assert dims["Pibase"].start.y > dims["Wslotэфф"].label_pos.y
     # Lslot is dimensioned outside the left arm, clear of the right-side Lso label.
     assert dims["Lslot"].start.x < dims["Pibase"].start.x
     assert dims["Lso"].label_pos.x > dims["Lso"].start.x
-    assert "+-" not in dims["Lso"].label
 
 
-def test_dc_horizontal_metal_continues_the_neighbouring_transformers() -> None:
-    config = S21Config(transf_4_w_start_m=12e-6, transf_3_w_end_m=8e-6)
-    elements = _elements(IntegratedStructureCalculator().calculate(config))
-    dc = elements["DC"]
-    # The tops of the electrodes are transformer ends, not Wms or Lms.
-    assert dc.input_port == elements["T4"].output_port
-    assert dc.output_port.width == pytest.approx(elements["T3"].input_port.width)
-    assert dc.output_port.center == elements["T3"].input_port.center
+def _corner_config(**changes):
+    # L = 12 µm for both corners: long enough for a horizontal arm.
+    values = {
+        "transf_4_w_end_m": 6e-6,
+        "transf_4_w_start_m": 8e-6,
+        "transf_4_dwdl_um": 1,
+        "transf_4_dl_m": 4e-6,
+        "transf_3_w_end_m": 8e-6,
+        "transf_3_w_start_m": 6e-6,
+        "transf_3_dwdl_um": 1,
+        "transf_3_dl_m": 4e-6,
+    }
+    values.update(changes)
+    return S21Config(**values)
+
+
+def test_corner_transformers_bend_from_the_lines_onto_the_stubs() -> None:
+    config = _corner_config()
+    geometry = IntegratedStructureCalculator().calculate(config)
+    elements, dc, left, right = _dc_parts(geometry)
+    t4, t3 = elements["T4"], elements["T3"]
+    dw = config.dw_m * 1e6
+    # Ends meet the neighbouring lines 6 and 10 (old trapezoids are gone).
+    assert t4.input_port.center == elements["MSL6"].output_port.center
+    assert t4.input_port.width == pytest.approx((6 + dw) * 2)
+    assert t3.output_port.center == elements["MSL5"].input_port.center
+    assert t3.output_port.width == pytest.approx((6 + dw) * 2)
+    assert t4.output_port is None and t3.input_port is None
+    # Stubs start 1 µm below the lowest adjacent line edge (the HFSS foot).
+    contact_y = left[0].y
+    assert contact_y == pytest.approx(((6 + dw) / 2 + 1) * 2)
+    assert right[0].y == pytest.approx(contact_y)
+    half_foot = 8 + dw  # W2 = 8 µm with DW, in SVG units / 2
+    for corner, stub in ((t4, left), (t3, right)):
+        # The foot of width W2 is centred on its stub and ends on its top.
+        middle = (stub[0].x + stub[1].x) / 2
+        assert corner.auxiliary_lines[-1].end == Point(pytest.approx(middle), pytest.approx(contact_y))
+        assert max(p.y for p in corner.polygon) == pytest.approx(contact_y)
+        for x in (middle - half_foot, middle + half_foot):
+            assert any(p.x == pytest.approx(x) and p.y == pytest.approx(contact_y) for p in corner.polygon)
+    # L = L1 + L2 + L3: L2 = ½·√(W1²+W2²) to the foot axis, L3 down the foot.
+    for corner in (t4, t3):
+        values = _parameters(corner)
+        assert values["L"] == pytest.approx(12)
+        assert values["L1"] + values["L2"] + values["L3"] == pytest.approx(12, abs=1e-3)
+        assert values["L2"] == pytest.approx(hypot(6 + dw, 8 + dw) / 2, abs=1e-4)
+        assert values["L3"] == pytest.approx(1)
+        assert values["L1"] > 0
+        segments = corner.auxiliary_lines
+        assert len(segments) == 3
+        drawn = [hypot(s.end.x - s.start.x, s.end.y - s.start.y) / LENGTH_SCALE for s in segments]
+        assert drawn == pytest.approx([values["L1"], values["L2"], values["L3"]], abs=1e-3)
+        assert segments[0].start.y == segments[0].end.y == 0
+        assert segments[2].start.x == pytest.approx(segments[2].end.x)
+    assert not any("Lmin" in label.text for label in geometry.overview.labels)
+
+
+@pytest.mark.parametrize("contact_um,stub_um", [(8, 8), (6, 9), (11, 9)])
+def test_corner_contact_and_stub_share_a_seam_with_a_visible_step(contact_um, stub_um) -> None:
+    config = _corner_config(transf_4_w_start_m=contact_um * 1e-6, w_ms_m=stub_um * 1e-6)
+    geometry = IntegratedStructureCalculator().calculate(config)
+    elements, dc, left, _right = _dc_parts(geometry)
+    dw = config.dw_m * 1e6
+    contact_y = left[0].y
+    middle = (left[0].x + left[1].x) / 2
+    seams = [
+        line
+        for line in geometry.overview.lines
+        if line.start.y == line.end.y == pytest.approx(contact_y)
+        and line.stroke_width == 0.45
+        and left[0].x - 30 <= min(line.start.x, line.end.x) <= left[1].x + 1e-9
+    ]
+    # One thin separator (the red line of the sketch) over the shared width.
+    assert len(seams) == 1
+    seam = seams[0]
+    assert abs(seam.end.x - seam.start.x) == pytest.approx((min(contact_um, stub_um) + dw) * 2)
+    assert (seam.start.x + seam.end.x) / 2 == pytest.approx(middle)
+    outline = next(p for p in geometry.overview.paths if p.element_id == "metal-outline").data
+    points = [Point(float(x), float(y)) for x, y in re.findall(r"([-\d.e]+),([-\d.e]+)", outline)]
+    # Different widths leave a step of the wider face exposed on both sides.
+    for sign in (-1, 1):
+        step = {round(middle + sign * (contact_um + dw), 6), round(middle + sign * (stub_um + dw), 6)}
+        exposed = any(
+            a.y == pytest.approx(contact_y) == b.y and {round(a.x, 6), round(b.x, 6)} == step
+            for a, b in zip(points, points[1:])
+        )
+        assert exposed is (contact_um != stub_um)
+
+
+def test_short_corner_length_is_drawn_at_its_minimum_with_a_warning() -> None:
+    config = S21Config()  # T4: L = 6 µm, W1 = 6 µm, W2 = 10 µm
+    geometry = IntegratedStructureCalculator().calculate(config)
+    elements, _dc, left, _right = _dc_parts(geometry)
+    t4 = elements["T4"]
+    values = _parameters(t4)
+    dw = config.dw_m * 1e6
+    minimum = hypot(6 + dw, 10 + dw) / 2 + 1
+    assert values["L1"] == 0
+    assert values["L1"] + values["L2"] + values["L3"] == pytest.approx(minimum, abs=1e-3)
+    # No horizontal part: the foot starts right at the line end.
+    assert t4.auxiliary_lines[-1].end.x == pytest.approx(t4.input_port.center.x + (10 + dw))
+    assert any(label.text.startswith(f"7: L=6 < Lmin={minimum:.3g}") for label in geometry.overview.labels)
+    assert any(label.text.startswith("L=6 меньше минимума") for label in geometry.labels)
+
+
+def test_corner_contacts_must_not_close_the_stub_gap() -> None:
+    with pytest.raises(ValueError, match="смыкаются"):
+        IntegratedStructureCalculator().calculate(_corner_config(transf_4_w_start_m=14e-6, transf_3_w_end_m=14e-6))
+
+
+def test_wider_neighbouring_line_never_touches_a_stub() -> None:
+    config = _corner_config(msl_5_width_m=14e-6)
+    elements, _dc, left, right = _dc_parts(IntegratedStructureCalculator().calculate(config))
+    assert elements["MSL5"].bounds.bottom + 1 * 2 == pytest.approx(right[0].y)
+    assert elements["MSL6"].bounds.bottom < left[0].y
 
 
 def test_radial_lines_have_exact_lengths_widths_and_connected_ports() -> None:
@@ -342,8 +459,11 @@ def test_radial_lines_have_exact_lengths_widths_and_connected_ports() -> None:
         element = elements[f"Ww{index}"]
         assert element.bounds.width == pytest.approx(getattr(config, f"zrad{index}_len_m") * 1e6 * 2)
         assert element.bounds.height == pytest.approx((getattr(config, f"zrad{index}_width_m") + config.dw_m) * 1e6 * 2)
-    chain = [e for e in geometry.elements if e.input_port is not None]
-    for a, b in zip(chain, chain[1:]):
+    # Straight joins chain along one axis; the DC block turns down between 7 and 9.
+    chain = [e for e in geometry.elements if e.input_port is not None or e.output_port is not None]
+    pairs = [(a, b) for a, b in zip(chain, chain[1:]) if a.output_port is not None and b.input_port is not None]
+    assert len(pairs) == len(chain) - 2
+    for a, b in pairs:
         assert a.output_port.center.x == pytest.approx(b.input_port.center.x, abs=1e-9)
         assert a.output_port.center.y == b.input_port.center.y == 0
 
@@ -367,10 +487,10 @@ def test_default_width_mismatches_remain_steps_not_gaps_or_input_changes() -> No
 
 
 def test_dimensioned_views_use_one_zoom_for_both_axes() -> None:
-    geometry = IntegratedStructureCalculator().calculate(S21Config())
+    geometry = IntegratedStructureCalculator().calculate(_corner_config())
     elements = _elements(geometry)
     for element in elements.values():
-        if element.input_port is None or element.element_id in {"DC", "Radial"}:
+        if element.input_port is None or element.element_id in {"DC", "Radial", "T4"}:
             continue
         dims = [d for d in geometry.dimensions if d.element_id == element.element_id]
         length = next(d for d in dims if d.label.startswith("L="))
@@ -378,6 +498,19 @@ def test_dimensioned_views_use_one_zoom_for_both_axes() -> None:
         x_zoom = hypot(length.end.x - length.start.x, length.end.y - length.start.y) / element.bounds.width
         y_zoom = hypot(width.end.x - width.start.x, width.end.y - width.start.y) / element.input_port.width
         assert x_zoom == pytest.approx(y_zoom)
+    # Corner cards: the line-end and contact widths use the same zoom.
+    for name, line_label, contact_label in (("T4", "W1эфф", "W2эфф"), ("T3", "W2эфф", "W1эфф")):
+        corner = elements[name]
+        dims = {d.label.split("=")[0]: d for d in geometry.dimensions if d.element_id == name}
+        port = corner.input_port or corner.output_port
+        contact_width = (_parameters(corner)[contact_label[:2]] + 0.5) * WIDTH_SCALE
+        line_zoom = abs(dims[line_label].end.y - dims[line_label].start.y) / port.width
+        contact_zoom = abs(dims[contact_label].end.x - dims[contact_label].start.x) / contact_width
+        assert line_zoom == pytest.approx(contact_zoom)
+        footer = next(
+            label for label in geometry.labels if label.text.startswith("Масштаб ×") and "осевая" in label.text
+        )
+        assert all(d.label_pos.y < footer.position.y - 8 for d in dims.values())
 
 
 @pytest.mark.parametrize(

@@ -25,6 +25,19 @@ class ConfigFieldInfo:
     element_id: str | None = None
 
 
+def _transformer_width_description(element: str, number: int, label: str) -> str:
+    side = "слева (от ФФО)" if label == "W1" else "справа (к SIS)"
+    contact = {"T4": "W2", "T3": "W1"}.get(element)
+    if contact is None:
+        return f"Элемент {number}: ширина {side}, до поправки DW."
+    face = (
+        "ширина ступни на шлейфе DC block (по центру шлейфа); при W ≠ Wms виден выступ с обеих сторон"
+        if label == contact
+        else "торец к соседней линии, высота горизонтальной части"
+    )
+    return f"Элемент {number} (угловой): ширина {side} — {face}, до поправки DW."
+
+
 @dataclass(frozen=True)
 class S21Config:
     """Configuration for the S21 calculation example.
@@ -397,7 +410,7 @@ class S21Config:
         metadata={
             "label": "Wslot",
             "group": "DC block",
-            "description": "Ширина щели в нижнем электроде; по Mathcad равна зазору между двумя шлейфами. На металле применяется Wslot − DW.",
+            "description": "Толщина чёрной Π-образной щели в нижнем электроде (горизонтальный участок и плечи). На рисунке и в расчёте применяется Wslot − DW. Зазор между шлейфами задаётся отдельно.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -411,7 +424,7 @@ class S21Config:
         metadata={
             "label": "Lslot",
             "group": "DC block",
-            "description": "Длина плеча Π-образной щели по её оси от точки питания у внешней кромки шлейфа: Lso по горизонтали плюс вертикальное плечо. Должна быть больше Lso.",
+            "description": "Длина вертикального плеча Π-образной щели от верхней кромки щели до конца плеча (L_slot в HFSS). Должна быть больше Lso — нижнего предела интеграла в расчёте.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 10000.0,
@@ -425,7 +438,7 @@ class S21Config:
         metadata={
             "label": "Lso",
             "group": "DC block",
-            "description": "Горизонтальный начальный участок плеча щели: от точки питания у внешней кромки шлейфа до поворота, после которого два плеча параллельны. Входит в Pibase = 2·Wms + 2·Lso + 4 µm.",
+            "description": "Расстояние от внутренней кромки плеча щели до внешней кромки шлейфа. Входит в Pibase = 2·Wms + 2·Lso + зазор — расстояние между внутренними кромками плеч.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -453,10 +466,24 @@ class S21Config:
         metadata={
             "label": "Lms",
             "group": "DC block",
-            "description": "Длина вертикального открытого МПЛ-шлейфа от конца трансформатора до открытого конца.",
+            "description": "Длина вертикального открытого МПЛ-шлейфа от ступни углового трансформатора 7/9 до открытого конца.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 10000.0,
+            "step": 0.5,
+            "decimals": 3,
+            "scale": 1e6,
+        },
+    )
+    dc_gap_m: float = field(
+        default=4.0e-6,
+        metadata={
+            "label": "Зазор",
+            "group": "DC block",
+            "description": "Расстояние между двумя шлейфами DC block (металл к металлу, без поправки DW). Это слагаемое 4 µm в Pibase = 2·Wms + 2·Lso + зазор.",
+            "suffix": " um",
+            "minimum": 0.1,
+            "maximum": 1000.0,
             "step": 0.5,
             "decimals": 3,
             "scale": 1e6,
@@ -1326,6 +1353,8 @@ class S21Config:
             errors.append("block_neck_height_um must be <= block_body_height_um")
         if self.w_slot_m <= self.dw_m:
             errors.append("w_slot_m must be > dw_m so the corrected DC-block slot stays positive")
+        if self.dc_gap_m <= 0:
+            errors.append("dc_gap_m must be > 0: the two DC-block stubs are isolated")
         if errors:
             raise ValueError("; ".join(errors))
 
@@ -1392,7 +1421,7 @@ class S21Config:
                                 group=group,
                                 element_id=element,
                                 step=0.5,
-                                description=f"Элемент {number}: ширина {'слева (от ФФО)' if label == 'W1' else 'справа (к SIS)'}, до поправки DW.",
+                                description=_transformer_width_description(element, number, label),
                             )
                         )
                     visible.append(
@@ -1400,7 +1429,13 @@ class S21Config:
                             f"{prefix}_length_m",
                             "L",
                             group,
-                            "Общая длина трансформатора. Автоподбор целых n и |W1−W2|/n; dl=0.5…1.5 µm.",
+                            "Общая длина трансформатора. Автоподбор целых n и |W1−W2|/n; dl=0.5…1.5 µm."
+                            + (
+                                " У угловых 7/9 это осевая линия L1+L2+L3: по горизонтали от торца, по диагонали"
+                                " к оси ступни и вниз по ступне до шлейфа."
+                                if element in {"T4", "T3"}
+                                else ""
+                            ),
                             suffix=" um",
                             minimum=0.1,
                             maximum=10000,

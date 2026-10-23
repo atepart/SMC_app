@@ -13,7 +13,7 @@ from typing import Dict
 
 import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
-from PySide6.QtCore import QByteArray, QObject, QSettings, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QByteArray, QObject, QPointF, QSettings, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QIcon, QImage, QImageWriter, QPainter, QWheelEvent
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtSvgWidgets import QGraphicsSvgItem
@@ -104,6 +104,16 @@ class SvgGraphicsView(QGraphicsView):
         self._fit_width = False
 
     def set_svg(self, svg_text: str, *, fit_width: bool = False) -> None:
+        """Show a new drawing, keeping the user's zoom and place within one mode.
+
+        Parameter edits redraw the SVG while the user inspects an element, so
+        the view centre is kept in SVG user units: the viewBox origin moves
+        when the drawing grows. A different mode starts from the fitted view.
+        """
+        keep_view = self._svg_item is not None and fit_width == self._fit_width
+        if keep_view:
+            centre = self._scene_to_svg(self.mapToScene(self.viewport().rect().center()))
+            transform = self.transform()
         renderer = QSvgRenderer(QByteArray(svg_text.encode("utf-8")))
         item = QGraphicsSvgItem()
         item.setSharedRenderer(renderer)
@@ -119,7 +129,29 @@ class SvgGraphicsView(QGraphicsView):
         self._renderer = renderer
         self._svg_item = item
         self._fit_width = fit_width
-        self.reset_view()
+        if not keep_view:
+            self.reset_view()
+            return
+        if self._zoom_level == 0:
+            self._fit_default()
+        else:
+            self.setTransform(transform)
+        if self._zoom_level != 0 or self._fit_width:
+            self.centerOn(self._svg_to_scene(centre))
+
+    def _scene_to_svg(self, point: QPointF) -> QPointF:
+        box, rect = self._renderer.viewBoxF(), self._svg_item.boundingRect()
+        return QPointF(
+            box.x() + point.x() * box.width() / max(rect.width(), 1e-9),
+            box.y() + point.y() * box.height() / max(rect.height(), 1e-9),
+        )
+
+    def _svg_to_scene(self, point: QPointF) -> QPointF:
+        box, rect = self._renderer.viewBoxF(), self._svg_item.boundingRect()
+        return QPointF(
+            (point.x() - box.x()) * rect.width() / max(box.width(), 1e-9),
+            (point.y() - box.y()) * rect.height() / max(box.height(), 1e-9),
+        )
 
     def reset_view(self) -> None:
         if self._svg_item is None:

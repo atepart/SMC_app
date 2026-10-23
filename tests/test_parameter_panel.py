@@ -210,6 +210,7 @@ def test_all_element_fields_have_matching_numbers_and_external_units(parameter_w
         "l_ms_m",
         "w_slot_m",
         "l_slot_m",
+        "dc_gap_m",
         "radial_r_min_m",
         "radial_r_max_m",
         "radial_angle_deg",
@@ -391,6 +392,61 @@ def test_schematic_details_toggle_keeps_overview_large(parameter_window: MainWin
     app.processEvents()
     assert parameter_window._view._svg_item.boundingRect() == compact
     assert not parameter_window._view._fit_width
+
+
+def _enter_value(window: MainWindow, name: str, value: float) -> None:
+    spin = window._config_inputs[name]
+    spin.lineEdit().selectAll()
+    QTest.keyClicks(spin.lineEdit(), f"{value:g}")
+    QTest.keyClick(spin.lineEdit(), QtCore.Qt.Key_Return)
+    QtWidgets.QApplication.processEvents()
+
+
+def _view_centre(view) -> QtCore.QPointF:
+    return view._scene_to_svg(view.mapToScene(view.viewport().rect().center()))
+
+
+def test_parameter_redraw_keeps_the_zoomed_element_in_view(parameter_window: MainWindow) -> None:
+    view = parameter_window._view
+    geometry = IntegratedStructureCalculator().calculate(parameter_window._build_config())
+    dc = next(e for e in geometry.overview.elements if e.element_id == "DC")
+    for _ in range(12):
+        QtWidgets.QApplication.sendEvent(view.viewport(), _wheel_event(view.viewport()))
+    view.centerOn(view._svg_to_scene(QtCore.QPointF(dc.bounds.x + dc.bounds.width / 2, dc.bounds.y)))
+    QtWidgets.QApplication.processEvents()
+    scale, centre = view.transform().m11(), _view_centre(view)
+    old_box = view._renderer.viewBoxF()
+    # A wider line 2 grows the drawing upwards and moves the viewBox origin.
+    _enter_value(parameter_window, "msl_8_width_m", 90)
+    assert view._renderer.viewBoxF().y() < old_box.y()
+    assert view._zoom_level == 12
+    assert view.transform().m11() == pytest.approx(scale)
+    after = _view_centre(view)
+    assert after.x() == pytest.approx(centre.x(), abs=1)
+    assert after.y() == pytest.approx(centre.y(), abs=1)
+    # Home still returns to the fitted overview.
+    view.reset_view()
+    assert view._zoom_level == 0
+    assert view.transform().m11() < scale
+
+
+def test_parameter_redraw_keeps_the_scrolled_dimension_card(parameter_window: MainWindow) -> None:
+    view = parameter_window._view
+    parameter_window._schematic_details.setChecked(True)
+    QtWidgets.QApplication.processEvents()
+    scroll = view.verticalScrollBar()
+    scroll.setValue(scroll.maximum() // 2)
+    QtWidgets.QApplication.processEvents()
+    centre = _view_centre(view)
+    _enter_value(parameter_window, "l_ms_m", 30)
+    assert view._fit_width
+    # Scroll bars and centerOn round to whole pixels: allow two.
+    assert _view_centre(view).y() == pytest.approx(centre.y(), abs=2.01 / view.transform().m11())
+    # Switching the mode is a new view and starts from the top again.
+    parameter_window._schematic_details.setChecked(False)
+    parameter_window._schematic_details.setChecked(True)
+    QtWidgets.QApplication.processEvents()
+    assert scroll.value() == 0
 
 
 def test_issue_5_steps_and_sigma_keyboard_input(parameter_window: MainWindow) -> None:

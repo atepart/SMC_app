@@ -16,14 +16,16 @@ EPS0 = 8.8542e-12
 MU0 = 4.0 * pi * 1e-7
 # Constant term of the Mathcad base distance between the two parallel slot
 # arms: ``Pibase = 2·Wms + 2·Lso + 4 µm`` (DC_BREAK, "distance between the
-# folded slots").  It equals the nominal stub separation before the DW
-# correction and has no own input field in the worksheet.
+# folded slots").  It is the metal gap between the two stubs (4 µm in the
+# HFSS model as well); the worksheet has no own field, the UI default does.
 BASE_DISTANCE_CONSTANT_M = 4.0e-6
 
 
-def base_distance_m(microstrip_width_m: float, slot_offset_m: float) -> float:
+def base_distance_m(
+    microstrip_width_m: float, slot_offset_m: float, stub_gap_m: float = BASE_DISTANCE_CONSTANT_M
+) -> float:
     """Mathcad ``Pibase``: distance between the parallel slot arms."""
-    return 2.0 * microstrip_width_m + 2.0 * slot_offset_m + BASE_DISTANCE_CONSTANT_M
+    return 2.0 * microstrip_width_m + 2.0 * slot_offset_m + stub_gap_m
 
 
 @dataclass
@@ -207,6 +209,7 @@ class DCBlockCalculator:
         bot_film: FilmConductivity,
         top_thickness_m: float,
         bot_thickness_m: float,
+        stub_gap_m: float = BASE_DISTANCE_CONSTANT_M,
     ):
         """Calculate the ABCD matrix for the slot-antenna DC break.
 
@@ -238,6 +241,7 @@ class DCBlockCalculator:
             bot_film: Bottom film conductivity dataset.
             top_thickness_m: Top film thickness in meters.
             bot_thickness_m: Bottom film thickness in meters.
+            stub_gap_m: Metal gap between the two stubs (the 4 µm of Pibase).
         """
         matrices = []
 
@@ -269,7 +273,7 @@ class DCBlockCalculator:
 
         # Reciprocity gives identical slot-antenna shunt impedances on either
         # side of the short central slot-line section.
-        base_distance = base_distance_m(microstrip_width_m, slot_offset_m)
+        base_distance = base_distance_m(microstrip_width_m, slot_offset_m, stub_gap_m)
         z_sa = self.slot_impedance(
             frequency_ghz,
             slot_width_m,
