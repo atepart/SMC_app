@@ -155,7 +155,8 @@ def test_sis_line_dimensions_use_its_editable_fields_not_sis_model_width() -> No
 @pytest.mark.parametrize("config", [S21Config(), S21Config(msl_8_len_m=1e-9, radial_r_max_m=90e-6, l_slot_m=80e-6)])
 def test_number_labels_and_dimension_views_remain_separate(config) -> None:
     geometry = IntegratedStructureCalculator().calculate(config)
-    labels = [label for label in geometry.overview.labels if label.text.isdigit()]
+    labels = [label for label in geometry.labels if label.text.isdigit()]
+    assert sorted(int(label.text) for label in labels) == list(range(1, 20))
     # Labels are 10 units high and <=12 wide; require real clearance in 2D.
     assert all(
         abs(a.position.x - b.position.x) >= 18 or abs(a.position.y - b.position.y) >= 14
@@ -165,6 +166,19 @@ def test_number_labels_and_dimension_views_remain_separate(config) -> None:
     assert all(geometry.bounds.y < label.position.y < geometry.bounds.bottom for label in geometry.labels)
     main_bottom = max(e.bounds.bottom for e in geometry.elements)
     assert all(min(d.start.y, d.end.y) > main_bottom for d in geometry.dimensions)
+
+
+def test_part_callouts_appear_only_with_dimensioned_views() -> None:
+    geometry = IntegratedStructureCalculator().calculate(S21Config())
+    callouts = {str(number) for number in range(1, 20)} | {"SIS", "50 Ω"}
+    overview_texts = {label.text for label in geometry.overview.labels}
+    assert not overview_texts & callouts
+    # Leader lines of the numbers and SIS are slate lines; 0.45 are metal seams.
+    assert not [line for line in geometry.overview.lines if line.stroke == "#64748b" and line.stroke_width != 0.45]
+    assert callouts <= {label.text for label in geometry.labels}
+    assert len([line for line in geometry.lines if line.stroke == "#64748b" and line.stroke_width == 0.5]) >= 19
+    # Without callouts the overview frame hugs the drawing.
+    assert geometry.overview.bounds.y > min(label.position.y for label in geometry.labels if label.text.isdigit())
 
 
 @pytest.mark.parametrize("angle", [1, 60, 113, 180, 220, 359])

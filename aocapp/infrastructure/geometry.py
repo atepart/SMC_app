@@ -133,6 +133,10 @@ class _Canvas:
     circles: list[CircleShape] = field(default_factory=list)
     lines: list[LineShape] = field(default_factory=list)
     labels: list[TextLabel] = field(default_factory=list)
+    # Callouts naming parts of the drawing ("SIS"); like the element numbers
+    # they appear only with dimensioned views ("С обозначениями").
+    annotation_labels: list[TextLabel] = field(default_factory=list)
+    annotation_lines: list[LineShape] = field(default_factory=list)
     dimensions: list[DimensionLine] = field(default_factory=list)
     elements: list[SchematicElement] = field(default_factory=list)
     bounds_points: list[Point] = field(default_factory=list)
@@ -235,11 +239,15 @@ class IntegratedStructureCalculator(StructureCalculator):
             for element in canvas.elements
         ]
         self._metal_outline(canvas)
+        # The overview is the bare drawing; numbers, leaders, "SIS" and "50 Ω"
+        # are added for the dimensioned views only.
+        overview = canvas.snapshot()
+        canvas.labels.extend(canvas.annotation_labels)
+        canvas.lines.extend(canvas.annotation_lines)
         self._number_labels(canvas)
         canvas.labels.append(TextLabel(Point(x - 34, -24), "50 Ω", 11, anchor="middle"))
         # Cap height of the 11 px "50 Ω" label above its baseline.
         canvas.bounds_points.append(Point(x - 34, -24 - 11))
-        overview = canvas.snapshot()
         self._dimensioned_views(canvas, dw)
         return replace(canvas.snapshot(), overview=overview)
 
@@ -467,8 +475,12 @@ class IntegratedStructureCalculator(StructureCalculator):
                 ),
             )
         )
-        canvas.labels.append(TextLabel(Point(feed_start - 12, feed.bounds.bottom + 24), "SIS", 11, anchor="end"))
-        canvas.lines.append(LineShape(Point(feed_start - 10, feed.bounds.bottom + 18), symbol, stroke="#64748b"))
+        canvas.annotation_labels.append(
+            TextLabel(Point(feed_start - 12, feed.bounds.bottom + 24), "SIS", 11, anchor="end")
+        )
+        canvas.annotation_lines.append(
+            LineShape(Point(feed_start - 10, feed.bounds.bottom + 18), symbol, stroke="#64748b")
+        )
         for index in (4, 3):
             w = _um(getattr(config, f"zrad{index}_width_m"))
             x = self._strip(
