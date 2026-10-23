@@ -14,7 +14,18 @@ from typing import Dict
 import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import QByteArray, QObject, QPointF, QSettings, Qt, QThread, Signal, Slot
-from PySide6.QtGui import QAction, QDesktopServices, QIcon, QImage, QImageWriter, QPainter, QWheelEvent
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QBrush,
+    QColor,
+    QDesktopServices,
+    QIcon,
+    QImage,
+    QImageWriter,
+    QPainter,
+    QWheelEvent,
+)
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtSvgWidgets import QGraphicsSvgItem
 from PySide6.QtWidgets import (
@@ -46,6 +57,15 @@ from aocapp.domain.s21_models import S21Config
 from aocapp.domain.transformers import ELEMENT_NUMBERS, derive_transformer_steps
 from aocapp.infrastructure.design_files import DesignFileService
 from aocapp.infrastructure.trace_files import ComparisonTrace, TraceFileReader
+from aocapp.ui.theme import (
+    THEME_COLORS,
+    THEME_TITLES,
+    Theme,
+    apply_application_theme,
+    dock_stylesheet,
+    load_theme,
+    save_theme,
+)
 from aocapp.ui.update_dialogs import DownloadReleaseWorker, FetchReleasesWorker, ReleasePickerDialog
 
 CURRENT_DOCK_LAYOUT_VERSION = 1
@@ -367,6 +387,9 @@ class MainWindow(QMainWindow):
         self._comparison_traces: dict[str, ComparisonTrace] = {}
         self._theory_trace: tuple[object, object] | None = None
         self._previous_theory_trace: tuple[object, object] | None = None
+        self._theme = load_theme()
+        self._muted_labels: list[QLabel] = []
+        self._heading_labels: list[QLabel] = []
 
         self._build_menu()
         self._configure_plot()
@@ -374,8 +397,23 @@ class MainWindow(QMainWindow):
         self._remember_transformer_inputs()
         self._apply_material_sync()
         self._update_svg()
+        self._apply_theme(self._theme)
 
     def _build_menu(self) -> None:
+        view_menu = self.menuBar().addMenu("Вид")
+        self.theme_menu = view_menu.addMenu("Тема")
+        self._theme_actions: dict[Theme, QAction] = {}
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        for theme in Theme:
+            action = QAction(THEME_TITLES[theme], self)
+            action.setCheckable(True)
+            action.setChecked(theme is self._theme)
+            action.triggered.connect(lambda _checked, current=theme: self.set_theme(current))
+            theme_group.addAction(action)
+            self.theme_menu.addAction(action)
+            self._theme_actions[theme] = action
+
         help_menu = self.menuBar().addMenu("Справка")
 
         about_action = QAction("О программе", self)
@@ -390,6 +428,7 @@ class MainWindow(QMainWindow):
         """Create the same movable dock workspace pattern used by RnSApp."""
         self._configure_dock_manager_features()
         self.dock_manager = CDockManager(self)
+        self._default_dock_stylesheet = self.dock_manager.styleSheet()
 
         self.parameters_dock = CDockWidget("Параметры")
         self.parameters_dock.setObjectName("parameters_dock")
@@ -443,7 +482,7 @@ class MainWindow(QMainWindow):
         vbox = QVBoxLayout(inner)
 
         title = QLabel("Параметры структуры")
-        title.setStyleSheet("font-weight: bold; font-size: 16px;")
+        self._heading_labels.append(title)
         vbox.addWidget(title)
 
         subtitle = QLabel(
@@ -451,7 +490,7 @@ class MainWindow(QMainWindow):
             "Enter в поле обновляет схему; Run S21 пересчитывает график."
         )
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("color: #555;")
+        self._muted_labels.append(subtitle)
         vbox.addWidget(subtitle)
 
         fields_by_group = {group: [] for group in S21Config.GROUP_ORDER}
@@ -491,7 +530,6 @@ class MainWindow(QMainWindow):
                 index = int(group_fields[0].name.split("_")[1])
                 status = QLabel()
                 status.setWordWrap(True)
-                status.setStyleSheet("color: #555;")
                 self._transformer_status[index] = status
                 form.addRow(status)
                 for info in group_fields:
@@ -565,12 +603,12 @@ class MainWindow(QMainWindow):
 
         self._s21_status = QLabel("The grouped preview mirrors the new backend parameter model.")
         self._s21_status.setWordWrap(True)
-        self._s21_status.setStyleSheet("color: #555;")
+        self._muted_labels.append(self._s21_status)
         controls_layout.addWidget(self._s21_status)
 
         hint = QLabel("Wheel to zoom, drag to pan, Home returns to the initial fitted view.")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #555;")
+        self._muted_labels.append(hint)
         controls_layout.addWidget(hint)
 
         vbox.addStretch(1)
@@ -716,6 +754,15 @@ class MainWindow(QMainWindow):
         dock_widgets_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
         dock_widgets_button.setMenu(self.dock_widgets_menu)
         toolbar.addWidget(dock_widgets_button)
+        toolbar.addSeparator()
+
+        theme_button = QtWidgets.QToolButton(self)
+        theme_button.setObjectName("theme_button")
+        theme_button.setText("Тема")
+        theme_button.setToolTip("Светлая или тёмная тема; выбор сохраняется")
+        theme_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        theme_button.setMenu(self.theme_menu)
+        toolbar.addWidget(theme_button)
 
     def _refresh_dock_widgets_menu(self) -> None:
         """Rebuild the panel checklist from the actual QtAds state."""
@@ -790,6 +837,36 @@ class MainWindow(QMainWindow):
                 dock.toggleView(True)
         self._apply_default_dock_sizes()
         self.save_settings()
+
+    @property
+    def theme(self) -> Theme:
+        return self._theme
+
+    def set_theme(self, theme: Theme) -> None:
+        """Switch the theme on the fly and remember it for the next launch."""
+        self._apply_theme(theme)
+        save_theme(self._theme)
+
+    def _apply_theme(self, theme: Theme) -> None:
+        """Recolour widgets, QtAds docks, the plot and the schematic backdrop."""
+        self._theme = Theme(theme)
+        colors = THEME_COLORS[self._theme]
+        dark_icons = _resource_path("assets", "theme-dark")
+        apply_application_theme(QApplication.instance(), self._theme, dark_icons)
+        self.dock_manager.setStyleSheet(dock_stylesheet(self._theme, self._default_dock_stylesheet, dark_icons))
+        for label in self._muted_labels:
+            label.setStyleSheet(f"color: {colors.muted_text};")
+        heading = "font-weight: bold; font-size: 16px;"
+        if colors.heading_text:
+            heading += f" color: {colors.heading_text};"
+        for label in self._heading_labels:
+            label.setStyleSheet(heading)
+        # The SVG sheet keeps its own light background; only the area around it changes.
+        backdrop = colors.schematic_backdrop
+        self._view.setBackgroundBrush(QBrush(QColor(backdrop)) if backdrop else QBrush())
+        self._apply_plot_theme()
+        self._refresh_transformer_status()
+        self._theme_actions[self._theme].setChecked(True)
 
     def _last_files_directory(self) -> str:
         """Return the last successful parameter-file directory or a useful default."""
@@ -939,24 +1016,17 @@ class MainWindow(QMainWindow):
         return editor
 
     def _configure_plot(self) -> None:
-        pg.setConfigOption("background", "#ffffff")
-        pg.setConfigOption("foreground", "#7f7f7f")
-        self._plot.setBackground("#ffffff")
         self._plot.setTitle("S21 vs Frequency")
         self._plot.setLabel("left", "S21", units="dB")
         self._plot.setLabel("bottom", "Frequency", units="GHz")
         self._plot.showGrid(x=True, y=True, alpha=0.10)
         self._plot.setMenuEnabled(False)
         self._plot_legend = self._plot.addLegend(offset=(10, 10))
-        self._plot_threshold_line = pg.InfiniteLine(pos=-5.0, angle=0, pen=pg.mkPen("#dc2626", width=1))
+        self._plot_threshold_line = pg.InfiniteLine(pos=-5.0, angle=0)
         self._plot_threshold_line.setZValue(-1)
         self._plot.addItem(self._plot_threshold_line, ignoreBounds=True)
         self._plot.getPlotItem().setContentsMargins(12, 12, 12, 12)
-        axis_pen = pg.mkPen("#7f7f7f", width=1)
-        for axis_name in ("left", "bottom"):
-            axis = self._plot.getPlotItem().getAxis(axis_name)
-            axis.setPen(axis_pen)
-            axis.setTextPen(axis_pen)
+        self._apply_plot_theme()
         self._plot_initial_range = (100.0, 900.0, -20.0, 0.0)
         self._plot_hover_label = QLabel(self._plot)
         self._plot_hover_label.setStyleSheet(
@@ -967,6 +1037,37 @@ class MainWindow(QMainWindow):
         self._plot.scene().sigMouseMoved.connect(self._on_plot_mouse_moved)
         self._plot.getPlotItem().vb.sigXRangeChanged.connect(self._sync_frequency_axis_unit)
         self._restore_plot_scale()
+
+    def _apply_plot_theme(self) -> None:
+        """Recolour the plot in place, keeping curves and the current range."""
+        colors = THEME_COLORS[self._theme]
+        pg.setConfigOption("background", colors.plot_background)
+        pg.setConfigOption("foreground", colors.plot_foreground)
+        self._plot.setBackground(colors.plot_background)
+        self._plot.setTitle("S21 vs Frequency", color=colors.plot_foreground)
+        axis_pen = pg.mkPen(colors.plot_foreground, width=1)
+        for axis_name in ("left", "bottom"):
+            axis = self._plot.getPlotItem().getAxis(axis_name)
+            axis.setPen(axis_pen)
+            axis.setTextPen(axis_pen)
+        self._plot_legend.setLabelTextColor(colors.plot_foreground)
+        self._plot_threshold_line.setPen(pg.mkPen(colors.threshold_line, width=1))
+        for item in self._plot.listDataItems():
+            style = self._curve_style(item.name())
+            item.setPen(style["pen"])
+            if "symbolBrush" in style:
+                item.setSymbolBrush(style["symbolBrush"])
+                item.setSymbolPen(style["symbolPen"])
+
+    def _curve_style(self, name: str) -> dict:
+        """Return the pyqtgraph pen options for a named curve in the current theme."""
+        colors = THEME_COLORS[self._theme]
+        if name == "Previous theory":
+            return {"pen": pg.mkPen(color=colors.previous_curve, width=2)}
+        if name == "Theory":
+            color = colors.theory_curve
+            return {"pen": pg.mkPen(color=color, width=2), "symbol": "o", "symbolBrush": color, "symbolPen": color}
+        return {"pen": pg.mkPen(color=colors.experiment_curve, width=2, style=Qt.PenStyle.DotLine)}
 
     def _apply_plot_scale(self) -> None:
         """Validate editors and make their range the new Home position."""
@@ -1091,6 +1192,7 @@ class MainWindow(QMainWindow):
         self._refresh_transformer_status()
 
     def _refresh_transformer_status(self) -> None:
+        colors = THEME_COLORS[self._theme]
         for index, status in self._transformer_status.items():
             if index not in self._transformer_baselines:
                 continue
@@ -1103,10 +1205,10 @@ class MainWindow(QMainWindow):
                 else:
                     steps = derive_transformer_steps(*(value * 1e-6 for value in current))
                     status.setText(f"n={steps.n_um}; ступеней: {steps.intervals + 1}; dl={steps.dl_m * 1e6:g} µm")
-                status.setStyleSheet("color: #555;")
+                status.setStyleSheet(f"color: {colors.muted_text};")
             except ValueError as error:
                 status.setText(str(error))
-                status.setStyleSheet("color: #b91c1c;")
+                status.setStyleSheet(f"color: {colors.error_text};")
 
     def _apply_material_sync(self) -> None:
         if self._same_materials_checkbox is None or not self._same_materials_checkbox.isChecked():
@@ -1253,39 +1355,20 @@ class MainWindow(QMainWindow):
         if self._previous_theory_trace is not None:
             previous = self._plot.plot(
                 *self._previous_theory_trace,
-                pen=pg.mkPen(color=(70, 70, 70, 153), width=2),
                 name="Previous theory",
+                **self._curve_style("Previous theory"),
             )
             previous.setZValue(0)
         if self._theory_trace is not None:
             frequencies, s21_db = self._theory_trace
-            pen = pg.mkPen(color="#1f77b4", width=2)
-            current = self._plot.plot(
-                frequencies,
-                s21_db,
-                pen=pen,
-                symbol="o",
-                symbolSize=4,
-                symbolBrush="#1f77b4",
-                symbolPen="#1f77b4",
-                name="Theory",
-            )
+            current = self._plot.plot(frequencies, s21_db, symbolSize=4, name="Theory", **self._curve_style("Theory"))
             current.setZValue(1)
 
-        styles = {
-            "Experiment": ("#2ca02c", Qt.PenStyle.DotLine),
-        }
         for kind in ("Experiment",):
             trace = self._comparison_traces.get(kind)
             if trace is None:
                 continue
-            color, style = styles[kind]
-            self._plot.plot(
-                trace.frequencies,
-                trace.coefficients,
-                pen=pg.mkPen(color=color, width=2, style=style),
-                name=kind,
-            )
+            self._plot.plot(trace.frequencies, trace.coefficients, name=kind, **self._curve_style(kind))
 
         # PlotItem enables auto-range again when curves are cleared/re-added.
         # Reapply the user's Home range so recalculation/import cannot silently
@@ -1552,6 +1635,13 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         with contextlib.suppress(Exception):
             self.save_settings()
+        # The legend's pyqtgraph anchor re-reads its ViewBox on every legend
+        # geometry change. After a theme switch the legend still resizes while
+        # the window is destroyed, after the ViewBox is gone, which prints a
+        # RuntimeError on exit. A closed main window no longer needs anchoring.
+        with contextlib.suppress(RuntimeError, TypeError, AttributeError):
+            legend = self._plot_legend
+            legend.geometryChanged.disconnect(legend._GraphicsWidgetAnchor__geometryChanged)
         self._cleanup_update_thread()
         if self._s21_thread is not None:
             self._s21_thread.requestInterruption()
