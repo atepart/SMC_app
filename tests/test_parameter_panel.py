@@ -187,6 +187,59 @@ def test_issue_10_radial_stub_line_and_output_line_names(parameter_window: MainW
     assert [p.label for p in elements["Ww1"].parameters] == ["W1", "L1"]
 
 
+@pytest.mark.parametrize(
+    "ctrl",
+    # Windows Ctrl, and macOS Control which Qt reports as Meta.
+    [QtCore.Qt.KeyboardModifier.ControlModifier, QtCore.Qt.KeyboardModifier.MetaModifier],
+)
+def test_issue_10_keyboard_moves_between_fields_and_blocks(parameter_window: MainWindow, ctrl) -> None:
+    """GitHub #10: Ctrl+↓/↑ next/previous field, Ctrl+Tab next block, Alt+↑/↓ coarse step."""
+    window, inputs = parameter_window, parameter_window._config_inputs
+    alt = QtCore.Qt.KeyboardModifier.AltModifier
+    focused = QtWidgets.QApplication.focusWidget
+
+    def press(spin, key, modifiers=QtCore.Qt.KeyboardModifier.NoModifier):
+        QTest.keyClick(spin.lineEdit(), key, modifiers)
+        QtWidgets.QApplication.processEvents()
+
+    def field_name():
+        widget = focused()
+        return next(name for name, spin in inputs.items() if widget in (spin, spin.lineEdit()))
+
+    start = inputs["msl_6_width_m"]
+    window._focus_field(start)
+    press(start, QtCore.Qt.Key.Key_Down, ctrl)
+    assert field_name() == "msl_6_len_m"
+    press(inputs["msl_6_len_m"], QtCore.Qt.Key.Key_Down, ctrl)
+    assert field_name() == "transf_4_w_end_m"  # into the next block, like Tab
+    press(inputs["transf_4_w_end_m"], QtCore.Qt.Key.Key_Up, ctrl)
+    assert field_name() == "msl_6_len_m"
+    assert inputs["msl_6_len_m"].lineEdit().selectedText() == inputs["msl_6_len_m"].text()
+
+    # Ctrl+Tab: the first field of the next block; Ctrl+Shift+Tab: previous block.
+    press(inputs["msl_6_len_m"], QtCore.Qt.Key.Key_Tab, ctrl)
+    assert field_name() == "transf_4_w_end_m"
+    press(inputs["transf_4_w_end_m"], QtCore.Qt.Key.Key_Tab, ctrl)
+    assert field_name() == "w_slot_m"
+    press(inputs["w_slot_m"], QtCore.Qt.Key.Key_Backtab, ctrl | QtCore.Qt.KeyboardModifier.ShiftModifier)
+    assert field_name() == "transf_4_w_end_m"
+    # A collapsed block opens when it is reached.
+    window._parameter_groups["8 · DC block"].setChecked(False)
+    press(inputs["transf_4_w_end_m"], QtCore.Qt.Key.Key_Tab, ctrl)
+    assert field_name() == "w_slot_m" and window._parameter_groups["8 · DC block"].isChecked()
+
+    # Plain arrows keep the fine step; Alt gives the coarse ×10 step.
+    spin = inputs["w_slot_m"]
+    before = spin.value()
+    press(spin, QtCore.Qt.Key.Key_Up)
+    assert spin.value() == pytest.approx(before + spin.singleStep())
+    press(spin, QtCore.Qt.Key.Key_Up, alt)
+    assert spin.value() == pytest.approx(before + 11 * spin.singleStep())
+    press(spin, QtCore.Qt.Key.Key_Down, alt)
+    assert spin.value() == pytest.approx(before + spin.singleStep())
+    assert field_name() == "w_slot_m"  # Alt never moves the focus
+
+
 def test_preview_rejects_nonpositive_corrected_dc_slot(parameter_window: MainWindow) -> None:
     parameter_window._config_inputs["w_slot_m"].setValue(0.1)
     parameter_window._config_inputs["dw_m"].setValue(0.5)

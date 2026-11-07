@@ -273,14 +273,67 @@ class SafeDoubleSpinBox(QDoubleSpinBox):
     """
 
     returnPressed = Signal()
+    # GitHub #10 keyboard: Ctrl+↑/↓ previous/next field, Ctrl+Tab next block.
+    fieldNavigation = Signal(int)
+    blockNavigation = Signal(int)
+    COARSE_FACTOR = 10
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._wheel_armed = False
         self.setLocale(QtCore.QLocale.c())
         self.setKeyboardTracking(False)
+        # The inner line edit has the focus and would turn Meta+Tab into Tab.
+        self.lineEdit().installEventFilter(self)
+
+    @staticmethod
+    def _control_held(event) -> bool:
+        # Windows/Linux Ctrl; on macOS the physical Control key is Meta in Qt
+        # (Cmd is Control there and Cmd+Tab belongs to the system).
+        return bool(event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier))
+
+    def _block_navigation(self, event) -> bool:
+        """Handle Ctrl+Tab / Ctrl+Shift+Tab before Qt's focus chain sees them."""
+        if event.type() not in (QtCore.QEvent.Type.KeyPress, QtCore.QEvent.Type.ShortcutOverride):
+            return False
+        if event.key() not in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab) or not self._control_held(event):
+            return False
+        if event.type() == QtCore.QEvent.Type.KeyPress:
+            backwards = event.key() == Qt.Key.Key_Backtab or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            self.blockNavigation.emit(-1 if backwards else 1)
+        event.accept()
+        return True
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API
+        # The line edit would otherwise use Cmd+↓ (end of text) on macOS.
+        if watched is self.lineEdit() and (self._block_navigation(event) or self._arrow_keys(event)):
+            return True
+        return super().eventFilter(watched, event)
+
+    def event(self, event) -> bool:  # noqa: D401 - Qt API
+        return self._block_navigation(event) or super().event(event)
+
+    def _arrow_keys(self, event) -> bool:
+        """Ctrl+↓/↑ move like Tab/Shift+Tab; Alt+↑/↓ change by a coarse step."""
+        if event.type() not in (QtCore.QEvent.Type.KeyPress, QtCore.QEvent.Type.ShortcutOverride):
+            return False
+        if event.key() not in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            return False
+        control = self._control_held(event)
+        if not control and not event.modifiers() & Qt.KeyboardModifier.AltModifier:
+            return False
+        if event.type() == QtCore.QEvent.Type.KeyPress:
+            direction = 1 if event.key() == Qt.Key.Key_Up else -1
+            if control:
+                self.fieldNavigation.emit(-direction)
+            else:
+                self.stepBy(direction * self.COARSE_FACTOR)
+        event.accept()
+        return True
 
     def keyPressEvent(self, event) -> None:
+        if self._arrow_keys(event):
+            return
         super().keyPressEvent(event)
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.returnPressed.emit()
@@ -529,7 +582,8 @@ class MainWindow(QMainWindow):
 
         subtitle = QLabel(
             "Номера элементов идут слева направо от ФФО. W1 — ширина слева, W2 — справа; L — общая длина. "
-            "Enter в поле обновляет схему; Run S21 пересчитывает график."
+            "Enter в поле обновляет схему; Run S21 пересчитывает график. "
+            "Ctrl+↓/↑ — следующее/предыдущее поле, Ctrl+Tab — следующий блок, Alt+↑/↓ — грубый шаг ×10."
         )
         subtitle.setWordWrap(True)
         self._muted_labels.append(subtitle)
@@ -1034,9 +1088,51 @@ class MainWindow(QMainWindow):
         spin.setValue(self._defaults.ui_value(name))
         self._loaded_ui_values[name] = spin.value()
         spin.returnPressed.connect(self._update_svg)
+        spin.fieldNavigation.connect(lambda step, current=spin: self._move_to_field(current, step))
+        spin.blockNavigation.connect(lambda step, current=spin: self._move_to_block(current, step))
         if name in self._material_sync_map:
             spin.valueChanged.connect(self._apply_material_sync)
         return spin
+
+    def _parameter_blocks(self) -> list[tuple[CollapsibleParameterGroup, list[SafeDoubleSpinBox]]]:
+        """Parameter blocks top to bottom with their editable fields in form order."""
+        blocks = []
+        for box in self._parameter_groups.values():
+            form = box.form_layout
+            spins = []
+            for row in range(form.rowCount()):
+                item = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
+                widget = item.widget() if item is not None else None
+                if widget is None:
+                    continue
+                candidates = (
+                    [widget] if isinstance(widget, SafeDoubleSpinBox) else widget.findChildren(SafeDoubleSpinBox)
+                )
+                spins.extend(spin for spin in candidates if spin.isEnabled())
+            blocks.append((box, spins))
+        return blocks
+
+    def _focus_field(self, spin: SafeDoubleSpinBox) -> None:
+        self.parameters_scroll.ensureWidgetVisible(spin)
+        spin.setFocus(Qt.FocusReason.TabFocusReason)  # selects the value, as Tab does
+        spin.selectAll()
+
+    def _move_to_field(self, current: SafeDoubleSpinBox, step: int) -> None:
+        """Ctrl+↓/Ctrl+↑: the next/previous field of expanded blocks, like Tab."""
+        spins = [spin for box, block in self._parameter_blocks() if box.isChecked() for spin in block]
+        if current in spins:
+            self._focus_field(spins[(spins.index(current) + step) % len(spins)])
+
+    def _move_to_block(self, current: SafeDoubleSpinBox, step: int) -> None:
+        """Ctrl+Tab/Ctrl+Shift+Tab: the first field of the next/previous block."""
+        blocks = [(box, spins) for box, spins in self._parameter_blocks() if spins]
+        index = next((i for i, (_box, spins) in enumerate(blocks) if current in spins), None)
+        if index is None:
+            return
+        box, spins = blocks[(index + step) % len(blocks)]
+        box.setChecked(True)  # a collapsed target block opens
+        QApplication.processEvents()
+        self._focus_field(spins[0])
 
     def _build_parameter_editor(self, name: str, spin: SafeDoubleSpinBox, suffix: str) -> QWidget:
         """Keep units outside every numeric editor, preserving SI conversions."""
