@@ -42,6 +42,10 @@ DC_FILL = "#d7edf5"
 SLOT_FILL = "#1a1a1a"
 CENTRE_LINE_COLOR = "#f59e0b"
 WARNING_COLOR = "#b91c1c"
+# Element boundaries (GitHub #11): blue, so they read as joints and never as
+# the near-black metal outline (0.8) or the orange hover highlight.
+SEAM_COLOR = "#2563eb"
+SEAM_WIDTH = 0.6
 # As in the HFSS model: stub tops 1 µm below the lowest adjacent line edge
 # (the foot of a corner transformer), the slot top 1 µm below the stub tops.
 FOOT_UM = 1.0
@@ -158,8 +162,7 @@ class _Canvas:
     elements: list[SchematicElement] = field(default_factory=list)
     bounds_points: list[Point] = field(default_factory=list)
     excluded_edges: list[tuple[Point, Point]] = field(default_factory=list)
-    # Joints inside one numbered element (the two parts of 14) get no seam.
-    unmarked_joins: list[float] = field(default_factory=list)
+    seams: list[LineShape] = field(default_factory=list)
     # Contours by element for the viewer's hover highlight (GitHub #10).
     hit_areas: list[tuple[str, tuple[Point, ...]]] = field(default_factory=list)
 
@@ -188,6 +191,7 @@ class _Canvas:
             underlay_paths=list(self.underlay_paths),
             callouts=list(self.callouts),
             hit_areas=list(self.hit_areas),
+            seams=list(self.seams),
             bounds=Rect(bounds.x - 20, bounds.y - 20, bounds.width + 40, bounds.height + 40),
         )
 
@@ -476,7 +480,6 @@ class IntegratedStructureCalculator(StructureCalculator):
             x = self._strip(canvas, "SIS-line", "Линия SIS", x, y, _um(length_m), _um(width_m), _um(width_m), dw)
             parts.append(canvas.elements.pop())
         first, second = parts
-        canvas.unmarked_joins.append(first.output_port.center.x)
         feed = SchematicElement(
             "SIS-line",
             "Линия SIS",
@@ -588,17 +591,12 @@ class IntegratedStructureCalculator(StructureCalculator):
 
         Sections have vertical join faces. Split those faces at all endpoints,
         cancel opposite orientations and assemble the remaining external edges.
-        Shared intervals receive one thin separator instead of doubled outlines.
+        Shared intervals receive one thin seam instead of doubled outlines:
+        every element boundary, including 13|14, the L1|L2 joint of 14 under
+        the SIS circle and 14|16|17|18 around the radial stub (GitHub #11).
         """
         axis_edges: dict[tuple[str, float], list[tuple[float, float, int]]] = {}
         edges: list[tuple[Point, Point]] = []
-        # These are consecutive parts of one SIS/radial conductor, not
-        # numbered section boundaries. Keep only its exterior width steps.
-        unmarked_joins = {
-            round(e.input_port.center.x, 9)
-            for e in canvas.elements
-            if e.input_port is not None and e.element_id in {"Ww3", "Radial", "Ww1"}
-        } | {round(x, 9) for x in canvas.unmarked_joins}
         polygons = [p.points for p in canvas.polygons]
         polygons += [
             [
@@ -637,8 +635,8 @@ class IntegratedStructureCalculator(StructureCalculator):
                 covering = [sign for start, stop, sign in spans if start <= (lo + hi) / 2 <= stop]
                 if sum(covering):
                     edges.append((at(lo), at(hi)))
-                elif covering and not (axis == "v" and position in unmarked_joins):
-                    canvas.lines.append(LineShape(at(lo), at(hi), stroke="#64748b", stroke_width=0.45))
+                elif covering:
+                    canvas.seams.append(LineShape(at(lo), at(hi), stroke=SEAM_COLOR, stroke_width=SEAM_WIDTH))
 
         def key(p: Point) -> tuple[float, float]:
             return round(p.x, 9), round(p.y, 9)

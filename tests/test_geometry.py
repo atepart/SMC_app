@@ -143,13 +143,78 @@ def test_sis_is_a_readable_symbol_in_the_calculated_feed() -> None:
     assert _parameters(_elements(changed)["SIS"]) == pytest.approx({"S": 20, "Wb (расч.)": 8})
 
 
-def test_sis_radial_conductor_has_no_artificial_internal_dividers() -> None:
-    geometry = IntegratedStructureCalculator().calculate(S21Config())
+def _outline_vertical_spans(overview, x: float) -> list[tuple[float, float]]:
+    outline = next(p for p in overview.paths if p.element_id == "metal-outline").data
+    spans = []
+    for chain in re.findall(r"M[^M]+", outline):
+        points = [Point(float(a), float(b)) for a, b in re.findall(r"([-\d.e]+),([-\d.e]+)", chain)]
+        if chain.rstrip().endswith("Z"):
+            points.append(points[0])
+        spans += [
+            (min(a.y, b.y), max(a.y, b.y))
+            for a, b in zip(points, points[1:])
+            if a.x == pytest.approx(x) and b.x == pytest.approx(x)
+        ]
+    return spans
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        S21Config(),
+        # Different widths on each side: the seam spans only the shared face.
+        S21Config(mex4_width_m=9e-6, zrad4_width_m=5e-6, zrad3_width_m=7e-6, zrad1_width_m=3e-6),
+        S21Config(mex4_width_m=3e-6, zrad4_width_m=8e-6, transf_1_w_start_m=4e-6),
+    ],
+)
+def test_every_boundary_near_sis_has_exactly_one_seam_across_the_shared_face(config) -> None:
+    """GitHub #11 reverses the seamless SIS/radial conductor of earlier versions."""
+    geometry = IntegratedStructureCalculator().calculate(config)
+    overview = geometry.overview
     elements = _elements(geometry)
-    for x in [elements["SIS-line"].auxiliary_rects[0].right] + [
-        elements[name].input_port.center.x for name in ("Ww3", "Radial", "Ww1")
-    ]:
-        assert not any(line.start.x == line.end.x == x for line in geometry.overview.lines)
+    first, second = elements["SIS-line"].auxiliary_rects
+    joins = {
+        "13|14": (
+            elements["T1"].output_port.center.x,
+            elements["T1"].output_port.width,
+            elements["SIS-line"].input_port.width,
+        ),
+        "14 L1|L2": (first.right, first.height, second.height),
+        "14|16": (
+            elements["Ww3"].input_port.center.x,
+            elements["SIS-line"].output_port.width,
+            elements["Ww3"].input_port.width,
+        ),
+        "16|17": (
+            elements["Radial"].input_port.center.x,
+            elements["Ww3"].output_port.width,
+            elements["Radial"].input_port.width,
+        ),
+        "17|18": (
+            elements["Ww1"].input_port.center.x,
+            elements["Radial"].output_port.width,
+            elements["Ww1"].input_port.width,
+        ),
+    }
+    assert len({round(x, 9) for x, _, _ in joins.values()}) == len(joins)
+    for name, (x, left, right) in joins.items():
+        seams = [line for line in overview.seams if line.start.x == pytest.approx(x) == line.end.x]
+        assert len(seams) == 1, name
+        seam = seams[0]
+        assert (min(seam.start.y, seam.end.y), max(seam.start.y, seam.end.y)) == pytest.approx(
+            (-min(left, right) / 2, min(left, right) / 2)
+        ), name
+        assert seam.stroke == "#2563eb" and seam.stroke_width == pytest.approx(0.6) and not seam.arrow_end
+        # No double line: the outline keeps only the exposed width step there.
+        seam_lo, seam_hi = sorted((seam.start.y, seam.end.y))
+        for lo, hi in _outline_vertical_spans(overview, x):
+            assert hi <= seam_lo + 1e-9 or lo >= seam_hi - 1e-9, name
+        assert not any(line.start.x == pytest.approx(x) == line.end.x for line in overview.lines), name
+    # The SIS circle sits on the L1|L2 seam and is drawn above it and the outline.
+    symbol = overview.circles[0]
+    assert symbol.center.x == pytest.approx(first.right)
+    svg = SvgRendererImpl().render(overview)
+    assert svg.index('stroke="#2563eb"') < svg.index('id="metal-outline"') < svg.index("<circle")
 
 
 def test_sis_line_dimensions_use_its_editable_fields_not_sis_model_width() -> None:
@@ -284,8 +349,9 @@ def test_numbers_sis_and_port_label_are_on_the_overview() -> None:
     leaders = [line for line in geometry.overview.lines if line.arrow_end]
     assert len(leaders) == 19
     assert all(line.stroke_width == pytest.approx(0.6) for line in leaders)
-    # Only the callouts carry arrowheads; seams stay plain 0.45 lines.
-    assert not [line for line in geometry.overview.lines if line.stroke_width == 0.45 and line.arrow_end]
+    # Seams are a separate layer of plain lines; only the callouts carry arrowheads.
+    assert geometry.overview.seams and not any(seam.arrow_end for seam in geometry.overview.seams)
+    assert all(line.arrow_end for line in geometry.overview.lines)
     svg = SvgRendererImpl().render(geometry.overview)
     ElementTree.fromstring(svg)
     assert '<marker id="leader-arrow"' in svg
@@ -530,9 +596,8 @@ def test_corner_contact_and_stub_share_a_seam_with_a_visible_step(contact_um, st
     middle = (left[0].x + left[1].x) / 2
     seams = [
         line
-        for line in geometry.overview.lines
+        for line in geometry.overview.seams
         if line.start.y == line.end.y == pytest.approx(contact_y)
-        and line.stroke_width == 0.45
         and left[0].x - 30 <= min(line.start.x, line.end.x) <= left[1].x + 1e-9
     ]
     # One thin separator (the red line of the sketch) over the shared width.
@@ -654,9 +719,7 @@ def test_default_width_mismatches_remain_steps_not_gaps_or_input_changes() -> No
     assert elements["T6"].input_port.width == 97
     # One thin seam at the overlap, not two thick polygon outlines.
     joint_x = elements["T7"].output_port.center.x
-    seams = [
-        line for line in geometry.overview.lines if line.start.x == joint_x == line.end.x and line.stroke_width == 0.45
-    ]
+    seams = [line for line in geometry.overview.seams if line.start.x == joint_x == line.end.x]
     assert len(seams) == 1
     assert config == S21Config()
 

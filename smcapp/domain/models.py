@@ -169,6 +169,10 @@ class StructureGeometry:
     # Contours that belong to each element (the fans of the radial stub, the
     # DC-block slot): what the cursor is over when the viewer highlights a number.
     hit_areas: List[tuple[str, tuple[Point, ...]]] = field(default_factory=list)
+    # One thin line on every face shared by two elements (or the two parts of
+    # 14). Rendered above the metal fill but below its outline and the SIS
+    # circle, so the circle sits on top of the L1|L2 seam (GitHub #11).
+    seams: List[LineShape] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

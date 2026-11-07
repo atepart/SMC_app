@@ -17,7 +17,8 @@ DARK_SVG_SCHEME = SvgColorScheme(
         "#111111": "#e5e7eb",  # metal outline, text
         "#1a1a1a": "#8b95a5",  # slot in the ground plane
         "#000000": "#d1d5db",  # dimension lines, arrows and values
-        "#64748b": "#94a3b8",  # seams, leaders, notes
+        "#64748b": "#94a3b8",  # leaders, notes
+        "#2563eb": "#60a5fa",  # seams between elements
         "#6b7280": "#9ca3af",  # hatching
         "#e8f1f5": "#2c3e4c",  # lines, radial stubs
         "#dbeafe": "#2d4566",  # transformers
@@ -50,6 +51,7 @@ class SvgRendererImpl(SvgRenderer):
         underlays = "\n".join(self._render_path(path) for path in geometry.underlay_paths)
         paths = "\n".join(self._render_path(path) for path in geometry.paths)
         rects = "\n".join(self._render_rect(rect_shape) for rect_shape in geometry.rects)
+        seams = "\n".join(self._render_line(line) for line in geometry.seams)
         circles = "\n".join(self._render_circle(circle) for circle in geometry.circles)
         lines = "\n".join(self._render_line(line) for line in geometry.lines)
         labels = "\n".join(self._render_label(label) for label in geometry.labels)
@@ -71,6 +73,7 @@ class SvgRendererImpl(SvgRenderer):
     {underlays}
     {polygons}
     {rects}
+    {seams}
     {paths}
     {circles}
     {lines}
