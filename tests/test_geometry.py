@@ -449,14 +449,56 @@ def test_short_corner_length_is_drawn_at_its_minimum_with_a_warning() -> None:
     minimum = hypot(6 + dw, 10 + dw) / 2 + 1
     assert values["L1"] == 0
     assert values["L1"] + values["L2"] + values["L3"] == pytest.approx(minimum, abs=1e-3)
-    # No horizontal part: the foot starts right at the line end.
-    assert t4.auxiliary_lines[-1].end.x == pytest.approx(t4.input_port.center.x + (10 + dw))
+    # No horizontal part: the foot starts the drop L3 (1 µm) after the line
+    # end, so the line-end face keeps the line width.
+    assert t4.auxiliary_lines[-1].end.x == pytest.approx(t4.input_port.center.x + 1 * 2 + (10 + dw))
     # No "7/9: L < Lmin" lines under the DC block in either mode; only the
     # corner card next to the element warns.
     assert not any("Lmin" in label.text for label in geometry.labels)
     warnings = [label.text for label in geometry.labels if "меньше минимума" in label.text]
-    assert warnings == [f"L=6 меньше минимума {minimum:.3g}: ступня сразу у торца"] * 2
+    assert warnings == [f"L=6 меньше минимума {minimum:.3g}: ступня у торца, снизу скос"] * 2
     assert not any("меньше минимума" in label.text for label in geometry.overview.labels)
+
+
+@pytest.mark.parametrize(
+    "line_um,w1_um,length_um",
+    [(7, 8, 4.5), (4, 6, 6), (4, 40, 12), (4, 6, 12)],
+)
+def test_corner_line_end_face_is_centred_on_its_line(line_um, w1_um, length_um) -> None:
+    """GitHub #10: the face of 7 (and 9) protrudes equally above and below line 6 (10)."""
+    from aocapp.domain.transformers import derive_transformer_steps
+
+    steps = derive_transformer_steps(w1_um * 1e-6, 10e-6, length_um * 1e-6, max_dl_um=3.0)
+    config = _corner_config(
+        msl_6_width_m=line_um * 1e-6,
+        msl_5_width_m=line_um * 1e-6,
+        transf_4_w_end_m=w1_um * 1e-6,
+        transf_4_w_start_m=10e-6,
+        transf_4_dwdl_um=steps.n_um,
+        transf_4_dl_m=steps.dl_m,
+        transf_3_w_end_m=10e-6,
+        transf_3_w_start_m=w1_um * 1e-6,
+        transf_3_dwdl_um=steps.n_um,
+        transf_3_dl_m=steps.dl_m,
+    )
+    elements = _elements(IntegratedStructureCalculator().calculate(config))
+    dw = config.dw_m * 1e6
+    for corner, line in (("T4", "MSL6"), ("T3", "MSL5")):
+        port = elements[corner].input_port or elements[corner].output_port
+        face = sorted(p.y for p in elements[corner].polygon if p.x == pytest.approx(port.center.x))
+        # Exactly two vertices on the face: W1 tall, centred on the line axis.
+        assert face == pytest.approx([-(w1_um + dw), w1_um + dw])
+        line_bounds = elements[line].bounds
+        assert -face[0] - (-line_bounds.y) == pytest.approx(face[1] - line_bounds.bottom)
+        # Leaving the face's top vertex: a horizontal part of length L1 or,
+        # when L1 = 0, the chamfer itself (a sharp top corner).
+        polygon = elements[corner].polygon
+        top = next(i for i, p in enumerate(polygon) if p.y == pytest.approx(face[0]))
+        away = next(p for p in (polygon[top - 1], polygon[(top + 1) % len(polygon)]) if abs(p.x - port.center.x) > 1e-9)
+        l1 = _parameters(elements[corner])["L1"]
+        assert (abs(away.y - face[0]) < 1e-9) is (l1 > 0)
+        if l1 > 0:
+            assert abs(away.x - port.center.x) == pytest.approx(l1 * 2, abs=1e-3)
 
 
 def test_corner_contacts_must_not_close_the_stub_gap() -> None:

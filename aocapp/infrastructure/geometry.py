@@ -89,6 +89,16 @@ class _CornerLayout:
         minimum = l2 + l3
         return cls(max(0.0, length - minimum), l2, l3, minimum)
 
+    @property
+    def foot(self) -> float:
+        """Distance from the line end to the outer edge of the foot.
+
+        The line-end face is always the full line width, centred on the axis.
+        A short L1 (below the drop L3) would make that face run down to the
+        stub, so the foot then starts L3 away and a lower chamfer joins it.
+        """
+        return max(self.l1, self.l3)
+
 
 def _corner_points(
     joint_x: float,
@@ -110,18 +120,18 @@ def _corner_points(
     def at(u: float, v: float) -> Point:
         return Point(joint_x + direction * u, y + v)
 
-    outer, inner = layout.l1, layout.l1 + contact_width
+    outer, inner = layout.foot, layout.foot + contact_width
     contour = [
         at(0, -line_width / 2),
-        at(outer, -line_width / 2),
+        at(layout.l1, -line_width / 2),
         at(inner, line_width / 2),
         at(inner, depth),
         at(outer, depth),
-        at(outer, line_width / 2),
+        at(layout.l1, line_width / 2),
         at(0, line_width / 2),
     ]
     middle = outer + contact_width / 2
-    centre = [at(0, 0), at(outer, 0), at(middle, line_width / 2), at(middle, depth)]
+    centre = [at(0, 0), at(layout.l1, 0), at(middle, line_width / 2), at(middle, depth)]
     return _dedupe(contour), centre
 
 
@@ -330,11 +340,11 @@ class IntegratedStructureCalculator(StructureCalculator):
         left_layout = _CornerLayout.solve(t4_line, t4_contact, depth, lengths["T4"])
         right_layout = _CornerLayout.solve(t3_line, t3_contact, depth, lengths["T3"])
         # Feet are centred on the stubs.
-        outer_l = x + left_layout.l1 + t4_contact / 2 - stub_w / 2
+        outer_l = x + left_layout.foot + t4_contact / 2 - stub_w / 2
         inner_l = outer_l + stub_w
         inner_r = inner_l + gap
         outer_r = inner_r + stub_w
-        right_joint = outer_r - stub_w / 2 + t3_contact / 2 + right_layout.l1
+        right_joint = outer_r - stub_w / 2 + t3_contact / 2 + right_layout.foot
 
         corners = {}
         for name, joint, direction, line_w, contact_w, layout, number in (
@@ -841,7 +851,7 @@ class IntegratedStructureCalculator(StructureCalculator):
             canvas.labels.append(
                 TextLabel(
                     Point(x, y + 72),
-                    f"L={values['L']:g} меньше минимума {total:.3g}: ступня сразу у торца",
+                    f"L={values['L']:g} меньше минимума {total:.3g}: ступня у торца, снизу скос",
                     9,
                     fill=WARNING_COLOR,
                 )
