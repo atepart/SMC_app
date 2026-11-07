@@ -83,6 +83,8 @@ class LineShape:
     end: Point
     stroke: str = "#111111"
     stroke_width: float = 0.8
+    # A neat arrowhead at ``end`` (number callouts point at their element).
+    arrow_end: bool = False
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,15 @@ class TextLabel:
     anchor: str = "start"
     fill: str = "#111111"
     font_weight: str = "normal"
+
+
+@dataclass(frozen=True)
+class Callout:
+    """A label next to an element and the arrow from it to the element's edge."""
+
+    element_id: str
+    label: TextLabel
+    arrow: LineShape
 
 
 @dataclass(frozen=True)
@@ -152,6 +163,9 @@ class StructureGeometry:
     # Bottom-electrode features (the DC-block slot) lie beneath the top-film
     # metal in plan view, so they are rendered before every metal shape.
     underlay_paths: List[PathShape] = field(default_factory=list)
+    # Element numbers (and "SIS") with their arrows; the label and the arrow
+    # are also in ``labels``/``lines`` for rendering.
+    callouts: List[Callout] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

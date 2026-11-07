@@ -59,6 +59,9 @@ class SvgRendererImpl(SvgRenderer):
     <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto-start-reverse" markerUnits="strokeWidth">
       <path d="M 0 0 L 6 3 L 0 6 Z" fill="{c(self.dimension_color)}" />
     </marker>
+    <marker id="leader-arrow" markerWidth="9" markerHeight="6" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 9 3 L 0 6 L 2 3 Z" fill="{c('#64748b')}" />
+    </marker>
     <pattern id="hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(135)">
       <line x1="0" y1="0" x2="0" y2="8" stroke="{c('#6b7280')}" stroke-width="1" />
     </pattern>
@@ -113,7 +116,9 @@ class SvgRendererImpl(SvgRenderer):
     def _render_line(self, line) -> str:
         return (
             f'<line x1="{line.start.x:g}" y1="{line.start.y:g}" x2="{line.end.x:g}" y2="{line.end.y:g}" '
-            f'stroke="{self.scheme.color(line.stroke)}" stroke-width="{line.stroke_width:g}" />'
+            f'stroke="{self.scheme.color(line.stroke)}" stroke-width="{line.stroke_width:g}"'
+            + (' marker-end="url(#leader-arrow)"' if line.arrow_end else "")
+            + " />"
         )
 
     def _render_dimension(self, dim, font_size: float) -> str:

@@ -734,10 +734,11 @@ class MainWindow(QMainWindow):
         home_button.setFixedSize(30, 28)
         home_button.clicked.connect(self._view.reset_view)
         toolbar.addWidget(home_button)
-        self._schematic_details = QCheckBox("С обозначениями")
+        self._schematic_details = QCheckBox("Пояснения")
         self._schematic_details.setObjectName("schematic_details")
         self._schematic_details.setToolTip(
-            "Показать размеры каждого элемента со стрелками в увеличенных выносках под схемой"
+            "Показать под схемой пояснения: размеры каждого элемента со стрелками в увеличенных выносках. "
+            "Номера элементов, SIS и 50 Ω видны всегда"
         )
         self._schematic_details.toggled.connect(self._update_svg)
         toolbar.addWidget(self._schematic_details)

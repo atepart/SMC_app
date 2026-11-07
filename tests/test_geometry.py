@@ -13,6 +13,7 @@ from numpy import arange
 from aocapp.domain.models import Point, Rect, StructureGeometry, SvgColorScheme, TextLabel
 from aocapp.domain.s21_models import S21Config
 from aocapp.domain.transformers import ELEMENT_NUMBERS
+from aocapp.infrastructure.callouts import point_in_polygon, segment_hits_box, segments_intersect, text_box
 from aocapp.infrastructure.geometry import DC_FILL, LENGTH_SCALE, SLOT_FILL, WIDTH_SCALE, IntegratedStructureCalculator
 from aocapp.infrastructure.svg_renderer import DARK_SVG_SCHEME, SvgRendererImpl
 
@@ -164,33 +165,133 @@ def test_sis_line_dimensions_use_its_editable_fields_not_sis_model_width() -> No
     assert labels == {"L1=12", "W1эфф=9.5", "L2=3", "W2эфф=6.5"}
 
 
-@pytest.mark.parametrize("config", [S21Config(), S21Config(msl_8_len_m=1e-9, radial_r_max_m=90e-6, l_slot_m=80e-6)])
-def test_number_labels_and_dimension_views_remain_separate(config) -> None:
+EXTREME_CONFIGS = [
+    S21Config(),
+    # GitHub #10: a vanishing line 2 and huge radial fans must not pile numbers up.
+    S21Config(msl_8_len_m=1e-9, radial_r_max_m=90e-6, l_slot_m=80e-6),
+    S21Config(msl_8_len_m=1e-9, radial_r_max_m=90e-6, radial_angle_deg=300),
+]
+
+
+def _outline_segments(geometry, element):
+    """Metal edges of an element (the slot of 8 is not its metal)."""
+    segments = []
+    points = list(element.polygon)
+    chunks = [points[i : i + 4] for i in range(0, len(points), 4)] if len(points) == 8 else [points]
+    if element.element_id == "Radial":
+        left, right = element.input_port, element.output_port
+        chunks = [[left.top, right.top, right.bottom, left.bottom]]
+        for path in geometry.paths:
+            if path.element_id in {"radial-upper", "radial-lower"}:
+                start, outer_left = _endpoints(path.data.split(" A")[0])
+                arc_end = re.search(r" A[^ ]+ \S+ \S+ \S+ ([^,]+),([^ ]+) L([^,]+),(\S+)", path.data)
+                outer_right = Point(float(arc_end.group(1)), float(arc_end.group(2)))
+                end = Point(float(arc_end.group(3)), float(arc_end.group(4)))
+                segments += [(start, outer_left), (outer_right, end)]
+    for chunk in chunks:
+        segments += list(zip(chunk, chunk[1:] + chunk[:1]))
+    return segments
+
+
+def _distance_to_segment(p, a, b) -> float:
+    dx, dy = b.x - a.x, b.y - a.y
+    t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy)))
+    return hypot(p.x - a.x - t * dx, p.y - a.y - t * dy)
+
+
+def _distance_to_outline(geometry, element, p) -> float:
+    if element.element_id == "SIS":
+        centre = Point(element.bounds.x + element.bounds.width / 2, element.bounds.y + element.bounds.height / 2)
+        return abs(hypot(p.x - centre.x, p.y - centre.y) - element.bounds.width / 2)
+    best = min(_distance_to_segment(p, a, b) for a, b in _outline_segments(geometry, element))
+    if element.element_id == "Radial":
+        for path in geometry.paths:
+            if path.element_id in {"radial-upper", "radial-lower"}:
+                radius = float(re.search(r" A([^,]+),", path.data).group(1))
+                start, outer_left = _endpoints(path.data.split(" A")[0])
+                end = _endpoints(path.data)[1]
+                middle_x = (element.input_port.center.x + element.output_port.center.x) / 2
+                centre = Point(middle_x, (start.y + end.y) / 2)
+                best = min(best, abs(hypot(p.x - centre.x, p.y - centre.y) - radius))
+    return best
+
+
+@pytest.mark.parametrize("config", EXTREME_CONFIGS)
+def test_numbers_sit_next_to_their_elements_with_arrows_to_the_edge(config) -> None:
+    """GitHub #10: numbers always shown, close to the element, neat arrows, no overlaps."""
     geometry = IntegratedStructureCalculator().calculate(config)
-    labels = [label for label in geometry.labels if label.text.isdigit()]
-    assert sorted(int(label.text) for label in labels) == list(range(1, 19))
-    # Labels are 10 units high and <=12 wide; require real clearance in 2D.
-    assert all(
-        abs(a.position.x - b.position.x) >= 18 or abs(a.position.y - b.position.y) >= 14
-        for i, a in enumerate(labels)
-        for b in labels[i + 1 :]
-    )
-    assert all(geometry.bounds.y < label.position.y < geometry.bounds.bottom for label in geometry.labels)
-    main_bottom = max(e.bounds.bottom for e in geometry.elements)
+    overview = geometry.overview
+    elements = _elements(overview)
+    numbers = [c for c in overview.callouts if c.label.text.isdigit()]
+    assert sorted(int(c.label.text) for c in numbers) == list(range(1, 19))
+    assert {c.label.text: c.element_id for c in numbers} == {
+        str(ELEMENT_NUMBERS[element_id]): element_id for element_id in elements
+    }
+    sis = [c for c in overview.callouts if c.label.text == "SIS"]
+    assert len(sis) == 1 and sis[0].element_id == "SIS"
+    port = next(label for label in overview.labels if label.text == "50 Ω")
+    boxes = [text_box(c.label) for c in overview.callouts] + [text_box(port)]
+    for i, a in enumerate(boxes):
+        # Every label, including "SIS" and "50 Ω", lies inside the sheet frame.
+        assert overview.bounds.x < a.x0 and a.x1 < overview.bounds.right
+        assert overview.bounds.y < a.y0 and a.y1 < overview.bounds.bottom
+        for b in boxes[i + 1 :]:
+            assert not a.overlaps(b)
+    metal = [
+        chunk
+        for element in overview.elements
+        if element.polygon
+        for chunk in (
+            [list(element.polygon)[i : i + 4] for i in (0, 4)] if len(element.polygon) == 8 else [list(element.polygon)]
+        )
+    ]
+    for callout in overview.callouts:
+        arrow, box = callout.arrow, text_box(callout.label)
+        assert arrow.arrow_end and arrow.stroke == "#64748b"
+        # No label covers metal: neither an edge through it nor metal under it.
+        for points in metal:
+            assert not any(segment_hits_box(a, b, box) for a, b in zip(points, points[1:] + points[:1]))
+            assert not point_in_polygon(Point((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2), points)
+        # The tip lies on the element's own edge (the fan arc within its
+        # 48-chord tolerance), the tail next to the label.
+        element = elements[callout.element_id]
+        assert _distance_to_outline(overview, element, arrow.end) < 0.05
+        assert box.x0 - 3 <= arrow.start.x <= box.x1 + 3 and box.y0 - 3 <= arrow.start.y <= box.y1 + 3
+        length = hypot(arrow.end.x - arrow.start.x, arrow.end.y - arrow.start.y)
+        # Previously numbers stood 12–28 units above the top of the whole
+        # drawing, up to ~90 units from a thin line; now the arrows are short.
+        # A fan wider than 180° covers the line near the SIS: a little longer.
+        crowded = callout.label.text == "SIS" or config.radial_angle_deg > 180
+        assert 7 <= length <= (30 if crowded else 22)
+    arrows = [(c.arrow.start, c.arrow.end) for c in overview.callouts]
+    for i, (a, b) in enumerate(arrows):
+        assert not any(segments_intersect(a, b, c, d) for c, d in arrows[i + 1 :])
+    # The dimension sheet keeps the same callouts; its cards start below them.
+    assert geometry.callouts == overview.callouts
+    main_bottom = max(box.y1 for box in boxes)
     assert all(min(d.start.y, d.end.y) > main_bottom for d in geometry.dimensions)
 
 
-def test_part_callouts_appear_only_with_dimensioned_views() -> None:
+def test_numbers_sis_and_port_label_are_on_the_overview() -> None:
+    """GitHub #10 reverses WP-026: «Пояснения» adds only the dimension cards."""
     geometry = IntegratedStructureCalculator().calculate(S21Config())
     callouts = {str(number) for number in range(1, 19)} | {"SIS", "50 Ω"}
     overview_texts = {label.text for label in geometry.overview.labels}
-    assert not overview_texts & callouts
-    # Leader lines of the numbers and SIS are slate lines; 0.45 are metal seams.
-    assert not [line for line in geometry.overview.lines if line.stroke == "#64748b" and line.stroke_width != 0.45]
-    assert callouts <= {label.text for label in geometry.labels}
-    assert len([line for line in geometry.lines if line.stroke == "#64748b" and line.stroke_width == 0.5]) >= 18
-    # Without callouts the overview frame hugs the drawing.
-    assert geometry.overview.bounds.y > min(label.position.y for label in geometry.labels if label.text.isdigit())
+    assert callouts <= overview_texts
+    assert not any(text.startswith("Размеры элементов") for text in overview_texts)
+    assert any(label.text.startswith("Размеры элементов") for label in geometry.labels)
+    assert geometry.overview.dimensions == []
+    leaders = [line for line in geometry.overview.lines if line.arrow_end]
+    assert len(leaders) == 19
+    assert all(line.stroke_width == pytest.approx(0.6) for line in leaders)
+    # Only the callouts carry arrowheads; seams stay plain 0.45 lines.
+    assert not [line for line in geometry.overview.lines if line.stroke_width == 0.45 and line.arrow_end]
+    svg = SvgRendererImpl().render(geometry.overview)
+    ElementTree.fromstring(svg)
+    assert '<marker id="leader-arrow"' in svg
+    assert svg.count('marker-end="url(#leader-arrow)"') == 19
+    for number in range(1, 19):
+        assert f'font-weight="bold">{number}</text>' in svg
 
 
 @pytest.mark.parametrize("angle", [1, 60, 113, 180, 220, 359])

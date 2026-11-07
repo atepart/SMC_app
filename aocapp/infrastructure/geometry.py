@@ -12,6 +12,7 @@ from math import cos, hypot, isfinite, radians, sin
 
 from aocapp.api.dc_block import base_distance_m
 from aocapp.domain.models import (
+    Callout,
     CircleShape,
     DimensionLine,
     ElementParameter,
@@ -30,6 +31,7 @@ from aocapp.domain.models import (
 from aocapp.domain.ports import StructureCalculator
 from aocapp.domain.s21_models import S21Config
 from aocapp.domain.transformers import ELEMENT_NUMBERS, SCHEMATIC_SECTIONS, transformer_length_m
+from aocapp.infrastructure.callouts import CalloutPlacer
 
 LENGTH_SCALE = WIDTH_SCALE = 2.0
 CONDUCTOR_FILL = "#e8f1f5"
@@ -147,10 +149,11 @@ class _Canvas:
     circles: list[CircleShape] = field(default_factory=list)
     lines: list[LineShape] = field(default_factory=list)
     labels: list[TextLabel] = field(default_factory=list)
-    # Callouts naming parts of the drawing ("SIS"); like the element numbers
-    # they appear only with dimensioned views ("С обозначениями").
-    annotation_labels: list[TextLabel] = field(default_factory=list)
-    annotation_lines: list[LineShape] = field(default_factory=list)
+    # Element numbers and "SIS" with their arrows (always on the drawing).
+    callouts: list[Callout] = field(default_factory=list)
+    # Metal without its own polygon on an element (radial fans, the 50 Ω
+    # port) that number labels must keep clear of: (owner, contour).
+    shapes: list[tuple[str, list[Point]]] = field(default_factory=list)
     dimensions: list[DimensionLine] = field(default_factory=list)
     elements: list[SchematicElement] = field(default_factory=list)
     bounds_points: list[Point] = field(default_factory=list)
@@ -181,6 +184,7 @@ class _Canvas:
             dimensions=list(self.dimensions),
             elements=list(self.elements),
             underlay_paths=list(self.underlay_paths),
+            callouts=list(self.callouts),
             bounds=Rect(bounds.x - 20, bounds.y - 20, bounds.width + 40, bounds.height + 40),
         )
 
@@ -255,15 +259,14 @@ class IntegratedStructureCalculator(StructureCalculator):
             for element in canvas.elements
         ]
         self._metal_outline(canvas)
-        # The overview is the bare drawing; numbers, leaders, "SIS" and "50 Ω"
-        # are added for the dimensioned views only.
-        overview = canvas.snapshot()
-        canvas.labels.extend(canvas.annotation_labels)
-        canvas.lines.extend(canvas.annotation_lines)
-        self._number_labels(canvas)
-        canvas.labels.append(TextLabel(Point(x - 34, -24), "50 Ω", 11, anchor="middle"))
+        # Numbers with arrows, "SIS" and "50 Ω" are always on the drawing; the
+        # «Пояснения» checkbox adds only the dimensioned views below it.
+        port_label = TextLabel(Point(x - 34, -24), "50 Ω", 11, anchor="middle")
+        canvas.labels.append(port_label)
         # Cap height of the 11 px "50 Ω" label above its baseline.
         canvas.bounds_points.append(Point(x - 34, -24 - 11))
+        self._number_labels(canvas, port_label)
+        overview = canvas.snapshot()
         self._dimensioned_views(canvas, dw)
         return replace(canvas.snapshot(), overview=overview)
 
@@ -462,7 +465,6 @@ class IntegratedStructureCalculator(StructureCalculator):
         return right_joint
 
     def _radial_and_sis(self, canvas: _Canvas, config: S21Config, x: float, y: float, dw: float) -> float:
-        feed_start = x
         # Element 14 «Линия SIS» has two parts: L1/W1 (the former line at
         # the SIS) and L2/W2 (the former Lw4/Ww4). They stay separate inputs
         # of the calculation; the SIS junction sits on their joint.
@@ -505,12 +507,6 @@ class IntegratedStructureCalculator(StructureCalculator):
                 ),
             )
         )
-        canvas.annotation_labels.append(
-            TextLabel(Point(feed_start - 12, feed.bounds.bottom + 24), "SIS", 11, anchor="end")
-        )
-        canvas.annotation_lines.append(
-            LineShape(Point(feed_start - 10, feed.bounds.bottom + 18), symbol, stroke="#64748b")
-        )
         w = _um(config.zrad3_width_m)
         x = self._strip(canvas, "Ww3", "Radial Stub line", x, y, _um(config.zrad3_len_m), w, w, dw)
         self._relabel(canvas, {"W": "W3", "L": "L3"})
@@ -521,6 +517,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         assert left is not None
         right = SectionPort(Point(x + base, y), (_um(config.zrad1_width_m) + dw) * WIDTH_SCALE)
         canvas.polygon([left.top, right.top, right.bottom, left.bottom], CONDUCTOR_FILL)
+        canvas.shapes.append(("Radial", [left.top, right.top, right.bottom, left.bottom]))
         canvas.excluded_edges.extend(((left.top, right.top), (left.bottom, right.bottom)))
         angle = radians(config.radial_angle_deg / 2)
         dx, dy = radius * sin(angle), radius * cos(angle)
@@ -546,6 +543,14 @@ class IntegratedStructureCalculator(StructureCalculator):
             canvas.paths.append(PathShape(data + " Z", bounds, name + "-fill", fill=RADIAL_FILL, stroke="none"))
             canvas.paths.append(PathShape(data, bounds, name))
             canvas.include(bounds)
+            arc = [
+                Point(
+                    middle_x + radius * sin(-angle + 2 * angle * k / 48),
+                    base_y + direction * radius * cos(-angle + 2 * angle * k / 48),
+                )
+                for k in range(49)
+            ]
+            canvas.shapes.append(("Radial", [start, *arc, end]))
             fan_bounds.extend((Point(bounds.x, bounds.y), Point(bounds.right, bounds.bottom)))
         params = (
             ElementParameter("Rmin (вход модели)", _um(config.radial_r_min_m)),
@@ -562,6 +567,9 @@ class IntegratedStructureCalculator(StructureCalculator):
         assert out is not None
         canvas.polygon([out.top, Point(x + 26, y - 16), Point(x + 26, y + 16), out.bottom], "#f8fafc")
         canvas.rectangle(Rect(x + 26, y - 16, 44, 32), "#f8fafc")
+        canvas.shapes.append(
+            ("port", [out.top, Point(x + 26, y - 16), Point(x + 70, y - 16), Point(x + 70, y + 16), out.bottom])
+        )
         return x + 70
 
     @staticmethod
@@ -657,27 +665,56 @@ class IntegratedStructureCalculator(StructureCalculator):
         canvas.paths.append(PathShape(" ".join(chains), bounds_from_points(canvas.bounds_points), "metal-outline"))
 
     @staticmethod
-    def _number_labels(canvas: _Canvas) -> None:
-        top, last_x = min(p.y for p in canvas.bounds_points) - 12, -1e9
+    def _number_labels(canvas: _Canvas, port_label: TextLabel) -> None:
+        """Number every element right next to it, with an arrow to its edge.
+
+        Labels keep clear of metal, the slot, each other and other arrows
+        (``CalloutPlacer``); "SIS" gets its own arrow to the junction symbol.
+        """
+        shapes: list[tuple[str, list[Point]]] = []
         for element in canvas.elements:
-            if element.number is None:
-                continue
-            center_x = element.bounds.x + element.bounds.width / 2
-            label_x = max(center_x, last_x + 24)
-            label_y = top - (16 if element.number % 2 == 0 else 0)
-            canvas.labels.append(
-                TextLabel(Point(label_x, label_y), str(element.number), 10, anchor="middle", font_weight="bold")
-            )
-            canvas.lines.append(
-                LineShape(
-                    Point(label_x, label_y + 4),
-                    Point(center_x, element.bounds.y - 3),
-                    stroke="#64748b",
-                    stroke_width=0.5,
+            if element.element_id == "Radial":
+                continue  # its fans and neck are in ``canvas.shapes``
+            if element.element_id == "SIS":
+                centre = Point(
+                    element.bounds.x + element.bounds.width / 2, element.bounds.y + element.bounds.height / 2
                 )
+                radius = element.bounds.width / 2
+                circle = [
+                    Point(centre.x + radius * cos(radians(10 * k)), centre.y + radius * sin(radians(10 * k)))
+                    for k in range(36)
+                ]
+                shapes.append(("SIS", circle))
+                continue
+            points = list(element.polygon)
+            if element.element_id in {"DC", "SIS-line"}:
+                # Two rectangles: the DC stubs, the two parts of line 14.
+                shapes.extend((element.element_id, points[i : i + 4]) for i in range(0, len(points), 4))
+            else:
+                shapes.append((element.element_id, points))
+            # The slot is drawn and kept clear, but 8 points at its stubs.
+            shapes.extend(
+                ("DC-slot", [Point(r.x, r.y), Point(r.right, r.y), Point(r.right, r.bottom), Point(r.x, r.bottom)])
+                for r in (element.auxiliary_rects if element.element_id == "DC" else ())
             )
-            canvas.bounds_points.append(Point(label_x + 7, label_y - 12))
-            last_x = label_x
+        placer = CalloutPlacer(shapes + canvas.shapes, [port_label], soft_owners={"Radial"})
+        # The SIS symbol sits on line 14: its arrows may cross that metal.
+        requests = [
+            (element.element_id, str(element.number), 10.0, "bold")
+            for element in sorted(canvas.elements, key=lambda e: e.number or 0)
+            if element.number is not None
+        ] + [("SIS", "SIS", 11.0, "normal")]
+        for element_id, text, size, weight in requests:
+            transparent = {"SIS": {"SIS-line"}, "DC": {"DC-slot"}}.get(element_id, set())
+            placed = placer.place(element_id, text, font_size=size, font_weight=weight, transparent=transparent)
+            if placed is None:
+                raise ValueError(f"Не удалось разместить номер {text} на схеме")
+            label, arrow = placed
+            canvas.labels.append(label)
+            canvas.lines.append(arrow)
+            canvas.callouts.append(Callout(element_id, label, arrow))
+        for box in placer.boxes:
+            canvas.bounds_points.extend((Point(box.x0, box.y0), Point(box.x1, box.y1)))
 
     def _dimensioned_views(self, canvas: _Canvas, dw: float) -> None:
         """Attach dimensioned enlargements to actual element IDs/ports.

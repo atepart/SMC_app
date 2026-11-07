@@ -516,6 +516,29 @@ def test_schematic_details_toggle_keeps_overview_large(parameter_window: MainWin
     assert not parameter_window._view._fit_width
 
 
+def test_explanations_toggle_adds_only_the_dimension_cards(parameter_window: MainWindow) -> None:
+    """GitHub #10: «Пояснения»; numbers, SIS and 50 Ω stay on the drawing either way."""
+    toggle = parameter_window.findChild(QtWidgets.QCheckBox, "schematic_details")
+    assert toggle is not None and toggle.text() == "Пояснения"
+    assert "Номера элементов" in toggle.toolTip()
+    view, shown = parameter_window._view, []
+    set_svg = view.set_svg
+
+    def record(svg: str, **kwargs) -> None:
+        shown.append(svg)
+        set_svg(svg, **kwargs)
+
+    with patch.object(view, "set_svg", side_effect=record):
+        QTest.mouseClick(toggle, QtCore.Qt.LeftButton, pos=QtCore.QPoint(8, toggle.height() // 2))
+        QTest.mouseClick(toggle, QtCore.Qt.LeftButton, pos=QtCore.QPoint(8, toggle.height() // 2))
+    detailed, plain = shown
+    for svg in (plain, detailed):
+        for text in [str(number) for number in range(1, 19)] + ["SIS", "50 Ω"]:
+            assert f">{text}</text>" in svg
+        assert svg.count('marker-end="url(#leader-arrow)"') == 19
+    assert "Размеры элементов" in detailed and "Размеры элементов" not in plain
+
+
 def _enter_value(window: MainWindow, name: str, value: float) -> None:
     spin = window._config_inputs[name]
     spin.lineEdit().selectAll()
