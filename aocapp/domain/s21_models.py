@@ -35,13 +35,44 @@ def _transformer_width_description(element: str, number: int, label: str) -> str
     side = "слева (от ФФО)" if label == "W1" else "справа (к SIS)"
     contact = {"T4": "W2", "T3": "W1"}.get(element)
     if contact is None:
-        return f"Элемент {number}: ширина {side}, до поправки DW."
+        return f"Элемент {number}: ширина {side}, до поправки dW."
     face = (
         "ширина ступни на шлейфе DC block (по центру шлейфа); при W ≠ Wms виден выступ с обеих сторон"
         if label == contact
         else "торец к соседней линии, высота горизонтальной части"
     )
-    return f"Элемент {number} (угловой): ширина {side} — {face}, до поправки DW."
+    return f"Элемент {number} (угловой): ширина {side} — {face}, до поправки dW."
+
+
+# GitHub #10: decimals shown in each editor. Stored SI values are not rounded;
+# an untouched editor keeps the exact loaded value (see the main window).
+_DISPLAY_DECIMALS = {
+    "dw_m": 2,
+    "z_ffo_ohm": 2,
+    "temperature_k": 1,
+    "tc_top_k": 1,
+    "tc_bot_k": 1,
+    "alpha_top": 2,
+    "alpha_bot": 2,
+    "sigma0_top": 3,
+    "sigma0_bot": 3,
+    "h_sub_m": 0,
+    "sis_area_um2": 2,
+    "sis_rn_area_ohm_um2": 1,
+    "sis_cap_f_per_um2": 3,
+    "zrad0_ohm": 0,
+    "radial_angle_deg": 0,
+}
+
+
+def _display_decimals(info: ConfigFieldInfo) -> int:
+    if info.name in _DISPLAY_DECIMALS:
+        return _DISPLAY_DECIMALS[info.name]
+    if info.suffix == " GHz":
+        return 0  # every frequency: 1 GHz
+    if info.suffix == " um":
+        return 1  # every lateral size: 0.1 µm
+    return info.decimals
 
 
 @dataclass(frozen=True)
@@ -56,7 +87,7 @@ class S21Config:
     """
 
     GROUP_ORDER: ClassVar[tuple[str, ...]] = (
-        "LO",
+        "General",
         "Backend Grid",
         "EL1 Material",
         "EL2 Material",
@@ -69,7 +100,7 @@ class S21Config:
         default=4.2,
         metadata={
             "label": "T env",
-            "group": "EL1 Material",
+            "group": "General",
             "description": "Ambient or operating temperature used for both electrodes in the Mattis-Bardeen conductivity model.",
             "suffix": " K",
             "minimum": 0.1,
@@ -193,12 +224,12 @@ class S21Config:
             "label": "d EL1",
             "group": "EL1 Material",
             "description": "Thickness of the top superconducting electrode film.",
-            "suffix": " um",
-            "minimum": 0.001,
-            "maximum": 100.0,
-            "step": 0.01,
-            "decimals": 4,
-            "scale": 1e6,
+            "suffix": " nm",
+            "minimum": 1.0,
+            "maximum": 100000.0,
+            "step": 10.0,
+            "decimals": 0,
+            "scale": 1e9,
         },
     )
     d_bot_m: float = field(
@@ -207,12 +238,12 @@ class S21Config:
             "label": "d EL2",
             "group": "EL2 Material",
             "description": "Thickness of the bottom superconducting electrode film.",
-            "suffix": " um",
-            "minimum": 0.001,
-            "maximum": 100.0,
-            "step": 0.01,
-            "decimals": 4,
-            "scale": 1e6,
+            "suffix": " nm",
+            "minimum": 1.0,
+            "maximum": 100000.0,
+            "step": 10.0,
+            "decimals": 0,
+            "scale": 1e9,
         },
     )
 
@@ -222,12 +253,12 @@ class S21Config:
             "label": "h12",
             "group": "Dielectrics",
             "description": "Thickness of the inter-electrode dielectric between EL1 and EL2.",
-            "suffix": " um",
-            "minimum": 0.001,
-            "maximum": 100.0,
-            "step": 0.01,
-            "decimals": 4,
-            "scale": 1e6,
+            "suffix": " nm",
+            "minimum": 1.0,
+            "maximum": 100000.0,
+            "step": 10.0,
+            "decimals": 0,
+            "scale": 1e9,
         },
     )
     e12: float = field(
@@ -249,12 +280,12 @@ class S21Config:
             "label": "h1",
             "group": "Dielectrics",
             "description": "Thickness of the dielectric used in the wide 50 Ohm SIS-side section.",
-            "suffix": " um",
-            "minimum": 0.001,
-            "maximum": 100.0,
-            "step": 0.01,
-            "decimals": 4,
-            "scale": 1e6,
+            "suffix": " nm",
+            "minimum": 1.0,
+            "maximum": 100000.0,
+            "step": 10.0,
+            "decimals": 0,
+            "scale": 1e9,
         },
     )
     e1: float = field(
@@ -274,7 +305,7 @@ class S21Config:
         default=11.7,
         metadata={
             "label": "ε sub",
-            "group": "Dielectrics",
+            "group": "General",
             "description": "Relative permittivity of the substrate used for the slot/DC-block model.",
             "suffix": "",
             "minimum": 1.0,
@@ -287,7 +318,7 @@ class S21Config:
         default=0.35e-3,
         metadata={
             "label": "h sub",
-            "group": "Dielectrics",
+            "group": "General",
             "description": "Substrate thickness for the slot/DC-block model.",
             "suffix": " um",
             "minimum": 0.01,
@@ -387,7 +418,7 @@ class S21Config:
         default=650.0,
         metadata={
             "label": "f0",
-            "group": "LO",
+            "group": "General",
             "description": "Reference frequency used by the legacy chain at the radial-stub-side line segment.",
             "suffix": " GHz",
             "minimum": 1.0,
@@ -399,8 +430,8 @@ class S21Config:
     dw_m: float = field(
         default=0.5e-6,
         metadata={
-            "label": "DW",
-            "group": "DC block",
+            "label": "dW",
+            "group": "General",
             "description": "Common fabrication width correction added to microstrip widths and subtracted from slot width.",
             "suffix": " um",
             "minimum": 0.0,
@@ -416,7 +447,7 @@ class S21Config:
         metadata={
             "label": "Wslot",
             "group": "DC block",
-            "description": "Толщина чёрной Π-образной щели в нижнем электроде (горизонтальный участок и плечи). На рисунке и в расчёте применяется Wslot − DW. Зазор между шлейфами задаётся отдельно.",
+            "description": "Толщина чёрной Π-образной щели в нижнем электроде (горизонтальный участок и плечи). На рисунке и в расчёте применяется Wslot − dW. Зазор между шлейфами задаётся отдельно.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -458,7 +489,7 @@ class S21Config:
         metadata={
             "label": "Wms",
             "group": "DC block",
-            "description": "Ширина вертикального открытого МПЛ-шлейфа (ноги электрода) до поправки DW.",
+            "description": "Ширина вертикального открытого МПЛ-шлейфа (ноги электрода) до поправки dW.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -486,7 +517,7 @@ class S21Config:
         metadata={
             "label": "Зазор",
             "group": "DC block",
-            "description": "Расстояние между двумя шлейфами DC block (металл к металлу, без поправки DW). Это слагаемое 4 µm в Pibase = 2·Wms + 2·Lso + зазор.",
+            "description": "Расстояние между двумя шлейфами DC block (металл к металлу, без поправки dW). Это слагаемое 4 µm в Pibase = 2·Wms + 2·Lso + зазор.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -654,7 +685,7 @@ class S21Config:
         metadata={
             "label": "Линия у SIS · W",
             "group": "Radial Stub",
-            "description": "Введённая ширина линии с символом SIS; металл на схеме имеет ширину W + DW.",
+            "description": "Введённая ширина линии с символом SIS; металл на схеме имеет ширину W + dW.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -1195,7 +1226,7 @@ class S21Config:
         default=100.0,
         metadata={
             "label": "Sweep start",
-            "group": "LO",
+            "group": "General",
             "description": "Start frequency for the S21 sweep.",
             "suffix": " GHz",
             "minimum": 0.01,
@@ -1208,7 +1239,7 @@ class S21Config:
         default=900.0,
         metadata={
             "label": "Sweep stop",
-            "group": "LO",
+            "group": "General",
             "description": "Stop frequency for the S21 sweep.",
             "suffix": " GHz",
             "minimum": 0.01,
@@ -1221,7 +1252,7 @@ class S21Config:
         default=5.0,
         metadata={
             "label": "Sweep step",
-            "group": "LO",
+            "group": "General",
             "description": "Frequency step for the S21 sweep.",
             "suffix": " GHz",
             "minimum": 0.01,
@@ -1234,7 +1265,7 @@ class S21Config:
         default=0.15,
         metadata={
             "label": "Z FFO",
-            "group": "LO",
+            "group": "General",
             "description": "Source impedance used on the FFO side in the S21 computation.",
             "suffix": " Ohm",
             "minimum": 0.001,
@@ -1287,9 +1318,9 @@ class S21Config:
     sis_width_um: float = field(
         default=4.0,
         metadata={
-            "label": "W SIS",
+            "label": "Wb",
             "group": "SIS",
-            "description": "Effective width used in the inductive correction near the SIS junction.",
+            "description": "Wb — ширина, задающая индуктивность растекания токов вблизи детектора (индуктивная поправка у SIS).",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -1397,9 +1428,7 @@ class S21Config:
             if info.name == "sis_rn_area_ohm_um2":
                 info = replace(info, step=0.5, label="RnS")
             element = None
-            if info.name == "dw_m":
-                info = replace(info, group="Dielectrics")
-            elif info.group == "DC block":
+            if info.group == "DC block":
                 element = "DC"
             elif info.group == "SIS":
                 element = "SIS"
@@ -1461,10 +1490,23 @@ class S21Config:
                                 group=group,
                                 element_id=element,
                                 step=0.5,
-                                description=f"Элемент {number}: {'ширина линии до поправки DW' if label == 'W' else 'длина линии'}.",
+                                description=f"Элемент {number}: {'ширина линии до поправки dW' if label == 'W' else 'длина линии'}.",
                             )
                         )
-        return visible
+        general = (
+            "f0_ghz",
+            "s21_freq_start_ghz",
+            "s21_freq_stop_ghz",
+            "s21_freq_step_ghz",
+            "z_ffo_ohm",
+            "dw_m",
+            "temperature_k",
+            "e_sub",
+            "h_sub_m",
+        )
+        # Grouping is per group name, so only the order inside General changes.
+        visible.sort(key=lambda info: general.index(info.name) if info.name in general else -1)
+        return [replace(info, decimals=_display_decimals(info)) for info in visible]
 
     def ui_value(self, name: str) -> float:
         """Return a UI value, including the derived transformer length."""

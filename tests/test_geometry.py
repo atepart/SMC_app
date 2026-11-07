@@ -130,14 +130,14 @@ def test_sis_is_a_readable_symbol_in_the_calculated_feed() -> None:
     assert short["SIS"].bounds.width == pytest.approx(elements["SIS"].bounds.width)
     assert 0 < symbol.radius < feed.bounds.height / 2  # inside the conductor width
     assert feed.bounds.right < elements["Radial"].input_port.center.x
-    assert _parameters(elements["SIS"]) == pytest.approx({"S": 0.8, "W SIS (расч.)": 4})
+    assert _parameters(elements["SIS"]) == pytest.approx({"S": 0.8, "Wb (расч.)": 4})
     changed = IntegratedStructureCalculator().calculate(S21Config(sis_area_um2=20, sis_width_um=8))
     # Area/model-width edits must not invent a different lead length or metal.
     assert changed.overview.polygons == geometry.overview.polygons
     assert changed.overview.rects == geometry.overview.rects
     assert changed.overview.paths == geometry.overview.paths
     assert changed.overview.circles == geometry.overview.circles
-    assert _parameters(_elements(changed)["SIS"]) == pytest.approx({"S": 20, "W SIS (расч.)": 8})
+    assert _parameters(_elements(changed)["SIS"]) == pytest.approx({"S": 20, "Wb (расч.)": 8})
 
 
 def test_sis_radial_conductor_has_no_artificial_internal_dividers() -> None:
@@ -268,7 +268,7 @@ def test_dc_slot_and_feed_dimensions_follow_calculation_inputs() -> None:
     geometry = IntegratedStructureCalculator().calculate(config)
     _elements_by_id, dc, left, right = _dc_parts(geometry)
     dw = config.dw_m * 1e6
-    # The stub gap is its own field; Wslot − DW is the black slot thickness.
+    # The stub gap is its own field; Wslot − dW is the black slot thickness.
     assert right[0].x - left[1].x == pytest.approx(6 * 2)
     _h_left, gap_piece, _h_right, arm_left, arm_right = dc.auxiliary_rects
     for rect in (_h_left, gap_piece, _h_right):
@@ -388,7 +388,7 @@ def test_corner_transformers_bend_from_the_lines_onto_the_stubs() -> None:
     contact_y = left[0].y
     assert contact_y == pytest.approx(((6 + dw) / 2 + 1) * 2)
     assert right[0].y == pytest.approx(contact_y)
-    half_foot = 8 + dw  # W2 = 8 µm with DW, in SVG units / 2
+    half_foot = 8 + dw  # W2 = 8 µm with dW, in SVG units / 2
     for corner, stub in ((t4, left), (t3, right)):
         # The foot of width W2 is centred on its stub and ends on its top.
         middle = (stub[0].x + stub[1].x) / 2

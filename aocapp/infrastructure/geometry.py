@@ -202,7 +202,7 @@ class IntegratedStructureCalculator(StructureCalculator):
             if not isfinite(value) or value <= 0:
                 raise ValueError(f"{name}: размер должен быть положительным конечным числом")
         if not isfinite(config.dw_m) or config.dw_m < 0 or config.w_slot_m <= config.dw_m:
-            raise ValueError("Щель Wslot − DW должна быть положительной; DW — неотрицательным")
+            raise ValueError("Щель Wslot − dW должна быть положительной; dW — неотрицательным")
         if config.l_slot_m <= config.lso_m:
             raise ValueError("Lslot должна быть больше Lso: в расчёте Lso — нижний предел интеграла по плечу щели")
         if not isfinite(config.radial_angle_deg) or not 0 < config.radial_angle_deg < 360:
@@ -301,7 +301,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         a step on both sides.  Sizes follow the owner's sketch and the HFSS
         model (Tr_DCB, MSL_DCB, Slot_1…3):
 
-        * ``Wslot − DW`` — thickness of the black slot in the bottom electrode;
+        * ``Wslot − dW`` — thickness of the black slot in the bottom electrode;
         * ``Wms``/``Lms`` — width/length of each open-ended microstrip stub;
         * ``gap`` — metal gap between the stubs, the 4 µm of ``Pibase``;
         * ``Lso`` — from the inner edge of a slot arm to the outer stub edge;
@@ -333,7 +333,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         if (t4_contact + t3_contact) / 2 >= stub_w + gap:
             raise ValueError(
                 "Трансформаторы 7 и 9 смыкаются над зазором DC block: "
-                "(W2(7) + W1(9))/2 с DW должно быть меньше Wms + DW + зазор"
+                "(W2(7) + W1(9))/2 с dW должно быть меньше Wms + dW + зазор"
             )
         # Both stubs start on one plane below every adjacent line (6, 7, 9, 10),
         # so a wider neighbouring line never touches the side of a stub.
@@ -373,7 +373,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         canvas.polygon(left, DC_FILL)
         canvas.polygon(right, DC_FILL)
 
-        # Π-shaped slot in the ground plane, thickness Ws (= Wslot − DW); the
+        # Π-shaped slot in the ground plane, thickness Ws (= Wslot − dW); the
         # inner arm edges are Lso outside the stubs, Pibase apart.
         pibase = _um(base_distance_m(config.w_ms_m + config.dw_m, config.lso_m, config.dc_gap_m)) * WIDTH_SCALE
         center_x = (inner_l + inner_r) / 2
@@ -473,7 +473,7 @@ class IntegratedStructureCalculator(StructureCalculator):
             dw,
         )
         feed = canvas.elements[-1]
-        # W SIS is an inductive-model width, not a specified mask width.
+        # Wb is an inductive-model width, not a specified mask width.
         # S/W therefore cannot supply a new length for this conductor. The
         # junction sits on the joint of the SIS line (14) and Lw4 (16).
         symbol = Point(x, y)
@@ -488,7 +488,7 @@ class IntegratedStructureCalculator(StructureCalculator):
                 Rect(symbol.x - symbol_radius, y - symbol_radius, symbol_radius * 2, symbol_radius * 2),
                 (
                     ElementParameter("S", config.sis_area_um2, "µm²"),
-                    ElementParameter("W SIS (расч.)", config.sis_width_um),
+                    ElementParameter("Wb (расч.)", config.sis_width_um),
                 ),
             )
         )
@@ -671,7 +671,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         canvas.labels.append(
             TextLabel(
                 Point(28, top),
-                f"Размеры элементов · µm · DW={dw:g} µm",
+                f"Размеры элементов · µm · dW={dw:g} µm",
                 12,
                 font_weight="bold",
             )
@@ -679,7 +679,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         canvas.labels.append(
             TextLabel(
                 Point(28, top + 18),
-                "Текст W — ввод; стрелки Wэфф — металл с DW. Для щели DW вычитается. Выноски сохраняют пропорции.",
+                "Текст W — ввод; стрелки Wэфф — металл с dW. Для щели dW вычитается. Выноски сохраняют пропорции.",
                 10,
             )
         )
@@ -719,7 +719,7 @@ class IntegratedStructureCalculator(StructureCalculator):
             canvas.circles.append(CircleShape(center, 12, fill="#fff"))
             canvas.labels.extend(
                 (
-                    TextLabel(Point(x, y + 162), "W SIS — ширина для индуктивной поправки", 10),
+                    TextLabel(Point(x, y + 162), "Wb — ширина для индуктивной поправки", 10),
                     TextLabel(Point(x, y + 180), "Геометрия площади S в модели не задана", 10),
                 )
             )
@@ -727,7 +727,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         if element.element_id == "Radial":
             self._radial_dimensions(canvas, element, x, y)
             return
-        canvas.labels.append(TextLabel(Point(x, y + 60), f"Металл: Wэфф = W + DW; DW={dw:g} µm", 9, fill="#64748b"))
+        canvas.labels.append(TextLabel(Point(x, y + 60), f"Металл: Wэфф = W + dW; dW={dw:g} µm", 9, fill="#64748b"))
         if element.element_id == "DC":
             self._dc_dimensions(canvas, element, dw, x, y, card_w)
             return

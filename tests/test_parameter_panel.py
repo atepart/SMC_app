@@ -87,7 +87,7 @@ def test_greek_labels_fixed_orders_and_design_round_trip(parameter_window: MainW
 
     order = parameter_window._engineering_orders["d_top_m"]
     assert isinstance(order, QtWidgets.QLabel)
-    assert order.text() == "×10^-6 m"
+    assert order.text() == "×10^-9 m"  # thicknesses in nm (GitHub #10)
     assert int(order.text().split("^")[1].split()[0]) % 3 == 0
 
     path = tmp_path / "round-trip.aocdesign"
@@ -109,13 +109,67 @@ def test_greek_labels_fixed_orders_and_design_round_trip(parameter_window: MainW
 
 
 def test_issue_4_group_order_and_sis_capacitance_units(parameter_window: MainWindow) -> None:
-    assert list(parameter_window._parameter_groups)[:3] == ["LO", "Backend Grid", "EL1 Material"]
+    assert list(parameter_window._parameter_groups)[:3] == ["General", "Backend Grid", "EL1 Material"]
 
     capacitance = parameter_window._config_inputs["sis_cap_f_per_um2"]
     assert capacitance.value() == pytest.approx(0.083)
     assert capacitance.suffix() == ""
     assert parameter_window._parameter_units["sis_cap_f_per_um2"].text() == "pF/µm²"
     assert parameter_window._build_config().sis_cap_f_per_um2 == pytest.approx(8.3e-14)
+
+
+def test_issue_10_field_precision_and_general_block(parameter_window: MainWindow) -> None:
+    """GitHub #10: editors show the requested precision instead of long zero tails."""
+    window, inputs = parameter_window, parameter_window._config_inputs
+    shown = {name: spin.text() for name, spin in inputs.items()}
+    assert shown["msl_6_len_m"] == "25.0" and shown["msl_6_width_m"] == "4.0"
+    assert shown["transf_7_length_m"] == "9.6"
+    assert shown["lso_m"] == "8.0" and shown["dc_gap_m"] == "4.0" and shown["mex4_len_m"] == "3.0"
+    assert shown["dw_m"] == "0.50"
+    assert shown["f0_ghz"] == "650" and shown["s21_freq_step_ghz"] == "5" and shown["film_freq_stop_ghz"] == "1110"
+    assert shown["z_ffo_ohm"] == "0.15"
+    assert shown["temperature_k"] == "4.2" and shown["tc_top_k"] == "9.5"
+    assert shown["alpha_top"] == "3.54"
+    assert shown["sigma0_top"] == "18.000"
+    assert shown["h12_m"] == "466" and shown["h1_m"] == "166" and shown["d_top_m"] == "350"
+    assert window._parameter_units["h12_m"].text() == "×10^-9 m"
+    assert shown["h_sub_m"] == "350"
+    assert shown["sis_area_um2"] == "0.80" and shown["sis_rn_area_ohm_um2"] == "32.0"
+    assert shown["sis_cap_f_per_um2"] == "0.083"
+    assert shown["sis_width_um"] == "4.0"
+    assert shown["zrad0_ohm"] == "50" and shown["radial_angle_deg"] == "113"
+    assert window._plot_scale_inputs["x_min"].text() == "100"
+
+    labels = {label.text() for label in window.findChildren(QtWidgets.QLabel)}
+    assert {"dW", "15 · Wb"} <= labels and "DW" not in labels and "15 · W SIS" not in labels
+    general = window._parameter_groups["General"].form_layout
+    names = [
+        name
+        for name in inputs
+        if inputs[name].parentWidget() and window._parameter_groups["General"].isAncestorOf(inputs[name])
+    ]
+    assert names == [
+        "f0_ghz",
+        "s21_freq_start_ghz",
+        "s21_freq_stop_ghz",
+        "s21_freq_step_ghz",
+        "z_ffo_ohm",
+        "dw_m",
+        "temperature_k",
+        "e_sub",
+        "h_sub_m",
+    ]
+    assert general.rowCount() == len(names)
+    assert "LO" not in window._parameter_groups
+
+    # Rounded display, exact calculation: untouched editors keep the loaded value.
+    config = window._build_config()
+    assert config.h12_m == 0.465729e-6 and config.h1_m == 1.65729e-7
+    _enter_value(window, "h12_m", 470)
+    assert window._build_config().h12_m == pytest.approx(470e-9)
+    _enter_value(window, "msl_6_width_m", 4.26)  # a digit beyond 0.1 µm is not accepted
+    assert inputs["msl_6_width_m"].text() == "4.2"
+    assert window._build_config().msl_6_width_m == pytest.approx(4.2e-6)
 
 
 def test_preview_rejects_nonpositive_corrected_dc_slot(parameter_window: MainWindow) -> None:
@@ -187,7 +241,7 @@ def test_all_element_fields_have_matching_numbers_and_external_units(parameter_w
     labels = {label.text() for label in window.findChildren(QtWidgets.QLabel)}
     fields = S21Config.ui_fields()
     correction = next(info for info in fields if info.name == "dw_m")
-    assert correction.element_id is None and correction.group == "Dielectrics"
+    assert correction.element_id is None and correction.group == "General"
     assert {info.element_id for info in fields if info.element_id} == set(ELEMENT_ORDER)
     for info in fields:
         spin = window._config_inputs[info.name]
@@ -495,8 +549,8 @@ def test_issue_5_steps_and_sigma_keyboard_input(parameter_window: MainWindow) ->
         assert inputs[name].singleStep() == 0.5
     sigma = inputs["sigma0_top"]
     assert sigma.value() == 18.0
-    assert parameter_window._engineering_orders["sigma0_top"].text() == "×10^6 1/(Ω·m)"
-    for text, expected in (("0,975", 975000), ("18.000001", 18000001), ("0.975000", 975000)):
+    assert parameter_window._engineering_orders["sigma0_top"].text() == "1/(Ω·µm)"
+    for text, expected in (("0,975", 975000), ("18.125", 18125000), ("0.975000", 975000)):
         sigma.lineEdit().selectAll()
         QTest.keyClicks(sigma.lineEdit(), text)
         QTest.keyClick(sigma.lineEdit(), QtCore.Qt.Key_Return)
@@ -581,7 +635,7 @@ def test_preview_button_uses_current_fields_for_dimensions(parameter_window: Mai
         "W2эфф=8.75",
         "W=9 µm; L=12 µm",
         "Wэфф=9.75",
-        "W SIS (расч.)=25 µm",
+        "Wb (расч.)=25 µm",
     ):
         assert expected in svg
     labels = {label.text() for label in window.findChildren(QtWidgets.QLabel)}

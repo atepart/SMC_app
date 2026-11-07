@@ -53,7 +53,7 @@ def test_main_window_supports_material_toggle_and_preview_refresh(tmp_path) -> N
 
     assert window._view._svg_item is not None
     window._update_s21_plot([100.0, 300.0, 500.0, 700.0, 900.0], [-18.0, -8.0, -4.0, -7.0, -15.0])
-    window._parameter_groups["LO"].setChecked(False)
+    window._parameter_groups["General"].setChecked(False)
     window._parameter_groups["Backend Grid"].setChecked(False)
     view_box = window._plot.getPlotItem().vb
     scene_position = view_box.mapToScene(view_box.boundingRect().center())

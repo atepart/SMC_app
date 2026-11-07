@@ -400,6 +400,9 @@ class MainWindow(QMainWindow):
         self._engineering_orders: Dict[str, QLabel] = {}
         self._parameter_units: Dict[str, QLabel] = {}
         self._transformer_baselines: dict[int, tuple[float, ...]] = {}
+        # Values shown when the editors were filled; an untouched editor keeps
+        # the exact loaded value instead of its rounded display (GitHub #10).
+        self._loaded_ui_values: dict[str, float] = {}
         self._transformer_status: dict[int, QLabel] = {}
         self._s21_output: QLineEdit | None = None
         self._s21_output_directory: QLineEdit | None = None
@@ -561,7 +564,9 @@ class MainWindow(QMainWindow):
                 form.addRow(label, self._build_parameter_editor(field_info.name, spin, field_info.suffix))
 
             if group_fields[0].element_id == "SIS":
-                hint = QLabel("W SIS — расчётная ширина. Ширина металла рядом с SIS: элемент 14, «Линия у SIS · W».")
+                hint = QLabel(
+                    "Wb — ширина для индуктивности растекания токов у детектора. Ширина металла рядом с SIS: элемент 14, «Линия у SIS · W»."
+                )
                 hint.setWordWrap(True)
                 form.addRow(hint)
 
@@ -710,7 +715,7 @@ class MainWindow(QMainWindow):
             controls.addWidget(QLabel(label), 0, column * 2)
             spin = SafeDoubleSpinBox(panel)
             spin.setRange(-1_000_000.0, 1_000_000.0)
-            spin.setDecimals(2)
+            spin.setDecimals(0 if name.startswith("x_") else 2)  # frequencies: 1 GHz
             spin.setValue(value)
             spin.setSingleStep(10.0 if name.startswith("x_") else 5.0)
             spin.setFixedWidth(90)
@@ -1007,6 +1012,7 @@ class MainWindow(QMainWindow):
             blocked = spin.blockSignals(True)
             spin.setValue(config.ui_value(name))
             spin.blockSignals(blocked)
+            self._loaded_ui_values[name] = spin.value()
         self._remember_transformer_inputs()
         if same_material:
             self._apply_material_sync()
@@ -1026,6 +1032,7 @@ class MainWindow(QMainWindow):
         spin.setRange(field_info.minimum, field_info.maximum)
         spin.setSingleStep(field_info.step)
         spin.setValue(self._defaults.ui_value(name))
+        self._loaded_ui_values[name] = spin.value()
         spin.returnPressed.connect(self._update_svg)
         if name in self._material_sync_map:
             spin.valueChanged.connect(self._apply_material_sync)
@@ -1044,8 +1051,8 @@ class MainWindow(QMainWindow):
         scaled = scale != 1.0 and name != "sis_cap_f_per_um2"
         if scaled:
             exponent = -round(math.log10(scale))
-            unit = "1/(Ω·m)" if name.startswith("sigma0_") else "m"
-            text = f"×10^{exponent} {unit}"
+            # σ is entered per µm (18.000 1/(Ω·µm)), the stored value per metre.
+            text = "1/(Ω·µm)" if name.startswith("sigma0_") else f"×10^{exponent} m"
         else:
             text = suffix.strip().replace("Ohm", "Ω").replace("um", "µm").replace("^2", "²").replace("*", "·")
             text = text.replace("deg", "°")
@@ -1208,6 +1215,8 @@ class MainWindow(QMainWindow):
             spin.interpretText()
             if name.endswith("_length_m"):
                 continue
+            if spin.value() == self._loaded_ui_values.get(name):
+                continue  # untouched: keep the exact value, not its rounded display
             scale = S21Config.field_scale(name)
             values[name] = spin.value() / scale
 
