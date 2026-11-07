@@ -112,7 +112,7 @@ def test_curve_colours_and_widths_per_theme(window: MainWindow, tmp_path, theme:
     green = QtGui.QColor(colors.exp_curve)
     assert green.green() > green.red() and green.green() > green.blue()
 
-    # buff arrives with WP-041 (its style is ready); HFSS is imported since WP-040.
+    # buff comes from «Буфер» (WP-041); HFSS is imported since WP-040.
     buff = window._curve_style("buff")["pen"]
     assert buff.widthF() == 4  # twice the base width
     grey = QtGui.QColor(colors.buff_curve)

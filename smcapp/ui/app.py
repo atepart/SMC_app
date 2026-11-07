@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
 
@@ -100,6 +101,19 @@ _COMPARISON_FILE_FILTERS = {
 _CURVE_Z_VALUES = {BUFF_CURVE: -0.5, PREV_CURVE: 0.0, HFSS_CURVE: 0.25, EXP_CURVE: 0.5, SMC_CURVE: 1.0}
 BASE_CURVE_WIDTH = 2.0
 SMC_SYMBOL_SIZE = 3.5
+
+
+@dataclass(frozen=True)
+class ParameterBuffer:
+    """In-memory «Буфер» (GitHub #11): parameters plus the frozen buff curve.
+
+    ``trace`` is the SMC curve at the moment of «Записать», or ``None`` when
+    nothing had been calculated yet; it never follows later calculations.
+    """
+
+    config: S21Config
+    same_material: bool
+    trace: tuple[list[float], list[float]] | None
 
 
 def _resource_path(*parts: str) -> Path:
@@ -669,6 +683,10 @@ class MainWindow(QMainWindow):
         self._comparison_traces: dict[str, ComparisonTrace] = {}
         self._theory_trace: tuple[object, object] | None = None
         self._previous_theory_trace: tuple[object, object] | None = None
+        # Parameters of the calculation running now and of the one shown as SMC.
+        self._s21_running_config: S21Config | None = None
+        self._theory_config: S21Config | None = None
+        self._buffer: ParameterBuffer | None = None
         # Curves unchecked in the legend; the data stays, only the curve hides.
         self._hidden_curves: set[str] = set()
         self._theme = load_theme()
@@ -1056,6 +1074,26 @@ class MainWindow(QMainWindow):
         theme_button.setMenu(self.theme_menu)
         toolbar.addWidget(theme_button)
 
+        # «Буфер» right of «Тема» (GitHub #11): one remembered parameter set
+        # with its frozen buff curve.
+        self.buffer_menu = QtWidgets.QMenu("Буфер", self)
+        self.buffer_store_action = self.buffer_menu.addAction("Записать")
+        self.buffer_store_action.setToolTip("Запомнить все параметры и текущую кривую SMC как кривую buff")
+        self.buffer_store_action.triggered.connect(self.store_buffer)
+        self.buffer_restore_action = self.buffer_menu.addAction("Восстановить")
+        self.buffer_restore_action.setToolTip("Вернуть параметры из буфера; кривая buff остаётся")
+        self.buffer_restore_action.triggered.connect(self.restore_buffer)
+        self.buffer_restore_action.setEnabled(False)
+        self.buffer_menu.setToolTipsVisible(True)
+
+        buffer_button = QtWidgets.QToolButton(self)
+        buffer_button.setObjectName("buffer_button")
+        buffer_button.setText("Буфер")
+        buffer_button.setToolTip("Записать параметры и кривую buff или восстановить параметры")
+        buffer_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        buffer_button.setMenu(self.buffer_menu)
+        toolbar.addWidget(buffer_button)
+
     def _refresh_dock_widgets_menu(self) -> None:
         """Rebuild the panel checklist from the actual QtAds state."""
         self.dock_widgets_menu.clear()
@@ -1253,6 +1291,18 @@ class MainWindow(QMainWindow):
             math.isclose(getattr(config, top), getattr(config, bottom), rel_tol=1e-12, abs_tol=0.0)
             for top, bottom in self._material_sync_map.items()
         )
+        self._apply_config(config, same_material)
+        self._remember_file_directory(path)
+        if self._s21_status is not None:
+            self._s21_status.setText(f"Параметры загружены: {Path(path).expanduser()}")
+        return config
+
+    def _apply_config(self, config: S21Config, same_material: bool) -> None:
+        """Fill every editor from a validated configuration and redraw the schematic.
+
+        Untouched editors then build back the exact values (not their rounded
+        display), and the transformer n/dl come from ``config`` itself.
+        """
         if self._same_materials_checkbox is not None:
             self._same_materials_checkbox.setChecked(same_material)
 
@@ -1268,12 +1318,53 @@ class MainWindow(QMainWindow):
         else:
             for bottom_name in self._material_sync_map.values():
                 self._config_inputs[bottom_name].setEnabled(True)
-
-        self._remember_file_directory(path)
         self._update_svg()
+
+    @property
+    def parameter_buffer(self) -> ParameterBuffer | None:
+        return self._buffer
+
+    def store_buffer(self) -> ParameterBuffer | None:
+        """«Буфер → Записать»: remember all parameters and freeze SMC as buff.
+
+        A validation error is shown in a dialog and leaves the buffer as it was.
+        """
+        try:
+            config = self._build_config()
+            config.validate()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Ошибка записи в буфер", str(exc))
+            return None
+        same_material = self._same_materials_checkbox is not None and self._same_materials_checkbox.isChecked()
+        trace = None
+        if self._theory_trace is not None:
+            frequencies, values = self._theory_trace
+            trace = (list(frequencies), list(values))
+        self._buffer = ParameterBuffer(config=config, same_material=same_material, trace=trace)
+        self.buffer_restore_action.setEnabled(True)
+        self._redraw_plot()
+
+        if trace is None:
+            message = "Буфер: параметры записаны; кривой buff нет — расчёт S21 ещё не выполнялся."
+        else:
+            message = f"Буфер: параметры и кривая buff ({len(trace[0])} точек) записаны."
+            if self._theory_config is not None and self._theory_config != config:
+                message += " Параметры изменены после последнего расчёта: buff — кривая этого расчёта."
+        self._append_log_message(message)
         if self._s21_status is not None:
-            self._s21_status.setText(f"Параметры загружены: {Path(path).expanduser()}")
-        return config
+            self._s21_status.setText(message)
+        return self._buffer
+
+    def restore_buffer(self) -> S21Config | None:
+        """«Буфер → Восстановить»: put the remembered parameters back; buff stays."""
+        if self._buffer is None:
+            return None
+        self._apply_config(self._buffer.config, self._buffer.same_material)
+        message = "Буфер: параметры восстановлены; кривая buff не изменена."
+        self._append_log_message(message)
+        if self._s21_status is not None:
+            self._s21_status.setText(message)
+        return self._buffer.config
 
     def _create_spinbox(self, name: str, field_info) -> SafeDoubleSpinBox:
         spin = SafeDoubleSpinBox()
@@ -1709,6 +1800,7 @@ class MainWindow(QMainWindow):
             return
 
         self._active_s21_output_path = output_path
+        self._s21_running_config = config
         self._s21_status.setText("Computing S21...")
         self._set_log_messages(
             [
@@ -1738,6 +1830,7 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_s21_finished(self, result) -> None:
         self._update_s21_plot(result.frequencies_ghz, result.s21_db)
+        self._theory_config = self._s21_running_config
         self._set_log_messages(result.log_messages)
 
         output_path = self._active_s21_output_path
@@ -1777,6 +1870,7 @@ class MainWindow(QMainWindow):
         """Rotate only successful calculations; own the samples independently."""
         self._previous_theory_trace = self._theory_trace
         self._theory_trace = (list(frequencies), list(s21_db))
+        self._theory_config = None  # set by _on_s21_finished for a real run
         self._redraw_plot()
 
     def _redraw_plot(self) -> None:
@@ -1788,6 +1882,8 @@ class MainWindow(QMainWindow):
             curves.append((SMC_CURVE, *self._theory_trace))
         if self._previous_theory_trace is not None:
             curves.append((PREV_CURVE, *self._previous_theory_trace))
+        if self._buffer is not None and self._buffer.trace is not None:
+            curves.append((BUFF_CURVE, *self._buffer.trace))
         for kind, name in COMPARISON_CURVE_NAMES.items():
             trace = self._comparison_traces.get(kind)
             if trace is not None:
