@@ -11,6 +11,10 @@ from smcapp.domain.s21_models import S21Config
 DESIGN_FORMAT = "SMCapp Design"
 LEGACY_DESIGN_FORMAT = "AOCapp Design"
 DESIGN_VERSION = 1
+# Parameters that older files may still contain but that no longer influence
+# the calculation.  They are accepted on load and dropped; saving never writes
+# them again.  ``f0_ghz``: Mex04 now uses the sweep frequency (WP-046, BUG-023 D2).
+RETIRED_PARAMETERS = frozenset({"f0_ghz"})
 
 
 class DesignFileService:
@@ -57,6 +61,7 @@ class DesignFileService:
         if not isinstance(parameters, dict):
             raise ValueError("В файле дизайна отсутствует объект parameters.")
 
+        parameters = {name: value for name, value in parameters.items() if name not in RETIRED_PARAMETERS}
         expected = {item.name for item in fields(S21Config)}
         unknown = set(parameters) - expected
         if unknown:

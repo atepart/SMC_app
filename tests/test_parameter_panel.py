@@ -128,7 +128,8 @@ def test_issue_10_field_precision_and_general_block(parameter_window: MainWindow
     assert shown["transf_7_length_m"] == "9.6"
     assert shown["lso_m"] == "8.0" and shown["dc_gap_m"] == "4.0" and shown["mex4_len_m"] == "3.0"
     assert shown["dw_m"] == "0.50"
-    assert shown["f0_ghz"] == "650" and shown["s21_freq_step_ghz"] == "5" and shown["film_freq_stop_ghz"] == "1110"
+    assert "f0_ghz" not in shown  # WP-046: Mex04 uses the sweep frequency
+    assert shown["s21_freq_step_ghz"] == "5" and shown["film_freq_stop_ghz"] == "1110"
     assert shown["z_ffo_ohm"] == "0.15"
     assert shown["temperature_k"] == "4.2" and shown["tc_top_k"] == "9.5"
     assert shown["alpha_top"] == "3.54"
@@ -151,7 +152,6 @@ def test_issue_10_field_precision_and_general_block(parameter_window: MainWindow
         if inputs[name].parentWidget() and window._parameter_groups["General"].isAncestorOf(inputs[name])
     ]
     assert names == [
-        "f0_ghz",
         "s21_freq_start_ghz",
         "s21_freq_stop_ghz",
         "s21_freq_step_ghz",

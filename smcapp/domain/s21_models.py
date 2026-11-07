@@ -414,19 +414,6 @@ class S21Config:
         },
     )
 
-    f0_ghz: float = field(
-        default=650.0,
-        metadata={
-            "label": "f0",
-            "group": "General",
-            "description": "Reference frequency used by the legacy chain at the radial-stub-side line segment.",
-            "suffix": " GHz",
-            "minimum": 1.0,
-            "maximum": 5000.0,
-            "step": 1.0,
-            "decimals": 2,
-        },
-    )
     dw_m: float = field(
         default=0.5e-6,
         metadata={
@@ -1494,7 +1481,6 @@ class S21Config:
                             )
                         )
         general = (
-            "f0_ghz",
             "s21_freq_start_ghz",
             "s21_freq_stop_ghz",
             "s21_freq_step_ghz",

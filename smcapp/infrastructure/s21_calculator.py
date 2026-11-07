@@ -186,11 +186,12 @@ class S21CalculatorImpl(S21Calculator):
             )
 
             m_rad = lambda f: array([[1.0, 0.0], [1.0 / zrad4(f), 1.0]])
-            # Legacy deliberately evaluates this one short Mex4 line at f0,
-            # while the radial shunt itself remains evaluated at sweep f.
+            # Mex04 = M_RAD(f)·M_MSL(f): like every other element, the short
+            # SIS-side line is evaluated at the sweep frequency (Mathcad HD35
+            # worksheets; legacy backend/main.py fixed it at f0 = 650 GHz).
             mex4 = lambda f: m_rad(f).dot(
                 self.microstrip.matrix(
-                    config.f0_ghz,
+                    f,
                     config.mex4_len_m,
                     config.mex4_width_m + dw,
                     e12,
