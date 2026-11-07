@@ -565,7 +565,7 @@ class MainWindow(QMainWindow):
 
             if group_fields[0].element_id == "SIS":
                 hint = QLabel(
-                    "Wb — ширина для индуктивности растекания токов у детектора. Ширина металла рядом с SIS: элемент 14, «Линия у SIS · W»."
+                    "Wb — ширина для индуктивности растекания токов у детектора. Ширина металла у SIS: элемент 14 «Линия SIS», W1 и W2."
                 )
                 hint.setWordWrap(True)
                 form.addRow(hint)

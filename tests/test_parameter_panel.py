@@ -295,7 +295,7 @@ def test_sis_feed_width_enter_changes_actual_metal(parameter_window: MainWindow,
     config = parameter_window._build_config()
     geometry = IntegratedStructureCalculator().calculate(config)
     feed = next(e for e in geometry.elements if e.element_id == "SIS-line")
-    assert feed.bounds.height == pytest.approx((width + config.dw_m * 1e6) * 2)
+    assert feed.auxiliary_rects[0].height == pytest.approx((width + config.dw_m * 1e6) * 2)
 
 
 def test_enter_invalid_geometry_retains_last_preview(parameter_window: MainWindow) -> None:
@@ -561,7 +561,7 @@ def test_issue_5_steps_and_sigma_keyboard_input(parameter_window: MainWindow) ->
 
 def test_issue_6_order_conversion_and_invalid_length(parameter_window: MainWindow) -> None:
     groups = [name for name in parameter_window._parameter_groups if " · " in name]
-    assert [int(name.split()[0]) for name in groups] == list(range(1, 20))
+    assert [int(name.split()[0]) for name in groups] == list(range(1, 19))
     inputs = parameter_window._config_inputs
     assert "transf_7_dwdl_um" not in inputs
     assert inputs["transf_7_w_end_m"].value() == 14  # W1 on the drawing's left
@@ -633,13 +633,14 @@ def test_preview_button_uses_current_fields_for_dimensions(parameter_window: Mai
         "W1=22 µm; W2=8 µm; L=8 µm",
         "W1эфф=22.75",
         "W2эфф=8.75",
-        "W=9 µm; L=12 µm",
-        "Wэфф=9.75",
+        "L1=12 µm; W1=9 µm; L2=3 µm; W2=6 µm",
+        "W1эфф=9.75",
         "Wb (расч.)=25 µm",
     ):
         assert expected in svg
     labels = {label.text() for label in window.findChildren(QtWidgets.QLabel)}
-    assert {"14 · Линия у SIS · L", "14 · Линия у SIS · W"} <= labels
+    assert {"14 · L1", "14 · W1", "14 · L2 · L4", "14 · W2 · W4"} <= labels
+    assert "14 · Линия SIS" in window._parameter_groups
 
 
 def test_legacy_transformer_round_trip_preserves_discretization(parameter_window: MainWindow, tmp_path) -> None:

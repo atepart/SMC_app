@@ -25,7 +25,6 @@ ELEMENT_ORDER = (
     "T1",
     "SIS-line",
     "SIS",
-    "Ww4",
     "Ww3",
     "Radial",
     "Ww1",
@@ -37,9 +36,8 @@ def element_group(element: str) -> str:
     """One display number shared by parameter groups, diagnostics and drawing."""
     titles = {
         "DC": "DC block",
-        "SIS-line": "Линия у SIS",
+        "SIS-line": "Линия SIS",
         "SIS": "SIS",
-        "Ww4": "Radial Stub · Lw4/Ww4",
         "Ww3": "Radial Stub · Lw3/Ww3",
         "Radial": "Radial Stub",
         "Ww1": "Radial Stub · Lw1/Ww1",

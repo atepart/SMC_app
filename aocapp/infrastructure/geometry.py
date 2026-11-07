@@ -155,6 +155,8 @@ class _Canvas:
     elements: list[SchematicElement] = field(default_factory=list)
     bounds_points: list[Point] = field(default_factory=list)
     excluded_edges: list[tuple[Point, Point]] = field(default_factory=list)
+    # Joints inside one numbered element (the two parts of 14) get no seam.
+    unmarked_joins: list[float] = field(default_factory=list)
 
     def include(self, rect: Rect) -> None:
         self.bounds_points.extend((Point(rect.x, rect.y), Point(rect.right, rect.bottom)))
@@ -461,25 +463,36 @@ class IntegratedStructureCalculator(StructureCalculator):
 
     def _radial_and_sis(self, canvas: _Canvas, config: S21Config, x: float, y: float, dw: float) -> float:
         feed_start = x
-        x = self._strip(
-            canvas,
+        # Element 14 «Линия SIS» has two parts: L1/W1 (the former line at
+        # the SIS) and L2/W2 (the former Lw4/Ww4). They stay separate inputs
+        # of the calculation; the SIS junction sits on their joint.
+        parts = []
+        for length_m, width_m in ((config.mex4_len_m, config.mex4_width_m), (config.zrad4_len_m, config.zrad4_width_m)):
+            x = self._strip(canvas, "SIS-line", "Линия SIS", x, y, _um(length_m), _um(width_m), _um(width_m), dw)
+            parts.append(canvas.elements.pop())
+        first, second = parts
+        canvas.unmarked_joins.append(first.output_port.center.x)
+        feed = SchematicElement(
             "SIS-line",
-            "Линия у SIS",
-            x,
-            y,
-            _um(config.mex4_len_m),
-            _um(config.mex4_width_m),
-            _um(config.mex4_width_m),
-            dw,
+            "Линия SIS",
+            bounds_from_points(list(first.polygon) + list(second.polygon)),
+            (
+                ElementParameter("L1", _um(config.mex4_len_m)),
+                ElementParameter("W1", _um(config.mex4_width_m)),
+                ElementParameter("L2", _um(config.zrad4_len_m)),
+                ElementParameter("W2", _um(config.zrad4_width_m)),
+            ),
+            first.input_port,
+            second.output_port,
+            polygon=first.polygon + second.polygon,
+            auxiliary_rects=(first.bounds, second.bounds),
         )
-        feed = canvas.elements[-1]
+        canvas.elements.append(feed)
         # Wb is an inductive-model width, not a specified mask width.
-        # S/W therefore cannot supply a new length for this conductor. The
-        # junction sits on the joint of the SIS line (14) and Lw4 (16).
-        symbol = Point(x, y)
-        # Sized by the narrower of the two joined lines, not by the length of 14.
-        lw4_width = (_um(config.zrad4_width_m) + dw) * WIDTH_SCALE
-        symbol_radius = min(feed.bounds.height, lw4_width) / 3
+        # S/Wb therefore cannot supply a new length for this conductor.
+        symbol = Point(first.output_port.center.x, y)
+        # Sized by the narrower of the two joined parts, not by their lengths.
+        symbol_radius = min(first.bounds.height, second.bounds.height) / 3
         canvas.circles.append(CircleShape(symbol, symbol_radius, fill="#fff"))
         canvas.elements.append(
             SchematicElement(
@@ -498,11 +511,8 @@ class IntegratedStructureCalculator(StructureCalculator):
         canvas.annotation_lines.append(
             LineShape(Point(feed_start - 10, feed.bounds.bottom + 18), symbol, stroke="#64748b")
         )
-        for index in (4, 3):
-            w = _um(getattr(config, f"zrad{index}_width_m"))
-            x = self._strip(
-                canvas, f"Ww{index}", f"Линия Ww{index}", x, y, _um(getattr(config, f"zrad{index}_len_m")), w, w, dw
-            )
+        w = _um(config.zrad3_width_m)
+        x = self._strip(canvas, "Ww3", "Линия Ww3", x, y, _um(config.zrad3_len_m), w, w, dw)
         # Shared ports supply all fan/neck/output endpoints. Rmin is the base
         # strip width in RadialStubCalculator; the sector remains a schematic.
         radius, base = _um(config.radial_r_max_m) * WIDTH_SCALE, _um(config.radial_r_min_m) * WIDTH_SCALE
@@ -567,8 +577,8 @@ class IntegratedStructureCalculator(StructureCalculator):
         unmarked_joins = {
             round(e.input_port.center.x, 9)
             for e in canvas.elements
-            if e.input_port is not None and e.element_id in {"Ww4", "Ww3", "Radial", "Ww1"}
-        }
+            if e.input_port is not None and e.element_id in {"Ww3", "Radial", "Ww1"}
+        } | {round(x, 9) for x in canvas.unmarked_joins}
         polygons = [p.points for p in canvas.polygons]
         polygons += [
             [
@@ -735,6 +745,9 @@ class IntegratedStructureCalculator(StructureCalculator):
             dc = next(e for e in canvas.elements if e.element_id == "DC")
             self._corner_dimensions(canvas, element, dc, x, y, card_w)
             return
+        if element.element_id == "SIS-line":
+            self._sis_line_dimensions(canvas, element, x, y, card_w)
+            return
         assert element.input_port is not None and element.output_port is not None
         length = element.output_port.center.x - element.input_port.center.x
         height = max(element.input_port.width, element.output_port.width)
@@ -866,6 +879,65 @@ class IntegratedStructureCalculator(StructureCalculator):
             TextLabel(
                 Point(x, y + 248),
                 f"Масштаб ×{zoom:.3g} · оранжевое — осевая линия · снизу — шлейф DC block",
+                9,
+                fill="#64748b",
+            )
+        )
+
+    @staticmethod
+    def _sis_line_dimensions(canvas: _Canvas, element: SchematicElement, x: float, y: float, card_w: float) -> None:
+        """Element 14: parts L1/W1 and L2/W2 with the SIS junction on their joint."""
+        first, second = element.auxiliary_rects
+        length = first.width + second.width
+        height = max(first.height, second.height)
+        zoom = min(170 / length, 80 / height)
+        left, center_y = x + (card_w - length * zoom) / 2, y + 124
+
+        def part(rect: Rect, start: float) -> Rect:
+            return Rect(start, center_y - rect.height * zoom / 2, rect.width * zoom, rect.height * zoom)
+
+        a = part(first, left)
+        b = part(second, a.right)
+        for rect in (a, b):
+            corners = [Point(rect.x, rect.y), Point(rect.right, rect.y), Point(rect.right, rect.bottom)]
+            canvas.polygons.append(PolygonShape(corners + [Point(rect.x, rect.bottom)], fill=CONDUCTOR_FILL))
+        canvas.circles.append(CircleShape(Point(a.right, center_y), min(a.height, b.height) / 4, fill="#fff"))
+        values = {p.label: p.value for p in element.parameters}
+        dim_y = max(a.bottom, b.bottom) + 18
+        canvas.dimensions.extend(
+            (
+                DimensionLine(
+                    Point(a.x, dim_y),
+                    Point(a.right, dim_y),
+                    f"L1={values['L1']:g}",
+                    Point(a.x + a.width / 2, dim_y + 16),
+                ),
+                DimensionLine(
+                    Point(b.x, dim_y + 26),
+                    Point(b.right, dim_y + 26),
+                    f"L2={values['L2']:g}",
+                    Point(b.x + b.width / 2, dim_y + 42),
+                ),
+                DimensionLine(
+                    Point(a.x - 12, a.y),
+                    Point(a.x - 12, a.bottom),
+                    f"W1эфф={first.height / WIDTH_SCALE:g}",
+                    Point(a.x - 20, center_y),
+                    -90,
+                ),
+                DimensionLine(
+                    Point(b.right + 12, b.y),
+                    Point(b.right + 12, b.bottom),
+                    f"W2эфф={second.height / WIDTH_SCALE:g}",
+                    Point(b.right + 28, center_y),
+                    -90,
+                ),
+            )
+        )
+        canvas.labels.append(
+            TextLabel(
+                Point(x, y + 245),
+                f"Масштаб ×{zoom:.3g} · кружок — SIS на стыке L1/L2",
                 9,
                 fill="#64748b",
             )

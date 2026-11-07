@@ -34,10 +34,11 @@ def _endpoints(data):
 
 def test_preview_contains_every_section_without_matrix_frames() -> None:
     geometry = IntegratedStructureCalculator().calculate(S21Config())
-    assert [e.number for e in geometry.elements] == list(range(1, 20))
+    assert [e.number for e in geometry.elements] == list(range(1, 19))
     assert len([e for e in geometry.elements if e.element_id.startswith("T")]) == 7
-    assert len(geometry.elements) == 19
-    assert set(_elements(geometry)) >= {"DC", "SIS", "SIS-line", "Ww1", "Ww3", "Ww4", "Radial"}
+    assert len(geometry.elements) == 18
+    assert set(_elements(geometry)) >= {"DC", "SIS", "SIS-line", "Ww1", "Ww3", "Radial"}
+    assert "Ww4" not in _elements(geometry)  # part of 14 «Линия SIS» (GitHub #10)
     # The overview has only two DC electrodes, with a genuinely open slot.
     left, right = [p for p in geometry.overview.polygons if p.fill == DC_FILL]
     left_inner = max(p.x for p in left.points)
@@ -121,10 +122,11 @@ def test_sis_is_a_readable_symbol_in_the_calculated_feed() -> None:
     elements = _elements(geometry)
     symbol = geometry.overview.circles[0]
     feed = elements["SIS-line"]
-    # GitHub #10: on the joint of the SIS line (14) and Lw4 (16), on the axis.
-    assert symbol.center.x == pytest.approx(feed.bounds.right) == pytest.approx(elements["Ww4"].input_port.center.x)
+    # GitHub #10: on the joint of the parts L1/W1 and L2/W2 of 14, on the axis.
+    first, second = feed.auxiliary_rects
+    assert symbol.center.x == pytest.approx(first.right) == pytest.approx(second.x)
     assert symbol.center.y == pytest.approx(feed.input_port.center.y)
-    assert elements["SIS"].bounds.x < feed.bounds.right < elements["SIS"].bounds.right
+    assert elements["SIS"].bounds.x < first.right < elements["SIS"].bounds.right
     # The size follows the joined widths, not the length of 14.
     short = _elements(IntegratedStructureCalculator().calculate(S21Config(mex4_len_m=0.5e-6)))
     assert short["SIS"].bounds.width == pytest.approx(elements["SIS"].bounds.width)
@@ -143,8 +145,9 @@ def test_sis_is_a_readable_symbol_in_the_calculated_feed() -> None:
 def test_sis_radial_conductor_has_no_artificial_internal_dividers() -> None:
     geometry = IntegratedStructureCalculator().calculate(S21Config())
     elements = _elements(geometry)
-    for name in ("Ww4", "Ww3", "Radial", "Ww1"):
-        x = elements[name].input_port.center.x
+    for x in [elements["SIS-line"].auxiliary_rects[0].right] + [
+        elements[name].input_port.center.x for name in ("Ww3", "Radial", "Ww1")
+    ]:
         assert not any(line.start.x == line.end.x == x for line in geometry.overview.lines)
 
 
@@ -152,17 +155,20 @@ def test_sis_line_dimensions_use_its_editable_fields_not_sis_model_width() -> No
     config = S21Config(mex4_len_m=12e-6, mex4_width_m=9e-6, sis_width_um=25, sis_area_um2=1.2)
     geometry = IntegratedStructureCalculator().calculate(config)
     line = _elements(geometry)["SIS-line"]
-    assert _parameters(line) == pytest.approx({"L": 12, "W": 9})
-    assert line.bounds.width == pytest.approx(24)
-    assert line.bounds.height == pytest.approx(19)
-    assert {dim.label for dim in geometry.dimensions if dim.element_id == "SIS-line"} == {"L=12", "Wэфф=9.5"}
+    assert _parameters(line) == pytest.approx({"L1": 12, "W1": 9, "L2": 3, "W2": 6})
+    first, second = line.auxiliary_rects
+    assert (first.width, first.height) == pytest.approx((24, 19))
+    assert (second.width, second.height) == pytest.approx((6, 13))
+    assert line.bounds.width == pytest.approx(30)
+    labels = {dim.label for dim in geometry.dimensions if dim.element_id == "SIS-line"}
+    assert labels == {"L1=12", "W1эфф=9.5", "L2=3", "W2эфф=6.5"}
 
 
 @pytest.mark.parametrize("config", [S21Config(), S21Config(msl_8_len_m=1e-9, radial_r_max_m=90e-6, l_slot_m=80e-6)])
 def test_number_labels_and_dimension_views_remain_separate(config) -> None:
     geometry = IntegratedStructureCalculator().calculate(config)
     labels = [label for label in geometry.labels if label.text.isdigit()]
-    assert sorted(int(label.text) for label in labels) == list(range(1, 20))
+    assert sorted(int(label.text) for label in labels) == list(range(1, 19))
     # Labels are 10 units high and <=12 wide; require real clearance in 2D.
     assert all(
         abs(a.position.x - b.position.x) >= 18 or abs(a.position.y - b.position.y) >= 14
@@ -176,13 +182,13 @@ def test_number_labels_and_dimension_views_remain_separate(config) -> None:
 
 def test_part_callouts_appear_only_with_dimensioned_views() -> None:
     geometry = IntegratedStructureCalculator().calculate(S21Config())
-    callouts = {str(number) for number in range(1, 20)} | {"SIS", "50 Ω"}
+    callouts = {str(number) for number in range(1, 19)} | {"SIS", "50 Ω"}
     overview_texts = {label.text for label in geometry.overview.labels}
     assert not overview_texts & callouts
     # Leader lines of the numbers and SIS are slate lines; 0.45 are metal seams.
     assert not [line for line in geometry.overview.lines if line.stroke == "#64748b" and line.stroke_width != 0.45]
     assert callouts <= {label.text for label in geometry.labels}
-    assert len([line for line in geometry.lines if line.stroke == "#64748b" and line.stroke_width == 0.5]) >= 19
+    assert len([line for line in geometry.lines if line.stroke == "#64748b" and line.stroke_width == 0.5]) >= 18
     # Without callouts the overview frame hugs the drawing.
     assert geometry.overview.bounds.y > min(label.position.y for label in geometry.labels if label.text.isdigit())
 
@@ -285,7 +291,7 @@ def test_dc_slot_and_feed_dimensions_follow_calculation_inputs() -> None:
     longer = _elements(IntegratedStructureCalculator().calculate(replace(config, l_slot_m=200e-6)))["DC"]
     assert longer.polygon == dc.polygon
     feed = _elements(geometry)["SIS-line"]
-    assert feed.bounds.width == pytest.approx(20 * 2)
+    assert feed.auxiliary_rects[0].width == pytest.approx(20 * 2)
     assert feed.bounds.height == pytest.approx((config.mex4_width_m + config.dw_m) * 1e6 * 2)
     labels = {d.label.split("=")[0] for d in geometry.dimensions if d.element_id == "DC"}
     assert labels == {"Wmsэфф", "Зазор", "Wslotэфф", "Lms", "Lso", "Lslot", "Pibase"}
@@ -523,10 +529,10 @@ def test_radial_lines_have_exact_lengths_widths_and_connected_ports() -> None:
     config = S21Config(zrad1_len_m=100e-6, zrad1_width_m=20e-6, zrad3_len_m=1e-6, zrad4_len_m=80e-6)
     geometry = IntegratedStructureCalculator().calculate(config)
     elements = _elements(geometry)
-    for index in (4, 3, 1):
-        element = elements[f"Ww{index}"]
-        assert element.bounds.width == pytest.approx(getattr(config, f"zrad{index}_len_m") * 1e6 * 2)
-        assert element.bounds.height == pytest.approx((getattr(config, f"zrad{index}_width_m") + config.dw_m) * 1e6 * 2)
+    parts = {4: elements["SIS-line"].auxiliary_rects[1], 3: elements["Ww3"].bounds, 1: elements["Ww1"].bounds}
+    for index, bounds in parts.items():
+        assert bounds.width == pytest.approx(getattr(config, f"zrad{index}_len_m") * 1e6 * 2)
+        assert bounds.height == pytest.approx((getattr(config, f"zrad{index}_width_m") + config.dw_m) * 1e6 * 2)
     # Straight joins chain along one axis; the DC block turns down between 7 and 9.
     chain = [e for e in geometry.elements if e.input_port is not None or e.output_port is not None]
     pairs = [(a, b) for a, b in zip(chain, chain[1:]) if a.output_port is not None and b.input_port is not None]
@@ -558,7 +564,7 @@ def test_dimensioned_views_use_one_zoom_for_both_axes() -> None:
     geometry = IntegratedStructureCalculator().calculate(_corner_config())
     elements = _elements(geometry)
     for element in elements.values():
-        if element.input_port is None or element.element_id in {"DC", "Radial", "T4"}:
+        if element.input_port is None or element.element_id in {"DC", "Radial", "T4", "SIS-line"}:
             continue
         dims = [d for d in geometry.dimensions if d.element_id == element.element_id]
         length = next(d for d in dims if d.label.startswith("L="))
@@ -566,6 +572,17 @@ def test_dimensioned_views_use_one_zoom_for_both_axes() -> None:
         x_zoom = hypot(length.end.x - length.start.x, length.end.y - length.start.y) / element.bounds.width
         y_zoom = hypot(width.end.x - width.start.x, width.end.y - width.start.y) / element.input_port.width
         assert x_zoom == pytest.approx(y_zoom)
+    # 14 · Линия SIS: both parts and both widths share the card zoom.
+    line = elements["SIS-line"]
+    dims = {d.label.split("=")[0]: d for d in geometry.dimensions if d.element_id == "SIS-line"}
+    first, second = line.auxiliary_rects
+    zooms = [
+        abs(dims["L1"].end.x - dims["L1"].start.x) / first.width,
+        abs(dims["L2"].end.x - dims["L2"].start.x) / second.width,
+        abs(dims["W1эфф"].end.y - dims["W1эфф"].start.y) / first.height,
+        abs(dims["W2эфф"].end.y - dims["W2эфф"].start.y) / second.height,
+    ]
+    assert zooms == pytest.approx([zooms[0]] * 4)
     # Corner cards: the line-end and contact widths use the same zoom.
     for name, line_label, contact_label in (("T4", "W1эфф", "W2эфф"), ("T3", "W2эфф", "W1эфф")):
         corner = elements[name]

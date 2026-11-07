@@ -640,9 +640,9 @@ class S21Config:
     zrad4_len_m: float = field(
         default=3.0e-6,
         metadata={
-            "label": "Lw4",
+            "label": "L2 · L4",
             "group": "Radial Stub",
-            "description": "Short wide line after the narrow radial-stub output section.",
+            "description": "Элемент 14 «Линия SIS», второй участок (бывший Lw4): длина от SIS до Radial Stub line.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -654,9 +654,9 @@ class S21Config:
     zrad4_width_m: float = field(
         default=6.0e-6,
         metadata={
-            "label": "Ww4",
+            "label": "W2 · W4",
             "group": "Radial Stub",
-            "description": "Width of the short wide line after the narrow radial-stub output section.",
+            "description": "Элемент 14 «Линия SIS», второй участок (бывший Ww4): ширина до поправки dW.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -669,9 +669,9 @@ class S21Config:
     mex4_len_m: float = field(
         default=3.0e-6,
         metadata={
-            "label": "Линия у SIS · L",
+            "label": "L1",
             "group": "Radial Stub",
-            "description": "Длина линии с символом SIS после последнего трансформатора, слева от радиальных шлейфов.",
+            "description": "Элемент 14 «Линия SIS», первый участок (бывшая линия у SIS): длина от трансформатора 13 до SIS.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -683,9 +683,9 @@ class S21Config:
     mex4_width_m: float = field(
         default=6.0e-6,
         metadata={
-            "label": "Линия у SIS · W",
+            "label": "W1",
             "group": "Radial Stub",
-            "description": "Введённая ширина линии с символом SIS; металл на схеме имеет ширину W + dW.",
+            "description": "Элемент 14 «Линия SIS», первый участок (бывшая линия у SIS): ширина до поправки dW; металл на схеме W1 + dW.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -1432,9 +1432,9 @@ class S21Config:
                 element = "DC"
             elif info.group == "SIS":
                 element = "SIS"
-            elif info.name.startswith("mex4_"):
+            elif info.name.startswith(("mex4_", "zrad4_")):
                 element = "SIS-line"
-            elif info.name.startswith("zrad") and info.name[4] in "134":
+            elif info.name.startswith("zrad") and info.name[4] in "13":
                 element = f"Ww{info.name[4]}"
             elif info.group == "Radial Stub":
                 element = "Radial"
@@ -1504,8 +1504,11 @@ class S21Config:
             "e_sub",
             "h_sub_m",
         )
-        # Grouping is per group name, so only the order inside General changes.
-        visible.sort(key=lambda info: general.index(info.name) if info.name in general else -1)
+        # 14 · Линия SIS: the first (former SIS line) and second (former Lw4) parts.
+        sis_line = ("mex4_len_m", "mex4_width_m", "zrad4_len_m", "zrad4_width_m")
+        order = {name: index for index, name in enumerate(general + sis_line)}
+        # Grouping is per group name, so only the order inside these groups changes.
+        visible.sort(key=lambda info: order.get(info.name, -1))
         return [replace(info, decimals=_display_decimals(info)) for info in visible]
 
     def ui_value(self, name: str) -> float:
