@@ -474,9 +474,12 @@ class IntegratedStructureCalculator(StructureCalculator):
         )
         feed = canvas.elements[-1]
         # W SIS is an inductive-model width, not a specified mask width.
-        # S/W therefore cannot supply a new length for this conductor.
-        symbol = Point((feed_start + x) / 2, y)
-        symbol_radius = min(feed.bounds.width, feed.bounds.height) / 3
+        # S/W therefore cannot supply a new length for this conductor. The
+        # junction sits on the joint of the SIS line (14) and Lw4 (16).
+        symbol = Point(x, y)
+        # Sized by the narrower of the two joined lines, not by the length of 14.
+        lw4_width = (_um(config.zrad4_width_m) + dw) * WIDTH_SCALE
+        symbol_radius = min(feed.bounds.height, lw4_width) / 3
         canvas.circles.append(CircleShape(symbol, symbol_radius, fill="#fff"))
         canvas.elements.append(
             SchematicElement(

@@ -121,8 +121,14 @@ def test_sis_is_a_readable_symbol_in_the_calculated_feed() -> None:
     elements = _elements(geometry)
     symbol = geometry.overview.circles[0]
     feed = elements["SIS-line"]
-    assert feed.bounds.x < symbol.center.x < feed.bounds.right
-    assert 0 < symbol.radius < min(feed.bounds.width, feed.bounds.height) / 2
+    # GitHub #10: on the joint of the SIS line (14) and Lw4 (16), on the axis.
+    assert symbol.center.x == pytest.approx(feed.bounds.right) == pytest.approx(elements["Ww4"].input_port.center.x)
+    assert symbol.center.y == pytest.approx(feed.input_port.center.y)
+    assert elements["SIS"].bounds.x < feed.bounds.right < elements["SIS"].bounds.right
+    # The size follows the joined widths, not the length of 14.
+    short = _elements(IntegratedStructureCalculator().calculate(S21Config(mex4_len_m=0.5e-6)))
+    assert short["SIS"].bounds.width == pytest.approx(elements["SIS"].bounds.width)
+    assert 0 < symbol.radius < feed.bounds.height / 2  # inside the conductor width
     assert feed.bounds.right < elements["Radial"].input_port.center.x
     assert _parameters(elements["SIS"]) == pytest.approx({"S": 0.8, "W SIS (расч.)": 4})
     changed = IntegratedStructureCalculator().calculate(S21Config(sis_area_um2=20, sis_width_um=8))
