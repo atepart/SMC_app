@@ -13,7 +13,7 @@ from typing import Dict
 
 import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
-from PySide6.QtCore import QByteArray, QObject, QPointF, QSettings, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QByteArray, QObject, QPointF, QRectF, QSettings, Qt, QThread, Signal, Slot
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -24,6 +24,9 @@ from PySide6.QtGui import (
     QImage,
     QImageWriter,
     QPainter,
+    QPainterPath,
+    QPainterPathStroker,
+    QPen,
     QTransform,
     QWheelEvent,
 )
@@ -34,6 +37,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
     QFormLayout,
+    QGraphicsPathItem,
     QGraphicsScene,
     QGraphicsView,
     QGroupBox,
@@ -54,13 +58,15 @@ from PySide6QtAds import CDockManager, CDockWidget, DockWidgetArea
 from aocapp.application.s21_use_case import CalculateS21UseCase
 from aocapp.application.use_cases import GenerateStructureUseCase
 from aocapp.application.version import REPO_SLUG, __version__
-from aocapp.domain.models import SvgColorScheme
+from aocapp.domain.models import Point, SvgColorScheme
 from aocapp.domain.s21_models import S21Config
 from aocapp.domain.transformers import ELEMENT_NUMBERS, derive_transformer_steps, transformer_dl_max_um
 from aocapp.infrastructure.design_files import DesignFileService
 from aocapp.infrastructure.geometry import SIGNAL_INPUT
+from aocapp.infrastructure.hover import ElementHitMap, NumberMark
 from aocapp.infrastructure.trace_files import ComparisonTrace, TraceFileReader
 from aocapp.ui.theme import (
+    ACCENT,
     THEME_COLORS,
     THEME_TITLES,
     Theme,
@@ -128,8 +134,34 @@ class SvgGraphicsView(QGraphicsView):
         # Last pin: SVG point, wanted viewport position, transform and the
         # viewport position actually reached (scroll bars are whole pixels).
         self._pin: tuple[QPointF, QPointF, QTransform, QPointF] | None = None
+        # GitHub #10: the number of the element under the cursor is highlighted
+        # by overlay items above the SVG; the hit map comes with each drawing.
+        self._hit_map: ElementHitMap | None = None
+        self._highlight_color = QColor(ACCENT)
+        self._highlight_items: tuple[QGraphicsPathItem, QGraphicsPathItem] | None = None
+        self._hovered: NumberMark | None = None
+        self._hover_position: QPointF | None = None
+        self._redrawing = False
+        self.viewport().setMouseTracking(True)
 
-    def set_svg(self, svg_text: str, *, fit_width: bool = False, anchor: QPointF | None = None) -> None:
+    def set_svg(
+        self,
+        svg_text: str,
+        *,
+        fit_width: bool = False,
+        anchor: QPointF | None = None,
+        hit_map: ElementHitMap | None = None,
+    ) -> None:
+        """Show a new drawing and re-test the hover against its *hit_map*."""
+        self._redrawing = True
+        try:
+            self._hit_map = hit_map
+            self._load_svg(svg_text, fit_width=fit_width, anchor=anchor)
+        finally:
+            self._redrawing = False
+        self._refresh_hover()
+
+    def _load_svg(self, svg_text: str, *, fit_width: bool, anchor: QPointF | None) -> None:
         """Show a new drawing, keeping the user's zoom and place within one mode.
 
         Parameter edits redraw the SVG while the user inspects an element.  A
@@ -151,8 +183,12 @@ class SvgGraphicsView(QGraphicsView):
         if scene is None:
             scene = QGraphicsScene(self)
             self.setScene(scene)
+        # ``clear`` deletes the old overlay items too.
+        self._highlight_items = None
+        self._hovered = None
         scene.clear()
         scene.addItem(item)
+        self._add_highlight_items(scene)
         scene.setSceneRect(item.boundingRect())
 
         self._renderer = renderer
@@ -209,6 +245,135 @@ class SvgGraphicsView(QGraphicsView):
             (point.x() - box.x()) * rect.width() / max(box.width(), 1e-9),
             (point.y() - box.y()) * rect.height() / max(box.height(), 1e-9),
         )
+
+    # Hover highlight of element numbers (GitHub #10) ----------------------
+
+    # Thin lines stay easy to hit: the cursor may miss the metal by this much.
+    HOVER_TOLERANCE_PX = 4.0
+    # Plate around the number and the accent arrow, in SVG user units.
+    PLATE_PADDING = (3.0, 2.5)
+    ARROW_WIDTH = 1.4
+    ARROW_HEAD = (7.0, 3.0)
+
+    @property
+    def hovered_element(self) -> str | None:
+        return None if self._hovered is None else self._hovered.element_id
+
+    @property
+    def highlight_items(self) -> tuple[QGraphicsPathItem, QGraphicsPathItem] | None:
+        """The plate under the number and the accent arrow (for tests)."""
+        return self._highlight_items
+
+    def set_highlight_color(self, color: str) -> None:
+        self._highlight_color = QColor(color)
+        self._style_highlight_items()
+
+    def _add_highlight_items(self, scene: QGraphicsScene) -> None:
+        plate, arrow = QGraphicsPathItem(), QGraphicsPathItem()
+        for z, overlay in ((2, plate), (1, arrow)):
+            overlay.setZValue(z)
+            overlay.setVisible(False)
+            overlay.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            scene.addItem(overlay)
+        self._highlight_items = (plate, arrow)
+        self._style_highlight_items()
+
+    def _style_highlight_items(self) -> None:
+        if self._highlight_items is None:
+            return
+        plate, arrow = self._highlight_items
+        fill = QColor(self._highlight_color)
+        fill.setAlpha(110)
+        plate.setBrush(QBrush(fill))
+        border = QPen(self._highlight_color, 1.5)
+        border.setCosmetic(True)
+        plate.setPen(border)
+        arrow.setBrush(QBrush(self._highlight_color))
+        arrow.setPen(QPen(Qt.PenStyle.NoPen))
+
+    def _svg_scale(self) -> float:
+        """Scene units per SVG user unit."""
+        box, rect = self._renderer.viewBoxF(), self._svg_item.boundingRect()
+        return rect.width() / max(box.width(), 1e-9)
+
+    def _show_highlight(self, mark: NumberMark | None) -> None:
+        self._hovered = mark
+        if self._highlight_items is None:
+            return
+        plate, arrow = self._highlight_items
+        if mark is None:
+            plate.setVisible(False)
+            arrow.setVisible(False)
+            return
+        pad_x, pad_y = self.PLATE_PADDING
+        box = mark.box
+        rect = QRectF(
+            self._svg_to_scene(QPointF(box.x0 - pad_x, box.y0 - pad_y)),
+            self._svg_to_scene(QPointF(box.x1 + pad_x, box.y1 + pad_y)),
+        )
+        outline = QPainterPath()
+        outline.addRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+        plate.setPath(outline)
+        # The arrow again in the accent colour, drawn over the grey one.
+        start, tip = mark.arrow.start, mark.arrow.end
+        length = math.hypot(tip.x - start.x, tip.y - start.y)
+        head_length, head_half = self.ARROW_HEAD
+        path = QPainterPath()
+        if length > 1e-9:
+            ux, uy = (tip.x - start.x) / length, (tip.y - start.y) / length
+            base = QPointF(tip.x - ux * min(head_length, length), tip.y - uy * min(head_length, length))
+            scale = self._svg_scale()
+            stroke = QPainterPath(self._svg_to_scene(QPointF(start.x, start.y)))
+            stroke.lineTo(self._svg_to_scene(base))
+            stroker = QPainterPathStroker()
+            stroker.setWidth(self.ARROW_WIDTH * scale)
+            path = stroker.createStroke(stroke)
+            head = QPainterPath(self._svg_to_scene(QPointF(tip.x, tip.y)))
+            head.lineTo(self._svg_to_scene(QPointF(base.x() - uy * head_half, base.y() + ux * head_half)))
+            head.lineTo(self._svg_to_scene(QPointF(base.x() + uy * head_half, base.y() - ux * head_half)))
+            head.closeSubpath()
+            path = path.united(head)
+        arrow.setPath(path)
+        plate.setVisible(True)
+        arrow.setVisible(True)
+
+    def _update_hover(self, position: QPointF) -> None:
+        """Highlight the number of the element under the viewport *position*."""
+        self._hover_position = QPointF(position)
+        if self._redrawing:
+            return
+        if self._hit_map is None or self._svg_item is None or self._renderer is None:
+            self._show_highlight(None)
+            return
+        inverse, _ok = self.viewportTransform().inverted()
+        svg = self._scene_to_svg(inverse.map(QPointF(position)))
+        pixels_per_unit = abs(self.transform().m11()) * self._svg_scale()
+        tolerance = self.HOVER_TOLERANCE_PX / max(pixels_per_unit, 1e-9)
+        mark = self._hit_map.mark_at(Point(svg.x(), svg.y()), tolerance)
+        if mark != self._hovered:
+            self._show_highlight(mark)
+
+    def _refresh_hover(self) -> None:
+        if self._hover_position is None:
+            self._show_highlight(None)
+        else:
+            self._update_hover(self._hover_position)
+
+    def mouseMoveEvent(self, event) -> None:
+        super().mouseMoveEvent(event)
+        self._update_hover(event.position())
+
+    def viewportEvent(self, event) -> bool:
+        if event.type() == QtCore.QEvent.Type.Leave:
+            self._hover_position = None
+            self._show_highlight(None)
+        return super().viewportEvent(event)
+
+    def scrollContentsBy(self, dx: int, dy: int) -> None:
+        # Panning and zooming move the drawing under a still cursor.
+        super().scrollContentsBy(dx, dy)
+        if self._hover_position is not None:
+            self._update_hover(self._hover_position)
 
     def reset_view(self) -> None:
         if self._svg_item is None:
@@ -962,6 +1127,7 @@ class MainWindow(QMainWindow):
             label.setStyleSheet(heading)
         backdrop = colors.schematic_backdrop
         self._view.setBackgroundBrush(QBrush(QColor(backdrop)) if backdrop else QBrush())
+        self._view.set_highlight_color(colors.schematic_highlight)
         if colors.schematic_scheme != self._svg_scheme:
             # Redraw the sheet in the theme's colours; set_svg keeps zoom and position.
             with contextlib.suppress(ValueError, OSError):
@@ -1397,10 +1563,11 @@ class MainWindow(QMainWindow):
         """Draw the current parameters in the colours of the current theme."""
         scheme = THEME_COLORS[self._theme].schematic_scheme
         details = self._schematic_details.isChecked()
-        svg = self._use_case.execute(self._build_config(), show_details=details, scheme=scheme)
+        drawing = self._use_case.draw(self._build_config(), show_details=details, scheme=scheme)
         self._svg_scheme = scheme
         anchor = QPointF(SIGNAL_INPUT.x, SIGNAL_INPUT.y)
-        self._view.set_svg(svg, fit_width=details, anchor=anchor)
+        hit_map = ElementHitMap.from_geometry(drawing.geometry)
+        self._view.set_svg(drawing.svg, fit_width=details, anchor=anchor, hit_map=hit_map)
 
     def _select_s21_output_directory(self) -> None:
         directory = QtWidgets.QFileDialog.getExistingDirectory(

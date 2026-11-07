@@ -52,6 +52,8 @@ class ThemeColors:
     heading_text: str | None
     schematic_backdrop: str | None
     schematic_scheme: SvgColorScheme | None = None
+    # Plate and arrow of the hovered element's number (GitHub #10).
+    schematic_highlight: str = ACCENT
 
 
 _LIGHT_PLOT = dict(

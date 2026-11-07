@@ -166,6 +166,9 @@ class StructureGeometry:
     # Element numbers (and "SIS") with their arrows; the label and the arrow
     # are also in ``labels``/``lines`` for rendering.
     callouts: List[Callout] = field(default_factory=list)
+    # Contours that belong to each element (the fans of the radial stub, the
+    # DC-block slot): what the cursor is over when the viewer highlights a number.
+    hit_areas: List[tuple[str, tuple[Point, ...]]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

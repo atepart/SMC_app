@@ -160,6 +160,8 @@ class _Canvas:
     excluded_edges: list[tuple[Point, Point]] = field(default_factory=list)
     # Joints inside one numbered element (the two parts of 14) get no seam.
     unmarked_joins: list[float] = field(default_factory=list)
+    # Contours by element for the viewer's hover highlight (GitHub #10).
+    hit_areas: list[tuple[str, tuple[Point, ...]]] = field(default_factory=list)
 
     def include(self, rect: Rect) -> None:
         self.bounds_points.extend((Point(rect.x, rect.y), Point(rect.right, rect.bottom)))
@@ -185,6 +187,7 @@ class _Canvas:
             elements=list(self.elements),
             underlay_paths=list(self.underlay_paths),
             callouts=list(self.callouts),
+            hit_areas=list(self.hit_areas),
             bounds=Rect(bounds.x - 20, bounds.y - 20, bounds.width + 40, bounds.height + 40),
         )
 
@@ -697,6 +700,12 @@ class IntegratedStructureCalculator(StructureCalculator):
                 ("DC-slot", [Point(r.x, r.y), Point(r.right, r.y), Point(r.right, r.bottom), Point(r.x, r.bottom)])
                 for r in (element.auxiliary_rects if element.element_id == "DC" else ())
             )
+        # The slot belongs to the DC block; the 50 Ω port is no numbered element.
+        canvas.hit_areas = [
+            ("DC" if owner == "DC-slot" else owner, tuple(points))
+            for owner, points in shapes + canvas.shapes
+            if owner != "port"
+        ]
         placer = CalloutPlacer(shapes + canvas.shapes, [port_label], soft_owners={"Radial"})
         # The SIS symbol sits on line 14: its arrows may cross that metal.
         requests = [
