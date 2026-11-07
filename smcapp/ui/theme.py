@@ -37,6 +37,46 @@ ACCENT = "#f39c12"
 
 
 @dataclass(frozen=True)
+class RunButtonColors:
+    """The large Run S21 button (GitHub #11): reddish in light themes, white in the dark one."""
+
+    background: str
+    text: str
+    border: str
+    hover: str
+    pressed: str
+    pressed_border: str
+    disabled_background: str
+    disabled_text: str
+    disabled_border: str
+
+
+_REDDISH_RUN_BUTTON = RunButtonColors(
+    background="#f8d3cf",
+    text="#6e1410",
+    border="#d0574f",
+    hover="#f3c0ba",
+    pressed="#e2867d",
+    pressed_border="#a8322b",
+    disabled_background="#ececec",
+    disabled_text="#a3a3a3",
+    disabled_border="#d4d4d4",
+)
+
+_WHITE_RUN_BUTTON = RunButtonColors(
+    background="#ffffff",
+    text="#1e1e1e",
+    border="#ffffff",
+    hover="#ececec",
+    pressed="#c4c4c4",
+    pressed_border=ACCENT,
+    disabled_background="#454545",
+    disabled_text="#8c8c8c",
+    disabled_border="#555555",
+)
+
+
+@dataclass(frozen=True)
 class ThemeColors:
     """Colours that Qt palettes and style sheets cannot reach."""
 
@@ -60,6 +100,7 @@ class ThemeColors:
     schematic_scheme: SvgColorScheme | None = None
     # Plate and arrow of the hovered element's number (GitHub #10).
     schematic_highlight: str = ACCENT
+    run_button: RunButtonColors = _REDDISH_RUN_BUTTON
 
 
 _LIGHT_PLOT = dict(
@@ -93,6 +134,7 @@ THEME_COLORS = {
         heading_text=ACCENT,
         schematic_backdrop="#161616",
         schematic_scheme=DARK_SVG_SCHEME,
+        run_button=_WHITE_RUN_BUTTON,
     ),
 }
 
@@ -224,6 +266,19 @@ _SKINS = {
         light_dock_icons=True,
     ),
 }
+
+
+def run_button_stylesheet(theme: Theme) -> str:
+    """Style sheet of the Run S21 button; its font and height are set by the window."""
+    c = THEME_COLORS[Theme(theme)].run_button
+    return f"""
+QPushButton {{ background: {c.background}; color: {c.text}; border: 1px solid {c.border};
+    border-radius: 5px; padding: 6px 16px; }}
+QPushButton:hover {{ background: {c.hover}; }}
+QPushButton:pressed {{ background: {c.pressed}; border: 2px solid {c.pressed_border}; }}
+QPushButton:disabled {{ background: {c.disabled_background}; color: {c.disabled_text};
+    border: 1px solid {c.disabled_border}; }}
+"""
 
 
 def load_theme(settings: QSettings | None = None) -> Theme:

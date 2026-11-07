@@ -14,13 +14,15 @@ from typing import Dict
 
 import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
-from PySide6.QtCore import QByteArray, QObject, QPointF, QRectF, QSettings, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QByteArray, QObject, QPointF, QRectF, QSettings, QSize, Qt, QThread, Signal, Slot
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
     QBrush,
     QColor,
     QDesktopServices,
+    QFont,
+    QFontMetrics,
     QIcon,
     QImage,
     QImageWriter,
@@ -76,6 +78,7 @@ from smcapp.ui.theme import (
     apply_application_theme,
     dock_stylesheet,
     load_theme,
+    run_button_stylesheet,
     save_theme,
 )
 from smcapp.ui.update_dialogs import DownloadReleaseWorker, FetchReleasesWorker, ReleasePickerDialog
@@ -101,6 +104,42 @@ _COMPARISON_FILE_FILTERS = {
 _CURVE_Z_VALUES = {BUFF_CURVE: -0.5, PREV_CURVE: 0.0, HFSS_CURVE: 0.25, EXP_CURVE: 0.5, SMC_CURVE: 1.0}
 BASE_CURVE_WIDTH = 2.0
 SMC_SYMBOL_SIZE = 3.5
+
+# Larger text where it matters (GitHub #11), as multiples of the platform's
+# application font: 13 pt on macOS and 9 pt on Windows scale alike.
+PARAMETER_TITLE_SCALE = 1.3
+PARAMETER_FIELD_SCALE = 1.15
+RUN_BUTTON_SCALE = 1.6
+RUN_BUTTON_HEIGHT_LINES = 2.2
+PLOT_TITLE_SCALE = 1.4
+PLOT_AXIS_LABEL_SCALE = 1.25
+PLOT_TICK_SCALE = 1.15
+PLOT_LEGEND_SCALE = 1.2
+LEGEND_SINGLE_COLUMN_MAX = 3
+PLOT_HOVER_SCALE = 1.2
+# Default parameter panel width above its content's minimum, in px.
+PARAMETERS_WIDTH_RESERVE = 24
+
+
+def scaled_point_size(scale: float) -> float:
+    """Point size ``scale`` times the application font (10 pt if it is pixel-sized)."""
+    base = QApplication.font().pointSizeF()
+    return round((base if base > 0 else 10.0) * scale, 1)
+
+
+def scaled_font(scale: float, bold: bool = False) -> QFont:
+    font = QFont(QApplication.font())
+    font.setPointSizeF(scaled_point_size(scale))
+    font.setBold(bold)
+    return font
+
+
+def format_plot_coordinates(frequency_ghz: float, s21_db: float) -> str:
+    """Cursor plate text: frequency to 1 GHz, S21 to 0.01 dB (GitHub #11)."""
+    # ``+ 0.0`` turns a rounded -0.0 into 0.0, so no "-0" or "-0.00" is shown.
+    frequency = round(frequency_ghz) + 0.0
+    s21 = round(s21_db, 2) + 0.0
+    return f"f = {frequency:.0f} GHz; S21 = {s21:.2f} dB"
 
 
 @dataclass(frozen=True)
@@ -592,6 +631,26 @@ class FrequencyAxisItem(pg.AxisItem):
         return [f"{value * scale * self._display_factor:.{decimals}f}" for value in values]
 
 
+class ParameterScrollArea(QScrollArea):
+    """Vertical-only scroll area that is never narrower than its form.
+
+    Its minimum width is the form's, so the dock cannot be dragged so narrow
+    that labels, numbers or units are cut off.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        hint = super().minimumSizeHint()
+        widget = self.widget()
+        if widget is None:
+            return hint
+        width = widget.minimumSizeHint().width() + self.verticalScrollBar().sizeHint().width() + 2 * self.frameWidth()
+        return QSize(max(hint.width(), width), hint.height())
+
+
 class CollapsibleParameterGroup(QWidget):
     """Parameter section with an explicit down/right disclosure triangle."""
 
@@ -606,7 +665,8 @@ class CollapsibleParameterGroup(QWidget):
         self.toggle_button.setArrowType(Qt.ArrowType.DownArrow)
         self.toggle_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.toggle_button.setAutoRaise(True)
-        self.toggle_button.setStyleSheet("QToolButton { font-weight: bold; border: 0; padding: 2px; }")
+        self.toggle_button.setFont(scaled_font(PARAMETER_TITLE_SCALE, bold=True))
+        self.toggle_button.setStyleSheet("QToolButton { border: 0; padding: 2px; }")
         layout.addWidget(self.toggle_button)
         self.content = QWidget(self)
         self.form_layout = QFormLayout(self.content)
@@ -614,6 +674,16 @@ class CollapsibleParameterGroup(QWidget):
         layout.addWidget(self.content)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Maximum)
         self.toggle_button.toggled.connect(self._set_expanded)
+
+    def apply_field_font(self) -> None:
+        """Enlarge labels, numbers and units of the fields (GitHub #11).
+
+        Set on every widget: under the QtAds style sheet Qt does not pass a
+        parent's font on to its children.
+        """
+        font = scaled_font(PARAMETER_FIELD_SCALE)
+        for widget in self.content.findChildren(QWidget):
+            widget.setFont(font)
 
     def setChecked(self, checked: bool) -> None:  # noqa: N802 - compatibility with the former QGroupBox API
         self.toggle_button.setChecked(checked)
@@ -735,7 +805,10 @@ class MainWindow(QMainWindow):
 
         self.parameters_dock = CDockWidget("Параметры")
         self.parameters_dock.setObjectName("parameters_dock")
-        self.parameters_dock.setWidget(self._build_controls())
+        # No QtAds scroll area around the panel: it has its own vertical one, and
+        # the dock's minimum width is the content's, so nothing is cut off.
+        self.parameters_dock.setWidget(self._build_controls(), CDockWidget.eInsertMode.ForceNoScrollArea)
+        self.parameters_dock.setMinimumSizeHintMode(CDockWidget.eMinimumSizeHintMode.MinimumSizeHintFromContent)
 
         self.schematic_dock = CDockWidget("Схема")
         self.schematic_dock.setObjectName("schematic_dock")
@@ -779,7 +852,7 @@ class MainWindow(QMainWindow):
         panel = QWidget(self)
         outer = QVBoxLayout(panel)
 
-        scroll = QScrollArea(panel)
+        scroll = ParameterScrollArea(panel)
         scroll.setWidgetResizable(True)
         inner = QWidget(scroll)
         vbox = QVBoxLayout(inner)
@@ -841,6 +914,7 @@ class MainWindow(QMainWindow):
                 for info in group_fields:
                     self._config_inputs[info.name].valueChanged.connect(self._refresh_transformer_status)
 
+            box.apply_field_font()
             vbox.addWidget(box)
 
         controls_box = QGroupBox("Actions")
@@ -903,6 +977,11 @@ class MainWindow(QMainWindow):
         controls_layout.addLayout(button_row)
 
         run_button = QPushButton("Run S21")
+        run_button.setObjectName("run_s21_button")
+        # Much larger than the other buttons (GitHub #11); colours come from the theme.
+        run_font = scaled_font(RUN_BUTTON_SCALE, bold=True)
+        run_button.setFont(run_font)
+        run_button.setMinimumHeight(round(QFontMetrics(run_font).height() * RUN_BUTTON_HEIGHT_LINES))
         run_button.clicked.connect(self._run_s21)
         self._run_s21_button = run_button
         controls_layout.addWidget(run_button)
@@ -916,6 +995,11 @@ class MainWindow(QMainWindow):
         hint.setWordWrap(True)
         self._muted_labels.append(hint)
         controls_layout.addWidget(hint)
+        # Buttons keep their whole text: the panel's minimum width grows instead.
+        for button in controls_box.findChildren(QPushButton):
+            policy = button.sizePolicy()
+            policy.setHorizontalPolicy(QtWidgets.QSizePolicy.Policy.Minimum)
+            button.setSizePolicy(policy)
 
         vbox.addStretch(1)
 
@@ -1116,16 +1200,22 @@ class MainWindow(QMainWindow):
             if containers:
                 root_splitter = containers[0].rootSplitter()
                 total_width = max(sum(root_splitter.sizes()), self.width() - 4)
-                parameters_width = max(280, total_width // 4)
+                # Room above the content's minimum: a theme with slightly wider
+                # buttons then does not push the other panels aside.
+                minimum = self.parameters_dock.widget().minimumSizeHint().width() + PARAMETERS_WIDTH_RESERVE
+                parameters_width = max(280, total_width // 4, minimum)
                 root_splitter.setSizes([parameters_width, total_width - parameters_width])
         with contextlib.suppress(Exception):
             right_splitter = self.schematic_dock.dockAreaWidget().parentSplitter()
             total_height = max(sum(right_splitter.sizes()), self.height() - 80)
             right_splitter.setSizes(
                 [
-                    total_height * 5 // 10,
-                    total_height * 3 // 10,
-                    total_height * 2 // 10,
+                    # Below half the height the schematic would shrink; the log
+                    # gives way so the larger plot texts (GitHub #11) leave a
+                    # data area tall enough for the legend.
+                    total_height * 50 // 100,
+                    total_height * 38 // 100,
+                    total_height * 12 // 100,
                 ]
             )
 
@@ -1165,6 +1255,7 @@ class MainWindow(QMainWindow):
         for dock in self.dock_widgets:
             if dock.isClosed():
                 dock.toggleView(True)
+        self._sync_parameters_minimum_width()
         self._apply_default_dock_sizes()
         self.save_settings()
 
@@ -1191,6 +1282,8 @@ class MainWindow(QMainWindow):
             heading += f" color: {colors.heading_text};"
         for label in self._heading_labels:
             label.setStyleSheet(heading)
+        if self._run_s21_button is not None:
+            self._run_s21_button.setStyleSheet(run_button_stylesheet(self._theme))
         backdrop = colors.schematic_backdrop
         self._view.setBackgroundBrush(QBrush(QColor(backdrop)) if backdrop else QBrush())
         self._view.set_highlight_color(colors.schematic_highlight)
@@ -1201,6 +1294,34 @@ class MainWindow(QMainWindow):
         self._apply_plot_theme()
         self._refresh_transformer_status()
         self._theme_actions[self._theme].setChecked(True)
+        self._sync_parameters_minimum_width()
+        # Buttons take the new style sheet's padding only when polished.
+        QtCore.QTimer.singleShot(0, self._sync_parameters_minimum_width)
+
+    def _sync_parameters_minimum_width(self) -> None:
+        """Keep the parameter panel at least as wide as its content.
+
+        QtAds caches a dock area's minimum size when a panel is inserted, but a
+        theme changes button padding and so the content's minimum width.
+        """
+        try:
+            area = self.parameters_dock.dockAreaWidget()
+        except RuntimeError:  # the deferred call came after the window was closed
+            return
+        if area is None:
+            return
+        previous = getattr(self, "_parameters_minimum_area", None)
+        if previous is not None and previous is not area:
+            with contextlib.suppress(RuntimeError):  # the old area may be deleted
+                previous.setMinimumWidth(0)
+        self._parameters_minimum_area = area
+        panel = self.parameters_dock.widget()
+        panel.layout().activate()
+        # The area's own border (1 px each side in the styled themes) and margins.
+        frame = 2 * area.frameWidth() + area.contentsMargins().left() + area.contentsMargins().right()
+        if area.isVisible() and panel.isVisible():
+            frame = max(frame, min(area.width() - panel.width(), 24))
+        area.setMinimumWidth(panel.minimumSizeHint().width() + frame)
 
     def _last_files_directory(self) -> str:
         """Return the last successful parameter-file directory or a useful default."""
@@ -1446,13 +1567,33 @@ class MainWindow(QMainWindow):
         layout.addWidget(order)
         return editor
 
+    def _set_plot_title(self, color: str | None = None) -> None:
+        options = {"size": f"{scaled_point_size(PLOT_TITLE_SCALE)}pt", "bold": True}
+        if color is not None:
+            options["color"] = color
+        plot_item = self._plot.getPlotItem()
+        plot_item.setTitle("S21 vs Frequency", **options)
+        # setTitle fixes the title row at 30 px, which would clip the larger title.
+        title_height = max(30, round(QFontMetrics(scaled_font(PLOT_TITLE_SCALE, bold=True)).height() * 1.5))
+        plot_item.titleLabel.setMaximumHeight(title_height)
+        plot_item.layout.setRowFixedHeight(0, title_height)
+
     def _configure_plot(self) -> None:
-        self._plot.setTitle("S21 vs Frequency")
-        self._plot.setLabel("left", "S21", units="dB")
-        self._plot.setLabel("bottom", "Frequency", units="GHz")
+        self._set_plot_title()
+        plot_item = self._plot.getPlotItem()
+        axis_label_style = {"font-size": f"{scaled_point_size(PLOT_AXIS_LABEL_SCALE)}pt"}
+        self._plot.setLabel("left", "S21", units="dB", **axis_label_style)
+        self._plot.setLabel("bottom", "Frequency", units="GHz", **axis_label_style)
+        tick_font = scaled_font(PLOT_TICK_SCALE)
+        for axis_name in ("left", "bottom"):
+            plot_item.getAxis(axis_name).setStyle(tickFont=tick_font)
         self._plot.showGrid(x=True, y=True, alpha=0.10)
         self._plot.setMenuEnabled(False)
-        self._plot_legend = self._plot.addLegend(offset=(10, 10), sampleType=CheckableItemSample)
+        self._plot_legend = self._plot.addLegend(
+            offset=(10, 10),
+            sampleType=CheckableItemSample,
+            labelTextSize=f"{scaled_point_size(PLOT_LEGEND_SCALE)}pt",
+        )
         self._plot_legend.sigSampleClicked.connect(self._on_legend_sample_clicked)
         self._plot_threshold_line = pg.InfiniteLine(pos=-5.0, angle=0)
         self._plot_threshold_line.setZValue(-1)
@@ -1464,6 +1605,7 @@ class MainWindow(QMainWindow):
         self._plot_hover_label.setStyleSheet(
             "QLabel { background: rgba(30, 30, 30, 150); color: white; padding: 3px 6px; border-radius: 3px; }"
         )
+        self._plot_hover_label.setFont(scaled_font(PLOT_HOVER_SCALE))
         self._plot_hover_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._plot_hover_label.hide()
         self._plot.scene().sigMouseMoved.connect(self._on_plot_mouse_moved)
@@ -1483,7 +1625,7 @@ class MainWindow(QMainWindow):
         pg.setConfigOption("background", colors.plot_background)
         pg.setConfigOption("foreground", colors.plot_foreground)
         self._plot.setBackground(colors.plot_background)
-        self._plot.setTitle("S21 vs Frequency", color=colors.plot_foreground)
+        self._set_plot_title(colors.plot_foreground)
         axis_pen = pg.mkPen(colors.plot_foreground, width=1)
         for axis_name in ("left", "bottom"):
             axis = self._plot.getPlotItem().getAxis(axis_name)
@@ -1588,7 +1730,7 @@ class MainWindow(QMainWindow):
             self._plot_hover_label.hide()
             return
         cursor_value = view_box.mapSceneToView(scene_position)
-        self._plot_hover_label.setText(f"f = {cursor_value.x():.3f} GHz; S21 = {cursor_value.y():.3f} dB")
+        self._plot_hover_label.setText(format_plot_coordinates(cursor_value.x(), cursor_value.y()))
         self._plot_hover_label.adjustSize()
         local = self._plot.mapFromScene(scene_position)
         self._plot_hover_label.move(local.x() + 12, local.y() + 12)
@@ -1644,7 +1786,7 @@ class MainWindow(QMainWindow):
 
     @contextlib.contextmanager
     def _legend_for_export(self):
-        """List only the visible curves, without check boxes, while exporting."""
+        """List only the visible curves, without check boxes and to scale, while exporting."""
         legend = self._plot_legend
         entries = [(sample.item, label.text) for sample, label in legend.items]
 
@@ -1654,12 +1796,17 @@ class MainWindow(QMainWindow):
             for item, name in entries:
                 if item.isVisible() or not only_visible:
                     legend.addItem(item, name)
-            legend.layout.activate()
+            self._arrange_legend()
 
+        # pyqtgraph keeps the legend unscaled on screen; the PNG is rendered
+        # about twice as wide, so it must scale with the rest of the plot.
+        ignores_transformations = QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
         rebuild(PlainItemSample, only_visible=True)
+        legend.setFlag(ignores_transformations, False)
         try:
             yield
         finally:
+            legend.setFlag(ignores_transformations, True)
             rebuild(CheckableItemSample, only_visible=False)
 
     def _build_config(self) -> S21Config:
@@ -1894,11 +2041,34 @@ class MainWindow(QMainWindow):
             item = self._plot.plot(frequencies, values, name=name, **self._curve_style(name))
             item.setZValue(_CURVE_Z_VALUES[name])
             item.setVisible(self.is_curve_visible(name))
+        self._arrange_legend()
 
         # PlotItem enables auto-range again when curves are cleared/re-added.
         # Reapply the user's Home range so recalculation/import cannot silently
         # replace the requested issue-4 defaults (100…900 GHz, -20…0 dB).
         self._restore_plot_scale()
+
+    def _arrange_legend(self) -> None:
+        """Lay the legend out from its top row: one column, two for many curves.
+
+        LegendItem.addItem continues below rows it has removed (the grid keeps
+        its row count), so the entries could slide out of the plot area; and
+        with the larger text (GitHub #11) five rows in one column would not
+        fit a 1440×920 window.
+        """
+        legend = self._plot_legend
+        columns = 1 if len(legend.items) <= LEGEND_SINGLE_COLUMN_MAX else 2
+        for sample, label in legend.items:
+            legend.layout.removeItem(sample)
+            legend.layout.removeItem(label)
+        for index, (sample, label) in enumerate(legend.items):
+            row, column = divmod(index, columns)
+            legend.layout.addItem(sample, row, 2 * column, alignment=Qt.AlignmentFlag.AlignVCenter)
+            legend.layout.addItem(label, row, 2 * column + 1)
+        legend.columnCount = columns
+        legend.rowCount = math.ceil(len(legend.items) / columns)
+        legend.updateSize()
+        legend.layout.activate()
 
     def _set_log_messages(self, messages: list[str]) -> None:
         if self._log_view is None:

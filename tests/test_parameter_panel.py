@@ -412,7 +412,7 @@ def test_plot_home_hover_and_png_export(parameter_window: MainWindow, tmp_path) 
     assert "GHz" in parameter_window._plot_hover_label.text()
     assert "S21" in parameter_window._plot_hover_label.text()
     assert "dB" in parameter_window._plot_hover_label.text()
-    assert "f = 120." in parameter_window._plot_hover_label.text()
+    assert "f = 120 GHz; S21 = " in parameter_window._plot_hover_label.text()
 
     parameter_window._plot_scale_inputs["x_min"].setValue(100.0)
     parameter_window._plot_scale_inputs["x_max"].setValue(1100.0)

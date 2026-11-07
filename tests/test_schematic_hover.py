@@ -42,7 +42,10 @@ def _inside(geometry: StructureGeometry, element_id: str) -> Point:
         polygon = element.polygon[:4]
         xs, ys = [p.x for p in polygon], [p.y for p in polygon]
         if element_id == "SIS-line":
-            return Point(min(xs) + 0.5, (min(ys) + max(ys)) / 2)
+            # Halfway between the line's left end and the SIS circle: a theme
+            # switch may move the view by a few pixels (scroll bars, borders).
+            sis = _element(geometry, "SIS").bounds
+            return Point((min(xs) + sis.x) / 2, (min(ys) + max(ys)) / 2)
         return Point((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
     # The vertex average lies inside these convex contours.
     polygon = element.polygon

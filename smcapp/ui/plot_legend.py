@@ -8,10 +8,10 @@ from pyqtgraph.graphicsItems.ScatterPlotItem import drawSymbol
 from PySide6 import QtCore, QtGui
 from PySide6.QtCore import Qt
 
-_HEIGHT = 20
-_BOX = 12
+_HEIGHT = 24
+_BOX = 14
 _GAP = 6
-_LINE = 28
+_LINE = 34
 _FALLBACK_FOREGROUND = "#7f7f7f"
 
 
