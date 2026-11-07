@@ -42,9 +42,15 @@ class ThemeColors:
 
     plot_background: str
     plot_foreground: str
-    previous_curve: tuple[int, int, int, int]
-    theory_curve: str
-    experiment_curve: str
+    # Plot curves by their legend names (GitHub #11): the current calculation
+    # "SMC", the previous one "prev", the frozen buffer "buff", an imported
+    # HFSS simulation "HFSS" and the measured experiment "exp".
+    smc_curve: str
+    prev_curve: str
+    buff_curve: str
+    hfss_curve: str
+    exp_curve: str
+    # Horizontal dB level line.
     threshold_line: str
     muted_text: str
     error_text: str
@@ -59,10 +65,12 @@ class ThemeColors:
 _LIGHT_PLOT = dict(
     plot_background="#ffffff",
     plot_foreground="#7f7f7f",
-    previous_curve=(70, 70, 70, 153),
-    theory_curve="#1f77b4",
-    experiment_curve="#2ca02c",
-    threshold_line="#dc2626",
+    smc_curve="#1f77b4",
+    prev_curve="#d62728",
+    buff_curve="#9e9e9e",
+    hfss_curve="#000000",
+    exp_curve="#1b7a2e",
+    threshold_line="#c8c8c8",
     muted_text="#555555",
     error_text="#b91c1c",
 )
@@ -73,10 +81,13 @@ THEME_COLORS = {
     Theme.DARK: ThemeColors(
         plot_background="#232323",
         plot_foreground="#b4b4b4",
-        previous_curve=(200, 200, 200, 140),
-        theory_curve="#5dade2",
-        experiment_curve="#58d68d",
-        threshold_line="#ef4444",
+        smc_curve="#5dade2",
+        prev_curve="#f05252",
+        buff_curve="#8c8c8c",
+        # Black is invisible on the dark plot: the dashed HFSS curve is light.
+        hfss_curve="#e6e6e6",
+        exp_curve="#3fa34d",
+        threshold_line="#ffffff",
         muted_text="#a6a6a6",
         error_text="#f87171",
         heading_text=ACCENT,

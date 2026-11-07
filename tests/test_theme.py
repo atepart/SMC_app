@@ -123,8 +123,8 @@ def test_theme_switch_recolours_existing_curves_without_resetting_zoom(make_wind
 
     curves = {item.name(): item for item in window._plot.listDataItems()}
     dark = THEME_COLORS[Theme.DARK]
-    assert curves["Theory"].opts["pen"].color().name() == dark.theory_curve
-    assert curves["Previous theory"].opts["pen"].color().getRgb() == dark.previous_curve
+    assert curves["SMC"].opts["pen"].color().name() == dark.smc_curve
+    assert curves["prev"].opts["pen"].color().name() == dark.prev_curve
     assert window._plot_threshold_line.pen.color().name() == dark.threshold_line
     assert window._plot.getPlotItem().getAxis("left").textPen().color().name() == dark.plot_foreground
     assert [value for pair in view_box.viewRange() for value in pair] == pytest.approx(

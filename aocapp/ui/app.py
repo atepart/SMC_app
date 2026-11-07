@@ -65,6 +65,7 @@ from aocapp.infrastructure.design_files import DesignFileService
 from aocapp.infrastructure.geometry import SIGNAL_INPUT
 from aocapp.infrastructure.hover import ElementHitMap, NumberMark
 from aocapp.infrastructure.trace_files import ComparisonTrace, TraceFileReader
+from aocapp.ui.plot_legend import CheckableItemSample, PlainItemSample
 from aocapp.ui.theme import (
     ACCENT,
     THEME_COLORS,
@@ -78,6 +79,21 @@ from aocapp.ui.theme import (
 from aocapp.ui.update_dialogs import DownloadReleaseWorker, FetchReleasesWorker, ReleasePickerDialog
 
 CURRENT_DOCK_LAYOUT_VERSION = 1
+
+# Plot curves by legend name (GitHub #11), in legend order: the current
+# calculation, the previous one, the frozen buffer, an imported HFSS
+# simulation and the measured experiment.
+SMC_CURVE = "SMC"
+PREV_CURVE = "prev"
+BUFF_CURVE = "buff"
+HFSS_CURVE = "HFSS"
+EXP_CURVE = "exp"
+# Imported comparison traces ("Открыть файл" menu kind) and their curve names.
+COMPARISON_CURVE_NAMES = {"Experiment": EXP_CURVE}
+# Draw order: the thick grey buffer at the bottom, the current SMC on top.
+_CURVE_Z_VALUES = {BUFF_CURVE: -0.5, PREV_CURVE: 0.0, HFSS_CURVE: 0.25, EXP_CURVE: 0.5, SMC_CURVE: 1.0}
+BASE_CURVE_WIDTH = 2.0
+SMC_SYMBOL_SIZE = 3.5
 
 
 def _resource_path(*parts: str) -> Path:
@@ -646,6 +662,8 @@ class MainWindow(QMainWindow):
         self._comparison_traces: dict[str, ComparisonTrace] = {}
         self._theory_trace: tuple[object, object] | None = None
         self._previous_theory_trace: tuple[object, object] | None = None
+        # Curves unchecked in the legend; the data stays, only the curve hides.
+        self._hidden_curves: set[str] = set()
         self._theme = load_theme()
         self._svg_scheme: SvgColorScheme | None = None
         self._muted_labels: list[QLabel] = []
@@ -1196,7 +1214,7 @@ class MainWindow(QMainWindow):
 
     def load_comparison_trace(self, kind: str, path: str | Path) -> ComparisonTrace:
         """Load a plot-only trace; it never changes calculation parameters."""
-        if kind != "Experiment":
+        if kind not in COMPARISON_CURVE_NAMES:
             raise ValueError(f"Неизвестный тип сравнительного графика: {kind}.")
         trace = self._trace_reader.load(path)
         self._comparison_traces[kind] = trace
@@ -1333,7 +1351,8 @@ class MainWindow(QMainWindow):
         self._plot.setLabel("bottom", "Frequency", units="GHz")
         self._plot.showGrid(x=True, y=True, alpha=0.10)
         self._plot.setMenuEnabled(False)
-        self._plot_legend = self._plot.addLegend(offset=(10, 10))
+        self._plot_legend = self._plot.addLegend(offset=(10, 10), sampleType=CheckableItemSample)
+        self._plot_legend.sigSampleClicked.connect(self._on_legend_sample_clicked)
         self._plot_threshold_line = pg.InfiniteLine(pos=-5.0, angle=0)
         self._plot_threshold_line.setZValue(-1)
         self._plot.addItem(self._plot_threshold_line, ignoreBounds=True)
@@ -1377,16 +1396,61 @@ class MainWindow(QMainWindow):
             if "symbolBrush" in style:
                 item.setSymbolBrush(style["symbolBrush"])
                 item.setSymbolPen(style["symbolPen"])
+        for sample, _label in self._plot_legend.items:
+            sample.update()  # the check box follows the legend text colour
 
     def _curve_style(self, name: str) -> dict:
-        """Return the pyqtgraph pen options for a named curve in the current theme."""
+        """Return the pyqtgraph pen options for a named curve in the current theme.
+
+        Base width 2 px (GitHub #11): SMC with small but visible points, prev
+        red, buff grey and twice as thick, HFSS dashed (black; light in the
+        dark theme), exp dark green, finely dotted and 1.5 times as thick.
+        """
         colors = THEME_COLORS[self._theme]
-        if name == "Previous theory":
-            return {"pen": pg.mkPen(color=colors.previous_curve, width=2)}
-        if name == "Theory":
-            color = colors.theory_curve
-            return {"pen": pg.mkPen(color=color, width=2), "symbol": "o", "symbolBrush": color, "symbolPen": color}
-        return {"pen": pg.mkPen(color=colors.experiment_curve, width=2, style=Qt.PenStyle.DotLine)}
+        if name == SMC_CURVE:
+            color = colors.smc_curve
+            return {
+                "pen": pg.mkPen(color=color, width=BASE_CURVE_WIDTH),
+                "symbol": "o",
+                "symbolSize": SMC_SYMBOL_SIZE,
+                "symbolBrush": color,
+                "symbolPen": color,
+            }
+        if name == PREV_CURVE:
+            return {"pen": pg.mkPen(color=colors.prev_curve, width=BASE_CURVE_WIDTH)}
+        if name == BUFF_CURVE:
+            return {"pen": pg.mkPen(color=colors.buff_curve, width=2 * BASE_CURVE_WIDTH)}
+        if name == HFSS_CURVE:
+            pen = pg.mkPen(color=colors.hfss_curve, width=BASE_CURVE_WIDTH, style=Qt.PenStyle.DashLine)
+            pen.setCapStyle(Qt.PenCapStyle.FlatCap)  # square caps would close the gaps
+            return {"pen": pen}
+        if name == EXP_CURVE:
+            pen = pg.mkPen(color=colors.exp_curve, width=1.5 * BASE_CURVE_WIDTH)
+            # Round dots of the pen width, one free dot width apart.
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setDashPattern([0.01, 2.0])
+            return {"pen": pen}
+        raise ValueError(f"Неизвестная кривая графика: {name}.")
+
+    def is_curve_visible(self, name: str) -> bool:
+        """Whether the curve's legend check box is on (also for curves not plotted yet)."""
+        return name not in self._hidden_curves
+
+    def set_curve_visible(self, name: str, visible: bool) -> None:
+        """Show or hide a curve as its legend check box does; the data stays."""
+        if visible:
+            self._hidden_curves.discard(name)
+        else:
+            self._hidden_curves.add(name)
+        for item in self._plot.listDataItems():
+            if item.name() == name:
+                item.setVisible(visible)
+        for sample, _label in self._plot_legend.items:
+            sample.update()
+
+    def _on_legend_sample_clicked(self, item) -> None:
+        """The legend sample already toggled the curve; remember it for redraws."""
+        self.set_curve_visible(item.name(), item.isVisible())
 
     def _apply_plot_scale(self) -> None:
         """Validate editors and make their range the new Home position."""
@@ -1416,6 +1480,10 @@ class MainWindow(QMainWindow):
         view_box = self._plot.getPlotItem().vb
         # Only the data area has coordinates; the title and axes around it do not.
         if not view_box.sceneBoundingRect().contains(scene_position):
+            self._plot_hover_label.hide()
+            return
+        # Over the legend the label would cover the check boxes below the cursor.
+        if self._plot_legend.sceneBoundingRect().contains(scene_position):
             self._plot_hover_label.hide()
             return
         cursor_value = view_box.mapSceneToView(scene_position)
@@ -1463,7 +1531,8 @@ class MainWindow(QMainWindow):
         try:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-            self._plot.scene().render(painter, QtCore.QRectF(0, 0, width, height), source)
+            with self._legend_for_export():
+                self._plot.scene().render(painter, QtCore.QRectF(0, 0, width, height), source)
         finally:
             painter.end()
         writer = QImageWriter(str(destination), b"png")
@@ -1471,6 +1540,26 @@ class MainWindow(QMainWindow):
             raise OSError(f"Не удалось сохранить PNG: {writer.errorString()}")
         self._remember_file_directory(destination)
         return destination
+
+    @contextlib.contextmanager
+    def _legend_for_export(self):
+        """List only the visible curves, without check boxes, while exporting."""
+        legend = self._plot_legend
+        entries = [(sample.item, label.text) for sample, label in legend.items]
+
+        def rebuild(sample_type, only_visible: bool) -> None:
+            legend.clear()
+            legend.sampleType = sample_type
+            for item, name in entries:
+                if item.isVisible() or not only_visible:
+                    legend.addItem(item, name)
+            legend.layout.activate()
+
+        rebuild(PlainItemSample, only_visible=True)
+        try:
+            yield
+        finally:
+            rebuild(CheckableItemSample, only_visible=False)
 
     def _build_config(self) -> S21Config:
         values = dict(self._defaults.__dict__)
@@ -1681,26 +1770,24 @@ class MainWindow(QMainWindow):
         self._redraw_plot()
 
     def _redraw_plot(self) -> None:
-        """Render theory and all optional comparisons with a shared legend."""
+        """Render SMC and all optional comparisons with a shared legend."""
         self._plot.clear()
         self._plot.addItem(self._plot_threshold_line, ignoreBounds=True)
-        if self._previous_theory_trace is not None:
-            previous = self._plot.plot(
-                *self._previous_theory_trace,
-                name="Previous theory",
-                **self._curve_style("Previous theory"),
-            )
-            previous.setZValue(0)
+        curves: list[tuple[str, object, object]] = []
         if self._theory_trace is not None:
-            frequencies, s21_db = self._theory_trace
-            current = self._plot.plot(frequencies, s21_db, symbolSize=4, name="Theory", **self._curve_style("Theory"))
-            current.setZValue(1)
-
-        for kind in ("Experiment",):
+            curves.append((SMC_CURVE, *self._theory_trace))
+        if self._previous_theory_trace is not None:
+            curves.append((PREV_CURVE, *self._previous_theory_trace))
+        for kind, name in COMPARISON_CURVE_NAMES.items():
             trace = self._comparison_traces.get(kind)
-            if trace is None:
-                continue
-            self._plot.plot(trace.frequencies, trace.coefficients, name=kind, **self._curve_style(kind))
+            if trace is not None:
+                curves.append((name, trace.frequencies, trace.coefficients))
+        # Legend in the GitHub #11 order; unchecked curves stay hidden.
+        order = (SMC_CURVE, PREV_CURVE, BUFF_CURVE, HFSS_CURVE, EXP_CURVE)
+        for name, frequencies, values in sorted(curves, key=lambda curve: order.index(curve[0])):
+            item = self._plot.plot(frequencies, values, name=name, **self._curve_style(name))
+            item.setZValue(_CURVE_Z_VALUES[name])
+            item.setVisible(self.is_curve_visible(name))
 
         # PlotItem enables auto-range again when curves are cleared/re-added.
         # Reapply the user's Home range so recalculation/import cannot silently

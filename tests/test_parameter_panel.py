@@ -17,6 +17,7 @@ from aocapp.domain.transformers import ELEMENT_NUMBERS, ELEMENT_ORDER, element_g
 from aocapp.infrastructure.geometry import IntegratedStructureCalculator
 from aocapp.infrastructure.svg_renderer import SvgRendererImpl
 from aocapp.ui.app import MainWindow
+from aocapp.ui.theme import THEME_COLORS
 
 
 @pytest.fixture
@@ -275,7 +276,8 @@ def test_open_file_menu_imports_experiment_and_rejects_hfss(parameter_window: Ma
     assert set(parameter_window._comparison_traces) == {"Experiment"}
     assert len(parameter_window._plot.listDataItems()) == 2
     legend_labels = {label.text for _, label in parameter_window._plot_legend.items}
-    assert legend_labels == {"Theory", "Experiment"}
+    # GitHub #11: the current calculation is "SMC", the experiment "exp".
+    assert legend_labels == {"SMC", "exp"}
 
 
 @pytest.mark.parametrize("name,value", [("x_min", 150), ("x_max", 800), ("y_min", -30), ("y_max", 5)])
@@ -427,10 +429,9 @@ def test_successful_calculations_keep_only_one_owned_previous_trace(parameter_wi
     parameter_window._update_s21_plot([110, 210, 310], [-11, -7, -9])
     assert parameter_window._previous_theory_trace == ([100, 200], [-12, -8])
     curves = {item.name(): item for item in parameter_window._plot.listDataItems()}
-    previous, current = curves["Previous theory"], curves["Theory"]
+    previous, current = curves["prev"], curves["SMC"]
     assert previous.zValue() < current.zValue()
-    assert previous.opts["pen"].color().alphaF() == pytest.approx(0.6)
-    assert previous.opts["pen"].color().red() == 70
+    assert previous.opts["pen"].color().name() == THEME_COLORS[parameter_window.theme].prev_curve
     assert previous.xData.tolist() == [100, 200]
     assert current.xData.tolist() == [110, 210, 310]
     parameter_window._redraw_plot()  # Import/redraw must not rotate history.
@@ -448,7 +449,7 @@ def test_y_threshold_survives_redraw_and_home_without_affecting_history(paramete
     line = parameter_window._plot_threshold_line
     spin = parameter_window._plot_threshold_input
     assert line.value() == spin.value() == -5
-    assert line.pen.color().name() == "#dc2626"
+    assert line.pen.color().name() == THEME_COLORS[parameter_window.theme].threshold_line
     assert line.pen.widthF() == 1
     spin.setValue(-7.5)
     parameter_window._update_s21_plot([100, 200], [-12, -8])
