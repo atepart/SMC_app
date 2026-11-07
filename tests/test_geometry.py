@@ -567,11 +567,14 @@ def test_dimensioned_views_use_one_zoom_for_both_axes() -> None:
         if element.input_port is None or element.element_id in {"DC", "Radial", "T4", "SIS-line"}:
             continue
         dims = [d for d in geometry.dimensions if d.element_id == element.element_id]
-        length = next(d for d in dims if d.label.startswith("L="))
-        width = next(d for d in dims if d.label.startswith(("Wэфф=", "W1эфф=")))
+        length = next(d for d in dims if d.label.split("=")[0] in ("L", "L1", "L3"))
+        width = next(d for d in dims if d.label.split("=")[0] in ("Wэфф", "W1эфф", "W3эфф"))
         x_zoom = hypot(length.end.x - length.start.x, length.end.y - length.start.y) / element.bounds.width
         y_zoom = hypot(width.end.x - width.start.x, width.end.y - width.start.y) / element.input_port.width
         assert x_zoom == pytest.approx(y_zoom)
+    # Lines 16 and 18 are dimensioned with the names of their fields.
+    for name, expected in (("Ww3", {"L3", "W3эфф"}), ("Ww1", {"L1", "W1эфф"})):
+        assert {d.label.split("=")[0] for d in geometry.dimensions if d.element_id == name} == expected
     # 14 · Линия SIS: both parts and both widths share the card zoom.
     line = elements["SIS-line"]
     dims = {d.label.split("=")[0]: d for d in geometry.dimensions if d.element_id == "SIS-line"}

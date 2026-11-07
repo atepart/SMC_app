@@ -172,6 +172,21 @@ def test_issue_10_field_precision_and_general_block(parameter_window: MainWindow
     assert window._build_config().msl_6_width_m == pytest.approx(4.2e-6)
 
 
+def test_issue_10_radial_stub_line_and_output_line_names(parameter_window: MainWindow) -> None:
+    """GitHub #10: 16 «Radial Stub line» L3/W3, 18 «Выходная линия» L1/W1, without the small w."""
+    window = parameter_window
+    assert {"16 · Radial Stub line", "18 · Выходная линия"} <= set(window._parameter_groups)
+    labels = {label.text() for label in window.findChildren(QtWidgets.QLabel)}
+    assert {"16 · L3", "16 · W3", "18 · L1", "18 · W1"} <= labels
+    assert not {label for label in labels if "Lw" in label or "Ww" in label}
+    geometry = window._use_case.calculator.calculate(window._build_config())
+    elements = {e.element_id: e for e in geometry.elements}
+    assert elements["Ww3"].title == "16 · Radial Stub line"
+    assert [p.label for p in elements["Ww3"].parameters] == ["W3", "L3"]
+    assert elements["Ww1"].title == "18 · Выходная линия"
+    assert [p.label for p in elements["Ww1"].parameters] == ["W1", "L1"]
+
+
 def test_preview_rejects_nonpositive_corrected_dc_slot(parameter_window: MainWindow) -> None:
     parameter_window._config_inputs["w_slot_m"].setValue(0.1)
     parameter_window._config_inputs["dw_m"].setValue(0.5)

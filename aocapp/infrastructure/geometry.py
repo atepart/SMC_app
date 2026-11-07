@@ -512,7 +512,8 @@ class IntegratedStructureCalculator(StructureCalculator):
             LineShape(Point(feed_start - 10, feed.bounds.bottom + 18), symbol, stroke="#64748b")
         )
         w = _um(config.zrad3_width_m)
-        x = self._strip(canvas, "Ww3", "Линия Ww3", x, y, _um(config.zrad3_len_m), w, w, dw)
+        x = self._strip(canvas, "Ww3", "Radial Stub line", x, y, _um(config.zrad3_len_m), w, w, dw)
+        self._relabel(canvas, {"W": "W3", "L": "L3"})
         # Shared ports supply all fan/neck/output endpoints. Rmin is the base
         # strip width in RadialStubCalculator; the sector remains a schematic.
         radius, base = _um(config.radial_r_max_m) * WIDTH_SCALE, _um(config.radial_r_min_m) * WIDTH_SCALE
@@ -555,12 +556,20 @@ class IntegratedStructureCalculator(StructureCalculator):
             SchematicElement("Radial", "Радиальные шлейфы ×2", bounds_from_points(fan_bounds), params, left, right)
         )
         w = _um(config.zrad1_width_m)
-        x = self._strip(canvas, "Ww1", "Выходная линия Ww1", right.center.x, y, _um(config.zrad1_len_m), w, w, dw)
+        x = self._strip(canvas, "Ww1", "Выходная линия", right.center.x, y, _um(config.zrad1_len_m), w, w, dw)
+        self._relabel(canvas, {"W": "W1", "L": "L1"})
         out = canvas.elements[-1].output_port
         assert out is not None
         canvas.polygon([out.top, Point(x + 26, y - 16), Point(x + 26, y + 16), out.bottom], "#f8fafc")
         canvas.rectangle(Rect(x + 26, y - 16, 44, 32), "#f8fafc")
         return x + 70
+
+    @staticmethod
+    def _relabel(canvas: _Canvas, labels: dict[str, str]) -> None:
+        """Name the last element's parameters as in its parameter group."""
+        element = canvas.elements[-1]
+        parameters = tuple(replace(p, label=labels.get(p.label, p.label)) for p in element.parameters)
+        canvas.elements[-1] = replace(element, parameters=parameters)
 
     @staticmethod
     def _metal_outline(canvas: _Canvas) -> None:
@@ -750,6 +759,10 @@ class IntegratedStructureCalculator(StructureCalculator):
             return
         assert element.input_port is not None and element.output_port is not None
         length = element.output_port.center.x - element.input_port.center.x
+        # Lines name W/L as their parameter group does (W3/L3 of 16, W1/L1 of 18).
+        names = [p.label for p in element.parameters]
+        transformer = element.element_id.startswith("T")
+        width_label, length_label = ("W1", "L") if transformer else (names[0], names[1])
         height = max(element.input_port.width, element.output_port.width)
         zoom = min(155 / length, 98 / height)
         px, center_y = x + (card_w - length * zoom) / 2, y + 128
@@ -767,13 +780,13 @@ class IntegratedStructureCalculator(StructureCalculator):
                 DimensionLine(
                     Point(start.center.x, dim_y),
                     Point(end.center.x, dim_y),
-                    f"L={length / LENGTH_SCALE:g}",
+                    f"{length_label}={length / LENGTH_SCALE:g}",
                     Point((start.center.x + end.center.x) / 2, dim_y + 16),
                 ),
                 DimensionLine(
                     Point(start.center.x - 12, start.top.y),
                     Point(start.center.x - 12, start.bottom.y),
-                    f"{'W1' if element.element_id.startswith('T') else 'W'}эфф={element.input_port.width / WIDTH_SCALE:g}",
+                    f"{width_label}эфф={element.input_port.width / WIDTH_SCALE:g}",
                     Point(start.center.x - 20, center_y),
                     -90,
                 ),

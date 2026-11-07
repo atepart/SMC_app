@@ -38,9 +38,9 @@ def element_group(element: str) -> str:
         "DC": "DC block",
         "SIS-line": "Линия SIS",
         "SIS": "SIS",
-        "Ww3": "Radial Stub · Lw3/Ww3",
+        "Ww3": "Radial Stub line",
         "Radial": "Radial Stub",
-        "Ww1": "Radial Stub · Lw1/Ww1",
+        "Ww1": "Выходная линия",
     }
     title = titles.get(element, "Трансформатор" if element.startswith("T") else "Линия")
     return f"{ELEMENT_NUMBERS[element]} · {title}"

@@ -543,7 +543,7 @@ class S21Config:
     zrad1_len_m: float = field(
         default=57.0e-6,
         metadata={
-            "label": "Lw1",
+            "label": "L1",
             "group": "Radial Stub",
             "description": "Length of the feed line before the radial fan.",
             "suffix": " um",
@@ -557,7 +557,7 @@ class S21Config:
     zrad1_width_m: float = field(
         default=4.0e-6,
         metadata={
-            "label": "Ww1",
+            "label": "W1",
             "group": "Radial Stub",
             "description": "Width of the feed line before the radial fan.",
             "suffix": " um",
@@ -612,7 +612,7 @@ class S21Config:
     zrad3_len_m: float = field(
         default=4.0e-6,
         metadata={
-            "label": "Lw3",
+            "label": "L3",
             "group": "Radial Stub",
             "description": "Post-stub microstrip length of the narrow matching line.",
             "suffix": " um",
@@ -626,7 +626,7 @@ class S21Config:
     zrad3_width_m: float = field(
         default=4.0e-6,
         metadata={
-            "label": "Ww3",
+            "label": "W3",
             "group": "Radial Stub",
             "description": "Post-stub microstrip width of the narrow matching line.",
             "suffix": " um",
