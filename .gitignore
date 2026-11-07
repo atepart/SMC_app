@@ -1,4 +1,6 @@
 *.tab
+# HFSS .tab examples used by the tests are versioned.
+!/tests/data/*.tab
 *.ipynb
 *.ipynb_checkpoints
 *.idea

@@ -64,7 +64,7 @@ from aocapp.domain.transformers import ELEMENT_NUMBERS, derive_transformer_steps
 from aocapp.infrastructure.design_files import DesignFileService
 from aocapp.infrastructure.geometry import SIGNAL_INPUT
 from aocapp.infrastructure.hover import ElementHitMap, NumberMark
-from aocapp.infrastructure.trace_files import ComparisonTrace, TraceFileReader
+from aocapp.infrastructure.trace_files import ComparisonTrace, HfssTabReader, TraceFileReader
 from aocapp.ui.plot_legend import CheckableItemSample, PlainItemSample
 from aocapp.ui.theme import (
     ACCENT,
@@ -89,7 +89,12 @@ BUFF_CURVE = "buff"
 HFSS_CURVE = "HFSS"
 EXP_CURVE = "exp"
 # Imported comparison traces ("Открыть файл" menu kind) and their curve names.
-COMPARISON_CURVE_NAMES = {"Experiment": EXP_CURVE}
+COMPARISON_CURVE_NAMES = {"HFSS": HFSS_CURVE, "Experiment": EXP_CURVE}
+# File dialog filter per kind: HFSS exports .tab tables with a header row.
+_COMPARISON_FILE_FILTERS = {
+    "HFSS": "HFSS (*.tab);;Все файлы (*)",
+    "Experiment": "Двухколоночный текст (*.txt *.dat *.tab);;Все файлы (*)",
+}
 # Draw order: the thick grey buffer at the bottom, the current SMC on top.
 _CURVE_Z_VALUES = {BUFF_CURVE: -0.5, PREV_CURVE: 0.0, HFSS_CURVE: 0.25, EXP_CURVE: 0.5, SMC_CURVE: 1.0}
 BASE_CURVE_WIDTH = 2.0
@@ -658,7 +663,8 @@ class MainWindow(QMainWindow):
 
         self._defaults = S21Config()
         self._design_files = DesignFileService()
-        self._trace_reader = TraceFileReader()
+        # HFSS .tab: header row and frequency in THz; experiment: plain GHz pairs.
+        self._trace_readers = {"HFSS": HfssTabReader(), "Experiment": TraceFileReader()}
         self._comparison_traces: dict[str, ComparisonTrace] = {}
         self._theory_trace: tuple[object, object] | None = None
         self._previous_theory_trace: tuple[object, object] | None = None
@@ -1013,6 +1019,9 @@ class MainWindow(QMainWindow):
         design_action = self.open_files_menu.addAction("Параметры SMC_app")
         design_action.setToolTip("Открыть .aocdesign/.json с входными параметрами расчёта")
         design_action.triggered.connect(self._load_design_dialog)
+        hfss_action = self.open_files_menu.addAction("HFSS")
+        hfss_action.setToolTip("Добавить на график расчёт HFSS (.tab, частота в THz, S21 в dB)")
+        hfss_action.triggered.connect(lambda: self._open_trace_dialog("HFSS"))
         experiment_action = self.open_files_menu.addAction("Experiment")
         experiment_action.triggered.connect(lambda: self._open_trace_dialog("Experiment"))
 
@@ -1198,12 +1207,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Ошибка открытия параметров", str(exc))
 
     def _open_trace_dialog(self, kind: str) -> None:
-        """Select and add an experiment comparison table."""
+        """Select and add an HFSS or experiment comparison table."""
         selected, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             f"Открыть {kind}",
             self._last_files_directory(),
-            "Двухколоночный текст (*.txt *.dat *.tab);;Все файлы (*)",
+            _COMPARISON_FILE_FILTERS[kind],
         )
         if not selected:
             return
@@ -1216,7 +1225,7 @@ class MainWindow(QMainWindow):
         """Load a plot-only trace; it never changes calculation parameters."""
         if kind not in COMPARISON_CURVE_NAMES:
             raise ValueError(f"Неизвестный тип сравнительного графика: {kind}.")
-        trace = self._trace_reader.load(path)
+        trace = self._trace_readers[kind].load(path)
         self._comparison_traces[kind] = trace
         self._remember_file_directory(path)
         self._redraw_plot()

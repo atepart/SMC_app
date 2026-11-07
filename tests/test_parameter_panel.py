@@ -252,9 +252,10 @@ def test_preview_rejects_nonpositive_corrected_dc_slot(parameter_window: MainWin
     assert "w_slot_m must be > dw_m" in warning.call_args.args[2]
 
 
-def test_open_file_menu_imports_experiment_and_rejects_hfss(parameter_window: MainWindow, tmp_path) -> None:
+def test_open_file_menu_imports_hfss_and_experiment(parameter_window: MainWindow, tmp_path) -> None:
     assert [action.text() for action in parameter_window.open_files_menu.actions()] == [
         "Параметры SMC_app",
+        "HFSS",
         "Experiment",
     ]
     hint = parameter_window.findChild(QtWidgets.QLabel, "parameter_file_hint")
@@ -263,21 +264,24 @@ def test_open_file_menu_imports_experiment_and_rejects_hfss(parameter_window: Ma
     assert hint is not None and "не файл Mathcad" in hint.text()
     assert load_button is not None and ".mcd/.mcdx не поддерживаются" in load_button.toolTip()
     assert save_button is not None and "кривая S21" in save_button.toolTip()
-    hfss = tmp_path / "hfss.txt"
+    hfss = tmp_path / "hfss.tab"
     experiment = tmp_path / "experiment.txt"
-    hfss.write_text("100 -12\n110 -9\n", encoding="utf-8")
+    hfss.write_text('"Freq [THz]"\t"dB(S(2,1)) []"\n0.1\t-12\n0.11\t-9\n', encoding="utf-8")
     experiment.write_text("100 -13\n110 -10\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="Неизвестный тип"):
-        parameter_window.load_comparison_trace("HFSS", hfss)
+        parameter_window.load_comparison_trace("Touchstone", hfss)
+    parameter_window.load_comparison_trace("HFSS", hfss)
     parameter_window.load_comparison_trace("Experiment", experiment)
     parameter_window._update_s21_plot([100.0, 110.0], [-11.5, -9.5])
 
-    assert set(parameter_window._comparison_traces) == {"Experiment"}
-    assert len(parameter_window._plot.listDataItems()) == 2
+    assert set(parameter_window._comparison_traces) == {"HFSS", "Experiment"}
+    # GitHub #11 (WP-040): HFSS frequencies arrive in THz and are shown in GHz.
+    assert parameter_window._comparison_traces["HFSS"].frequencies == pytest.approx((100.0, 110.0))
+    assert len(parameter_window._plot.listDataItems()) == 3
     legend_labels = {label.text for _, label in parameter_window._plot_legend.items}
     # GitHub #11: the current calculation is "SMC", the experiment "exp".
-    assert legend_labels == {"SMC", "exp"}
+    assert legend_labels == {"SMC", "HFSS", "exp"}
 
 
 @pytest.mark.parametrize("name,value", [("x_min", 150), ("x_max", 800), ("y_min", -30), ("y_max", 5)])
