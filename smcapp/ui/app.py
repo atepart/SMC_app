@@ -992,10 +992,6 @@ class MainWindow(QMainWindow):
         self._muted_labels.append(self._s21_status)
         controls_layout.addWidget(self._s21_status)
 
-        hint = QLabel("Wheel to zoom, drag to pan, Home returns to the initial fitted view.")
-        hint.setWordWrap(True)
-        self._muted_labels.append(hint)
-        controls_layout.addWidget(hint)
         # Buttons keep their whole text: the panel's minimum width grows instead.
         for button in controls_box.findChildren(QPushButton):
             policy = button.sizePolicy()
