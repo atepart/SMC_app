@@ -5,7 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields as dataclass_fields, replace
 from typing import ClassVar
 
-from aocapp.domain.transformers import ELEMENT_ORDER, SCHEMATIC_SECTIONS, element_group, transformer_length_m
+from aocapp.domain.transformers import (
+    ELEMENT_ORDER,
+    SCHEMATIC_SECTIONS,
+    element_group,
+    transformer_dl_max_um,
+    transformer_length_m,
+)
 
 
 @dataclass(frozen=True)
@@ -1429,7 +1435,8 @@ class S21Config:
                             f"{prefix}_length_m",
                             "L",
                             group,
-                            "Общая длина трансформатора. Автоподбор целых n и |W1−W2|/n; dl=0.5…1.5 µm."
+                            "Общая длина трансформатора. Автоподбор целых n и |W1−W2|/n; "
+                            + f"dl=0.5…{transformer_dl_max_um(element):g} µm."
                             + (
                                 " У угловых 7/9 это осевая линия L1+L2+L3: по горизонтали от торца, по диагонали"
                                 " к оси ступни и вниз по ступне до шлейфа."

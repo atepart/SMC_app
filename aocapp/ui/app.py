@@ -55,7 +55,7 @@ from aocapp.application.use_cases import GenerateStructureUseCase
 from aocapp.application.version import REPO_SLUG, __version__
 from aocapp.domain.models import SvgColorScheme
 from aocapp.domain.s21_models import S21Config
-from aocapp.domain.transformers import ELEMENT_NUMBERS, derive_transformer_steps
+from aocapp.domain.transformers import ELEMENT_NUMBERS, derive_transformer_steps, transformer_dl_max_um
 from aocapp.infrastructure.design_files import DesignFileService
 from aocapp.infrastructure.trace_files import ComparisonTrace, TraceFileReader
 from aocapp.ui.theme import (
@@ -1183,7 +1183,9 @@ class MainWindow(QMainWindow):
                     values[name] = getattr(self._defaults, name)
                 continue
             try:
-                steps = derive_transformer_steps(*(value * 1e-6 for value in current))
+                steps = derive_transformer_steps(
+                    *(value * 1e-6 for value in current), max_dl_um=transformer_dl_max_um(f"T{index}")
+                )
             except ValueError as error:
                 raise ValueError(f"Элемент {ELEMENT_NUMBERS[f'T{index}']}: {error}") from error
             values[f"transf_{index}_dwdl_um"] = steps.n_um
@@ -1216,7 +1218,9 @@ class MainWindow(QMainWindow):
                     dl_um = getattr(self._defaults, f"transf_{index}_dl_m") * 1e6
                     status.setText(f"n={n:g}; dl={dl_um:g} µm (из файла/исходных параметров)")
                 else:
-                    steps = derive_transformer_steps(*(value * 1e-6 for value in current))
+                    steps = derive_transformer_steps(
+                        *(value * 1e-6 for value in current), max_dl_um=transformer_dl_max_um(f"T{index}")
+                    )
                     status.setText(f"n={steps.n_um}; ступеней: {steps.intervals + 1}; dl={steps.dl_m * 1e6:g} µm")
                 status.setStyleSheet(f"color: {colors.muted_text};")
             except ValueError as error:

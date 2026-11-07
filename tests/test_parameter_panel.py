@@ -496,6 +496,31 @@ def test_issue_6_order_conversion_and_invalid_length(parameter_window: MainWindo
     assert "нет целого n" in parameter_window._transformer_status[7].text()
 
 
+def test_issue_10_corner_transformers_accept_dl_up_to_3_um(parameter_window: MainWindow) -> None:
+    """GitHub #10: 7 and 9 choose dl in 0.5…3 µm, the other transformers keep 1.5 µm."""
+    inputs = parameter_window._config_inputs
+    status = parameter_window._transformer_status
+    for index in (4, 3, 5):  # elements 7, 9 and, for comparison, 5
+        inputs[f"transf_{index}_w_end_m"].setValue(8)
+        inputs[f"transf_{index}_w_start_m"].setValue(10)
+        inputs[f"transf_{index}_length_m"].setValue(4.5)
+    config = parameter_window._build_config()
+    for index in (4, 3):
+        assert status[index].text() == "n=2; ступеней: 2; dl=2.25 µm"
+        assert getattr(config, f"transf_{index}_dwdl_um") == 2
+        assert getattr(config, f"transf_{index}_dl_m") == pytest.approx(2.25e-6)
+    assert status[5].text() == "n=1; ступеней: 3; dl=1.5 µm"
+
+    inputs["transf_5_length_m"].setValue(9)
+    assert "dl от 0.5 до 1.5 µm" in status[5].text()
+    inputs["transf_5_length_m"].setValue(4.5)
+    inputs["transf_4_length_m"].setValue(12)
+    assert "dl от 0.5 до 3 µm" in status[4].text()
+    with patch.object(QtWidgets.QMessageBox, "warning") as warning:
+        parameter_window._update_svg()
+    assert "Элемент 7" in warning.call_args.args[2]
+
+
 def test_preview_button_uses_current_fields_for_dimensions(parameter_window: MainWindow) -> None:
     window = parameter_window
     window._schematic_details.setChecked(True)
