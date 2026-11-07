@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from aocapp.api import IOService
-from aocapp.application.s21_use_case import CalculateS21UseCase
-from aocapp.domain.s21_models import S21Config
-from aocapp.infrastructure.s21_calculator import S21FileWriter, build_default_s21_calculator
+from smcapp.api import IOService
+from smcapp.application.s21_use_case import CalculateS21UseCase
+from smcapp.domain.s21_models import S21Config
+from smcapp.infrastructure.s21_calculator import S21FileWriter, build_default_s21_calculator
 
 
 def main() -> None:

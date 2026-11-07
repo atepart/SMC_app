@@ -1,5 +1,5 @@
 [project]
-name = "aocapp"
+name = "smcapp"
 version = "0.1.0"
 description = "Desktop calculator and visualizer for superconducting integrated structures"
 readme = "README.md"
@@ -65,4 +65,4 @@ unfixable = ["T20", "E711"]
 testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
-include = ["aocapp*"]
+include = ["smcapp*"]

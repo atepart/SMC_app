@@ -12,13 +12,13 @@ import pytest
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtTest import QTest
 
-from aocapp.application.s21_use_case import CalculateS21UseCase
-from aocapp.application.use_cases import GenerateStructureUseCase
-from aocapp.infrastructure.geometry import IntegratedStructureCalculator
-from aocapp.infrastructure.svg_renderer import SvgRendererImpl
-from aocapp.ui.app import MainWindow
-from aocapp.ui.plot_legend import CheckableItemSample, PlainItemSample
-from aocapp.ui.theme import THEME_COLORS, Theme, apply_application_theme
+from smcapp.application.s21_use_case import CalculateS21UseCase
+from smcapp.application.use_cases import GenerateStructureUseCase
+from smcapp.infrastructure.geometry import IntegratedStructureCalculator
+from smcapp.infrastructure.svg_renderer import SvgRendererImpl
+from smcapp.ui.app import MainWindow
+from smcapp.ui.plot_legend import CheckableItemSample, PlainItemSample
+from smcapp.ui.theme import THEME_COLORS, Theme, apply_application_theme
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
 FREQUENCIES = [100.0, 300.0, 500.0, 700.0, 900.0]

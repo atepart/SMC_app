@@ -9,11 +9,11 @@ import pytest
 from PySide6 import QtCore, QtWidgets
 from PySide6QtAds import CDockWidget
 
-from aocapp.application.s21_use_case import CalculateS21UseCase
-from aocapp.application.use_cases import GenerateStructureUseCase
-from aocapp.infrastructure.geometry import IntegratedStructureCalculator
-from aocapp.infrastructure.svg_renderer import SvgRendererImpl
-from aocapp.ui.app import CURRENT_DOCK_LAYOUT_VERSION, MainWindow
+from smcapp.application.s21_use_case import CalculateS21UseCase
+from smcapp.application.use_cases import GenerateStructureUseCase
+from smcapp.infrastructure.geometry import IntegratedStructureCalculator
+from smcapp.infrastructure.svg_renderer import SvgRendererImpl
+from smcapp.ui.app import CURRENT_DOCK_LAYOUT_VERSION, MainWindow
 
 
 def _make_window() -> MainWindow:

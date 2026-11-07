@@ -10,12 +10,12 @@ from xml.etree import ElementTree
 import pytest
 from numpy import arange
 
-from aocapp.domain.models import Point, Rect, StructureGeometry, SvgColorScheme, TextLabel
-from aocapp.domain.s21_models import S21Config
-from aocapp.domain.transformers import ELEMENT_NUMBERS
-from aocapp.infrastructure.callouts import point_in_polygon, segment_hits_box, segments_intersect, text_box
-from aocapp.infrastructure.geometry import DC_FILL, LENGTH_SCALE, SLOT_FILL, WIDTH_SCALE, IntegratedStructureCalculator
-from aocapp.infrastructure.svg_renderer import DARK_SVG_SCHEME, SvgRendererImpl
+from smcapp.domain.models import Point, Rect, StructureGeometry, SvgColorScheme, TextLabel
+from smcapp.domain.s21_models import S21Config
+from smcapp.domain.transformers import ELEMENT_NUMBERS
+from smcapp.infrastructure.callouts import point_in_polygon, segment_hits_box, segments_intersect, text_box
+from smcapp.infrastructure.geometry import DC_FILL, LENGTH_SCALE, SLOT_FILL, WIDTH_SCALE, IntegratedStructureCalculator
+from smcapp.infrastructure.svg_renderer import DARK_SVG_SCHEME, SvgRendererImpl
 
 
 def _elements(geometry):
@@ -579,7 +579,7 @@ def test_short_corner_length_is_drawn_at_its_minimum_with_a_warning() -> None:
 )
 def test_corner_line_end_face_is_centred_on_its_line(line_um, w1_um, length_um) -> None:
     """GitHub #10: the face of 7 (and 9) protrudes equally above and below line 6 (10)."""
-    from aocapp.domain.transformers import derive_transformer_steps
+    from smcapp.domain.transformers import derive_transformer_steps
 
     steps = derive_transformer_steps(w1_um * 1e-6, 10e-6, length_um * 1e-6, max_dl_um=3.0)
     config = _corner_config(

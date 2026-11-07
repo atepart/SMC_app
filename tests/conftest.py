@@ -17,8 +17,8 @@ _SETTINGS_DIRECTORY = tempfile.TemporaryDirectory()
 # local ``app`` variable to be collected between fixtures can otherwise abort
 # the process after all assertions have already passed.
 _TEST_APPLICATION = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-QtCore.QCoreApplication.setOrganizationName("AOCappTests")
-QtCore.QCoreApplication.setApplicationName("AOCappTests")
+QtCore.QCoreApplication.setOrganizationName("smcappTests")
+QtCore.QCoreApplication.setApplicationName("smcappTests")
 QtCore.QSettings.setDefaultFormat(QtCore.QSettings.Format.IniFormat)
 QtCore.QSettings.setPath(
     QtCore.QSettings.Format.IniFormat,

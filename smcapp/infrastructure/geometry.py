@@ -10,8 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from math import cos, hypot, isfinite, radians, sin
 
-from aocapp.api.dc_block import base_distance_m
-from aocapp.domain.models import (
+from smcapp.api.dc_block import base_distance_m
+from smcapp.domain.models import (
     Callout,
     CircleShape,
     DimensionLine,
@@ -28,10 +28,10 @@ from aocapp.domain.models import (
     TextLabel,
     bounds_from_points,
 )
-from aocapp.domain.ports import StructureCalculator
-from aocapp.domain.s21_models import S21Config
-from aocapp.domain.transformers import ELEMENT_NUMBERS, SCHEMATIC_SECTIONS, transformer_length_m
-from aocapp.infrastructure.callouts import CalloutPlacer
+from smcapp.domain.ports import StructureCalculator
+from smcapp.domain.s21_models import S21Config
+from smcapp.domain.transformers import ELEMENT_NUMBERS, SCHEMATIC_SECTIONS, transformer_length_m
+from smcapp.infrastructure.callouts import CalloutPlacer
 
 LENGTH_SCALE = WIDTH_SCALE = 2.0
 CONDUCTOR_FILL = "#e8f1f5"

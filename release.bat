@@ -15,9 +15,9 @@ if "%1"=="" (
   echo.
   echo __version__ = "%Tag%"
   echo REPO_SLUG = "atepart/SMC_app"
-) > aocapp\application\version.py
+) > smcapp\application\version.py
 
-git add aocapp\application\version.py
+git add smcapp\application\version.py
 git commit -m "Release %Tag%"
 git tag -a %Tag% -m "Version %Tag%"
 git push origin --tags

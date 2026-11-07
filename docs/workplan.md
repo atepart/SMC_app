@@ -17,7 +17,7 @@
 - Картинки из ишью — приватные вложения GitHub. Скачивать так: `rtk proxy curl -sL -H "Authorization: token $(gh auth token)" -o <файл> <URL>`, затем смотреть файл.
 - Пока серия не закончена, по указанию владельца тесты запускаются без экспорта PNG: `rtk uv run pytest -q --ignore=tests/test_png_export.py`. `tests/test_png_export.py` прогоняется один раз в конце серии (`WP-045`).
 - Любой запуск тестов и приложения — с жёстким лимитом времени, чтобы повисший тест или модальный диалог не блокировал работу: `rtk proxy perl -e 'alarm 150; exec @ARGV' uv run pytest …`. Не маскировать код возврата через `| tail`.
-- Ручная проверка — настоящая точка входа `aocapp.main.main()` через локальный харнесс `docs/screenshots/_harness/drive.py` (каталог не в Git). Пример запуска и описание — в `docs/screenshots/_harness/README.md`. Снимки — в `docs/screenshots/WP-0xx/`.
+- Ручная проверка — настоящая точка входа `smcapp.main.main()` через локальный харнесс `docs/screenshots/_harness/drive.py` (каталог не в Git). Пример запуска и описание — в `docs/screenshots/_harness/README.md`. Снимки — в `docs/screenshots/WP-0xx/`.
 - На macOS физический Control приходит в Qt как `MetaModifier`, Cmd — как `ControlModifier`. Клавиатурные сочетания проверять для обоих.
 - В коммитах нет строк об AI-соавторстве. `push` не выполнять.
 

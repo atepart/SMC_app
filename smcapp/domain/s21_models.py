@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields as dataclass_fields, replace
 from typing import ClassVar
 
-from aocapp.domain.transformers import (
+from smcapp.domain.transformers import (
     ELEMENT_ORDER,
     SCHEMATIC_SECTIONS,
     element_group,

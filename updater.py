@@ -16,7 +16,7 @@ def setup_logger(install_dir: str):
     except Exception:
         import tempfile
 
-        log_file = os.path.join(tempfile.gettempdir(), "aocapp_updater.log")
+        log_file = os.path.join(tempfile.gettempdir(), "smcapp_updater.log")
 
     logging.basicConfig(
         level=logging.DEBUG,
@@ -149,7 +149,7 @@ try:
         app = QtWidgets.QApplication(sys.argv)
 
         dlg = QtWidgets.QDialog()
-        dlg.setWindowTitle("Обновление AOCapp")
+        dlg.setWindowTitle("Обновление smcapp")
         dlg.resize(400, 100)
 
         layout = QtWidgets.QVBoxLayout(dlg)
@@ -267,7 +267,7 @@ except ImportError:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AOCapp Updater")
+    parser = argparse.ArgumentParser(description="smcapp Updater")
     parser.add_argument("--pid", type=int, required=True, help="PID of the main app to wait for")
     parser.add_argument("--src", type=str, required=True, help="Source directory (unpacked new version)")
     parser.add_argument("--dst", type=str, required=True, help="Destination directory (current install dir)")

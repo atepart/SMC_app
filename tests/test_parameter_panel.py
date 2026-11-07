@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import json
 from typing import cast
 from unittest.mock import Mock, patch
 
@@ -10,14 +11,14 @@ import pytest
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtTest import QTest
 
-from aocapp.application.s21_use_case import CalculateS21UseCase
-from aocapp.application.use_cases import GenerateStructureUseCase
-from aocapp.domain.s21_models import S21Config
-from aocapp.domain.transformers import ELEMENT_NUMBERS, ELEMENT_ORDER, element_group
-from aocapp.infrastructure.geometry import IntegratedStructureCalculator
-from aocapp.infrastructure.svg_renderer import SvgRendererImpl
-from aocapp.ui.app import MainWindow
-from aocapp.ui.theme import THEME_COLORS
+from smcapp.application.s21_use_case import CalculateS21UseCase
+from smcapp.application.use_cases import GenerateStructureUseCase
+from smcapp.domain.s21_models import S21Config
+from smcapp.domain.transformers import ELEMENT_NUMBERS, ELEMENT_ORDER, element_group
+from smcapp.infrastructure.geometry import IntegratedStructureCalculator
+from smcapp.infrastructure.svg_renderer import SvgRendererImpl
+from smcapp.ui.app import MainWindow
+from smcapp.ui.theme import THEME_COLORS
 
 
 @pytest.fixture
@@ -91,7 +92,7 @@ def test_greek_labels_fixed_orders_and_design_round_trip(parameter_window: MainW
     assert order.text() == "×10^-9 m"  # thicknesses in nm (GitHub #10)
     assert int(order.text().split("^")[1].split()[0]) % 3 == 0
 
-    path = tmp_path / "round-trip.aocdesign"
+    path = tmp_path / "round-trip.smcdesign"
     parameter_window._same_materials_checkbox.setChecked(False)
     parameter_window._config_inputs["tc_bot_k"].setValue(8.7)
     parameter_window._config_inputs["l_slot_m"].setValue(42.5)
@@ -254,7 +255,7 @@ def test_preview_rejects_nonpositive_corrected_dc_slot(parameter_window: MainWin
 
 def test_open_file_menu_imports_hfss_and_experiment(parameter_window: MainWindow, tmp_path) -> None:
     assert [action.text() for action in parameter_window.open_files_menu.actions()] == [
-        "Параметры SMC_app",
+        "Параметры smcapp",
         "HFSS",
         "Experiment",
     ]
@@ -470,7 +471,7 @@ def test_starting_calculation_does_not_clear_successful_results(parameter_window
     parameter_window._update_s21_plot([100, 200], [-12, -8])
     parameter_window._update_s21_plot([100, 200], [-10, -6])
     parameter_window._s21_output.clear()
-    with patch("aocapp.ui.app.QThread"), patch("aocapp.ui.app.S21Worker"):
+    with patch("smcapp.ui.app.QThread"), patch("smcapp.ui.app.S21Worker"):
         parameter_window._run_s21()
         assert parameter_window._theory_trace == ([100, 200], [-10, -6])
         assert parameter_window._previous_theory_trace == ([100, 200], [-12, -8])
@@ -582,7 +583,7 @@ def test_parameter_redraw_keeps_the_zoomed_element_in_view(parameter_window: Mai
 
 def test_issue_10_zoomed_drawing_does_not_creep_when_values_toggle(parameter_window: MainWindow) -> None:
     """GitHub #10: 9 → 10 → 9 … must not move the drawing; the signal input stays put."""
-    from aocapp.infrastructure.geometry import SIGNAL_INPUT
+    from smcapp.infrastructure.geometry import SIGNAL_INPUT
 
     window, view = parameter_window, parameter_window._view
     _enter_value(window, "transf_4_w_end_m", 2)
@@ -740,11 +741,11 @@ def test_preview_button_uses_current_fields_for_dimensions(parameter_window: Mai
 
 
 def test_legacy_transformer_round_trip_preserves_discretization(parameter_window: MainWindow, tmp_path) -> None:
-    from aocapp.domain.s21_models import S21Config
+    from smcapp.domain.s21_models import S21Config
 
     legacy = S21Config(transf_7_dwdl_um=1.7, transf_7_dl_m=0.125e-6, transf_7_w_start_m=49.123456e-6)
-    source = tmp_path / "legacy.aocdesign"
-    destination = tmp_path / "saved.aocdesign"
+    source = tmp_path / "legacy.smcdesign"
+    destination = tmp_path / "saved.smcdesign"
     parameter_window._design_files.save(source, legacy)
     parameter_window.load_design_from_path(source)
     parameter_window.save_design_to_path(destination)
@@ -755,9 +756,9 @@ def test_legacy_transformer_round_trip_preserves_discretization(parameter_window
 
 
 def test_s21_output_filename_folder_and_worker(parameter_window: MainWindow, tmp_path) -> None:
-    from aocapp.api.io import IOService
-    from aocapp.domain.s21_models import S21Result
-    from aocapp.ui.app import _default_s21_output_directory
+    from smcapp.api.io import IOService
+    from smcapp.domain.s21_models import S21Result
+    from smcapp.ui.app import _default_s21_output_directory
 
     folder = tmp_path / "Папка результатов"
     folder.mkdir()
@@ -832,3 +833,48 @@ def test_s21_cleanup_waits_for_native_worker_destruction(parameter_window: MainW
     assert parameter_window._s21_worker is None
     assert parameter_window._s21_thread is None
     assert parameter_window._run_s21_button.isEnabled()
+
+
+@pytest.mark.parametrize(
+    "selected_filter, suffix", [("Параметры smcapp (*.smcdesign)", ".smcdesign"), ("JSON (*.json)", ".json")]
+)
+def test_save_dialog_uses_new_format_and_selected_extension(
+    parameter_window, tmp_path, selected_filter, suffix
+) -> None:
+    target = tmp_path / "parameters"
+    button = parameter_window.findChild(QtWidgets.QPushButton, "save_parameters_button")
+    with patch.object(QtWidgets.QFileDialog, "getSaveFileName", return_value=(str(target), selected_filter)) as dialog:
+        QTest.mouseClick(button, QtCore.Qt.LeftButton)
+    assert dialog.call_args.args[2].endswith("parameters.smcdesign")
+    assert "*.aocdesign" not in dialog.call_args.args[3]
+    payload = json.loads(target.with_suffix(suffix).read_text())
+    assert payload["format"] == "SMCapp Design"
+    assert payload["parameters"] == parameter_window._build_config().__dict__
+    assert parameter_window.windowTitle().startswith("smcapp ")
+
+
+@pytest.mark.parametrize("suffix", [".aocdesign", ".aocapp", ".json", ".smcdesign"])
+def test_open_dialog_accepts_legacy_and_new_files(parameter_window, tmp_path, suffix) -> None:
+    target = tmp_path / f"parameters{suffix}"
+    payload = {
+        "format": "SMCapp Design" if suffix == ".smcdesign" else "AOCapp Design",
+        "version": 1,
+        "parameters": {**S21Config().__dict__, "tc_bot_k": 8.7},
+    }
+    target.write_text(json.dumps(payload))
+    with patch.object(QtWidgets.QFileDialog, "getOpenFileName", return_value=(str(target), "")) as dialog:
+        parameter_window.open_files_menu.actions()[0].trigger()
+    assert f"*{suffix}" in dialog.call_args.args[3]
+    assert parameter_window._build_config().tc_bot_k == 8.7
+
+
+def test_invalid_design_dialog_preserves_parameters(parameter_window, tmp_path) -> None:
+    target = tmp_path / "broken.smcdesign"
+    target.write_text("{ broken JSON")
+    original = parameter_window._build_config()
+    with patch.object(QtWidgets.QFileDialog, "getOpenFileName", return_value=(str(target), "")), patch.object(
+        QtWidgets.QMessageBox, "critical"
+    ) as error:
+        parameter_window._load_design_dialog()
+    assert "некорректный JSON" in error.call_args.args[2]
+    assert parameter_window._build_config() == original

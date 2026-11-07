@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from aocapp.infrastructure.trace_files import HfssTabReader, TraceFileReader
+from smcapp.infrastructure.trace_files import HfssTabReader, TraceFileReader
 
 
 def test_trace_reader_accepts_header_comments_and_sorts_frequency(tmp_path) -> None:

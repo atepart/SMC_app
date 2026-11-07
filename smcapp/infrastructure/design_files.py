@@ -1,4 +1,4 @@
-"""Versioned persistence for editable AOCapp design parameters."""
+"""Versioned persistence for editable smcapp design parameters."""
 
 from __future__ import annotations
 
@@ -6,9 +6,10 @@ import json
 from dataclasses import asdict, fields
 from pathlib import Path
 
-from aocapp.domain.s21_models import S21Config
+from smcapp.domain.s21_models import S21Config
 
-DESIGN_FORMAT = "AOCapp Design"
+DESIGN_FORMAT = "SMCapp Design"
+LEGACY_DESIGN_FORMAT = "AOCapp Design"
 DESIGN_VERSION = 1
 
 
@@ -47,8 +48,8 @@ class DesignFileService:
         except json.JSONDecodeError as exc:
             raise ValueError(f"Файл дизайна содержит некорректный JSON: {exc.msg}") from exc
 
-        if not isinstance(payload, dict) or payload.get("format") != DESIGN_FORMAT:
-            raise ValueError("Выбранный файл не является дизайном AOCapp.")
+        if not isinstance(payload, dict) or payload.get("format") not in (DESIGN_FORMAT, LEGACY_DESIGN_FORMAT):
+            raise ValueError("Выбранный файл не является дизайном smcapp.")
         if payload.get("version") != DESIGN_VERSION:
             raise ValueError(f"Версия дизайна не поддерживается: {payload.get('version')!r}.")
 

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from aocapp.domain.models import StructureGeometry, SvgColorScheme
-from aocapp.domain.ports import StructureCalculator, SvgRenderer
-from aocapp.domain.s21_models import S21Config
+from smcapp.domain.models import StructureGeometry, SvgColorScheme
+from smcapp.domain.ports import StructureCalculator, SvgRenderer
+from smcapp.domain.s21_models import S21Config
 
 
 @dataclass(frozen=True)

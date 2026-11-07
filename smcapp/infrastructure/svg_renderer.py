@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from aocapp.domain.models import Point, PolygonShape, StructureGeometry, SvgColorScheme, TextLabel
-from aocapp.domain.ports import SvgRenderer
+from smcapp.domain.models import Point, PolygonShape, StructureGeometry, SvgColorScheme, TextLabel
+from smcapp.domain.ports import SvgRenderer
 
 # Dark sheet: every colour of the light drawing has a dark counterpart.  Metal
 # stays a set of distinguishable muted blues, lines and text turn light.

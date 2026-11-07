@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aocapp.domain.models import Point, Rect, bounds_from_points
+from smcapp.domain.models import Point, Rect, bounds_from_points
 
 
 def test_bounds_from_points_wraps_all_coordinates() -> None:

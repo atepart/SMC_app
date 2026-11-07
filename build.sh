@@ -20,7 +20,7 @@ echo "Building updater..."
   -y
 
 echo "Building main app..."
-"$PYTHON_BIN" -m PyInstaller aocapp/__main__.py \
+"$PYTHON_BIN" -m PyInstaller smcapp/__main__.py \
   -n "$APP_NAME" \
   --onedir \
   --icon=assets/smc-logo.ico \

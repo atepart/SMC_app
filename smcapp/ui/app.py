@@ -55,18 +55,19 @@ from PySide6.QtWidgets import (
 )
 from PySide6QtAds import CDockManager, CDockWidget, DockWidgetArea
 
-from aocapp.application.s21_use_case import CalculateS21UseCase
-from aocapp.application.use_cases import GenerateStructureUseCase
-from aocapp.application.version import REPO_SLUG, __version__
-from aocapp.domain.models import Point, SvgColorScheme
-from aocapp.domain.s21_models import S21Config
-from aocapp.domain.transformers import ELEMENT_NUMBERS, derive_transformer_steps, transformer_dl_max_um
-from aocapp.infrastructure.design_files import DesignFileService
-from aocapp.infrastructure.geometry import SIGNAL_INPUT
-from aocapp.infrastructure.hover import ElementHitMap, NumberMark
-from aocapp.infrastructure.trace_files import ComparisonTrace, HfssTabReader, TraceFileReader
-from aocapp.ui.plot_legend import CheckableItemSample, PlainItemSample
-from aocapp.ui.theme import (
+from smcapp.application.s21_use_case import CalculateS21UseCase
+from smcapp.application.use_cases import GenerateStructureUseCase
+from smcapp.application.version import REPO_SLUG, __version__
+from smcapp.domain.models import Point, SvgColorScheme
+from smcapp.domain.s21_models import S21Config
+from smcapp.domain.transformers import ELEMENT_NUMBERS, derive_transformer_steps, transformer_dl_max_um
+from smcapp.infrastructure.design_files import DesignFileService
+from smcapp.infrastructure.geometry import SIGNAL_INPUT
+from smcapp.infrastructure.hover import ElementHitMap, NumberMark
+from smcapp.infrastructure.settings import migrate_legacy_settings
+from smcapp.infrastructure.trace_files import ComparisonTrace, HfssTabReader, TraceFileReader
+from smcapp.ui.plot_legend import CheckableItemSample, PlainItemSample
+from smcapp.ui.theme import (
     ACCENT,
     THEME_COLORS,
     THEME_TITLES,
@@ -76,7 +77,7 @@ from aocapp.ui.theme import (
     load_theme,
     save_theme,
 )
-from aocapp.ui.update_dialogs import DownloadReleaseWorker, FetchReleasesWorker, ReleasePickerDialog
+from smcapp.ui.update_dialogs import DownloadReleaseWorker, FetchReleasesWorker, ReleasePickerDialog
 
 CURRENT_DOCK_LAYOUT_VERSION = 1
 
@@ -625,7 +626,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._use_case = use_case
         self._s21_use_case = s21_use_case
-        self.setWindowTitle(f"AOC Structure Calculator {__version__}")
+        self.setWindowTitle(f"smcapp {__version__}")
         self.setWindowIcon(QIcon(str(_resource_path("assets", "smc-logo.png"))))
         # QtAds calculates initial splitter ratios while docks are inserted, so
         # establish the reference size before building the workspace.
@@ -833,7 +834,7 @@ class MainWindow(QMainWindow):
         load_design_button = QPushButton("Открыть параметры…")
         load_design_button.setObjectName("load_parameters_button")
         load_design_button.setToolTip(
-            "Загрузить все поля S21Config из версионного файла SMC_app и обновить preview. "
+            "Загрузить все поля S21Config из версионного файла smcapp и обновить preview. "
             "Форматы Mathcad .mcd/.mcdx не поддерживаются."
         )
         load_design_button.clicked.connect(self._load_design_dialog)
@@ -841,14 +842,14 @@ class MainWindow(QMainWindow):
         save_design_button = QPushButton("Сохранить параметры…")
         save_design_button.setObjectName("save_parameters_button")
         save_design_button.setToolTip(
-            "Сохранить полный набор текущих входных параметров в версионный JSON SMC_app; "
+            "Сохранить полный набор текущих входных параметров в версионный JSON smcapp; "
             "кривая S21 и Mathcad-лист в файл не входят."
         )
         save_design_button.clicked.connect(self._save_design_dialog)
         design_row.addWidget(save_design_button)
         controls_layout.addLayout(design_row)
 
-        parameter_hint = QLabel("Файл параметров SMC_app — не файл Mathcad; S21 рассчитывается отдельно.")
+        parameter_hint = QLabel("Файл параметров smcapp — не файл Mathcad; S21 рассчитывается отдельно.")
         parameter_hint.setObjectName("parameter_file_hint")
         parameter_hint.setWordWrap(True)
         controls_layout.addWidget(parameter_hint)
@@ -1016,8 +1017,8 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
 
         self.open_files_menu = QtWidgets.QMenu("Открыть файл", self)
-        design_action = self.open_files_menu.addAction("Параметры SMC_app")
-        design_action.setToolTip("Открыть .aocdesign/.json с входными параметрами расчёта")
+        design_action = self.open_files_menu.addAction("Параметры smcapp")
+        design_action.setToolTip("Открыть .smcdesign/.json или старый .aocdesign/.aocapp с параметрами расчёта")
         design_action.triggered.connect(self._load_design_dialog)
         hfss_action = self.open_files_menu.addAction("HFSS")
         hfss_action.setToolTip("Добавить на график расчёт HFSS (.tab, частота в THz, S21 в dB)")
@@ -1175,29 +1176,29 @@ class MainWindow(QMainWindow):
 
     def _save_design_dialog(self) -> None:
         """Ask for a friendly target and save the current backend parameters."""
-        selected, _ = QtWidgets.QFileDialog.getSaveFileName(
+        selected, selected_filter = QtWidgets.QFileDialog.getSaveFileName(
             self,
-            "Сохранить параметры SMC_app",
-            str(Path(self._last_files_directory()) / "parameters.aocdesign"),
-            "Параметры SMC_app (*.aocdesign);;JSON (*.json)",
+            "Сохранить параметры smcapp",
+            str(Path(self._last_files_directory()) / "parameters.smcdesign"),
+            "Параметры smcapp (*.smcdesign);;JSON (*.json)",
         )
         if not selected:
             return
         path = Path(selected)
         if not path.suffix:
-            path = path.with_suffix(".aocdesign")
+            path = path.with_suffix(".json" if selected_filter == "JSON (*.json)" else ".smcdesign")
         try:
             self.save_design_to_path(path)
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "Ошибка сохранения параметров", str(exc))
 
     def _load_design_dialog(self) -> None:
-        """Select an SMC_app parameter set and apply it to every editor."""
+        """Select a smcapp parameter set and apply it to every editor."""
         selected, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
-            "Открыть параметры SMC_app",
+            "Открыть параметры smcapp",
             self._last_files_directory(),
-            "Параметры SMC_app (*.aocdesign *.json)",
+            "Параметры smcapp (*.smcdesign *.json *.aocdesign *.aocapp)",
         )
         if not selected:
             return
@@ -1822,7 +1823,7 @@ class MainWindow(QMainWindow):
             self,
             "О программе",
             (
-                "AOCapp\n"
+                "smcapp\n"
                 f"Версия: {__version__}\n"
                 f"Репозиторий релизов: {REPO_SLUG}\n\n"
                 "Расчёт и визуализация сверхпроводящей интегральной структуры, SVG preview и S21 response."
@@ -2079,9 +2080,10 @@ class MainWindow(QMainWindow):
 
 
 def run_app(use_case: GenerateStructureUseCase, s21_use_case: CalculateS21UseCase) -> None:
-    QtCore.QCoreApplication.setOrganizationName("AOCapp")
-    QtCore.QCoreApplication.setApplicationName("AOCapp")
+    QtCore.QCoreApplication.setOrganizationName("smcapp")
+    QtCore.QCoreApplication.setApplicationName("smcapp")
     app = QApplication(sys.argv)
+    migrate_legacy_settings(QSettings("AOCapp", "AOCapp"), QSettings())
     window = MainWindow(use_case, s21_use_case)
     window.resize(1440, 920)
     window.show()

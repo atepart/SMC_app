@@ -10,7 +10,7 @@ import zipfile
 import requests
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from aocapp.infrastructure.updater import list_releases
+from smcapp.infrastructure.updater import list_releases
 
 
 class DownloadReleaseWorker(QtCore.QThread):
@@ -30,7 +30,7 @@ class DownloadReleaseWorker(QtCore.QThread):
             resp.raise_for_status()
             total = int(resp.headers.get("content-length", 0))
 
-            temp_dir = tempfile.mkdtemp(prefix="aocapp_update_")
+            temp_dir = tempfile.mkdtemp(prefix="smcapp_update_")
             zip_path = os.path.join(temp_dir, "update.zip")
 
             downloaded = 0

@@ -18,11 +18,11 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
-from aocapp.domain.models import SvgColorScheme
-from aocapp.infrastructure.svg_renderer import DARK_SVG_SCHEME
+from smcapp.domain.models import SvgColorScheme
+from smcapp.infrastructure.svg_renderer import DARK_SVG_SCHEME
 
 THEME_SETTINGS_KEY = "Appearance/theme"
-_NATIVE_STYLE_PROPERTY = "aocappNativeStyle"
+_NATIVE_STYLE_PROPERTY = "smcappNativeStyle"
 
 
 class Theme(StrEnum):

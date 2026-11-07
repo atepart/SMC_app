@@ -12,12 +12,12 @@ from unittest.mock import Mock
 import pytest
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from aocapp.application.s21_use_case import CalculateS21UseCase
-from aocapp.application.use_cases import GenerateStructureUseCase
-from aocapp.infrastructure.geometry import IntegratedStructureCalculator
-from aocapp.infrastructure.svg_renderer import SvgRendererImpl
-from aocapp.ui.app import MainWindow
-from aocapp.ui.theme import (
+from smcapp.application.s21_use_case import CalculateS21UseCase
+from smcapp.application.use_cases import GenerateStructureUseCase
+from smcapp.infrastructure.geometry import IntegratedStructureCalculator
+from smcapp.infrastructure.svg_renderer import SvgRendererImpl
+from smcapp.ui.app import MainWindow
+from smcapp.ui.theme import (
     THEME_COLORS,
     THEME_SETTINGS_KEY,
     Theme,

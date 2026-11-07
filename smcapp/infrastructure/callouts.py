@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from math import cos, hypot, radians, sin
 
-from aocapp.domain.models import LineShape, Point, TextLabel
+from smcapp.domain.models import LineShape, Point, TextLabel
 
 LEADER_COLOR = "#64748b"
 LEADER_WIDTH = 0.6

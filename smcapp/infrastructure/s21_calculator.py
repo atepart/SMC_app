@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from numpy import arange, array
 from scipy.integrate import IntegrationWarning
 
-from aocapp.api import (
+from smcapp.api import (
     ComplexIntegrator,
     DCBlockCalculator,
     FilmConductivity,
@@ -23,8 +23,8 @@ from aocapp.api import (
     SISJunctionCalculator,
     SuperconductingGapCalculator,
 )
-from aocapp.domain.ports import S21Calculator, S21ResultWriter
-from aocapp.domain.s21_models import S21Config, S21Result
+from smcapp.domain.ports import S21Calculator, S21ResultWriter
+from smcapp.domain.s21_models import S21Config, S21Result
 
 
 @dataclass

@@ -11,8 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import hypot
 
-from aocapp.domain.models import LineShape, Point, StructureGeometry
-from aocapp.infrastructure.callouts import Box, point_in_polygon, text_box
+from smcapp.domain.models import LineShape, Point, StructureGeometry
+from smcapp.infrastructure.callouts import Box, point_in_polygon, text_box
 
 
 @dataclass(frozen=True)

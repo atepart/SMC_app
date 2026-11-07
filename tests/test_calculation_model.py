@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 from numpy.testing import assert_allclose
 
-from aocapp.api.complex_integration import ComplexIntegrator
-from aocapp.api.dc_block import BASE_DISTANCE_CONSTANT_M, DCBlockCalculator, base_distance_m
-from aocapp.api.impedance import ImpedanceCalculator
-from aocapp.api.microstrip import MicrostripLineCalculator
-from aocapp.api.models import FilmConductivity
-from aocapp.domain.s21_models import S21Config
-from aocapp.infrastructure.s21_calculator import S21CalculatorImpl
+from smcapp.api.complex_integration import ComplexIntegrator
+from smcapp.api.dc_block import BASE_DISTANCE_CONSTANT_M, DCBlockCalculator, base_distance_m
+from smcapp.api.impedance import ImpedanceCalculator
+from smcapp.api.microstrip import MicrostripLineCalculator
+from smcapp.api.models import FilmConductivity
+from smcapp.domain.s21_models import S21Config
+from smcapp.infrastructure.s21_calculator import S21CalculatorImpl
 
 
 def test_alpha_gap_relation_preserves_legacy_default_and_is_not_constant() -> None:

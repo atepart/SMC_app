@@ -10,15 +10,15 @@ import pytest
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtTest import QTest
 
-from aocapp.application.s21_use_case import CalculateS21UseCase
-from aocapp.application.use_cases import GenerateStructureUseCase
-from aocapp.domain.models import Point, StructureGeometry
-from aocapp.domain.s21_models import S21Config
-from aocapp.infrastructure.geometry import IntegratedStructureCalculator
-from aocapp.infrastructure.hover import ElementHitMap
-from aocapp.infrastructure.svg_renderer import SvgRendererImpl
-from aocapp.ui.app import MainWindow
-from aocapp.ui.theme import THEME_COLORS, Theme
+from smcapp.application.s21_use_case import CalculateS21UseCase
+from smcapp.application.use_cases import GenerateStructureUseCase
+from smcapp.domain.models import Point, StructureGeometry
+from smcapp.domain.s21_models import S21Config
+from smcapp.infrastructure.geometry import IntegratedStructureCalculator
+from smcapp.infrastructure.hover import ElementHitMap
+from smcapp.infrastructure.svg_renderer import SvgRendererImpl
+from smcapp.ui.app import MainWindow
+from smcapp.ui.theme import THEME_COLORS, Theme
 
 
 def _overview(config: S21Config | None = None) -> StructureGeometry:

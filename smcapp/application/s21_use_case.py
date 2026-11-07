@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from aocapp.domain.ports import S21Calculator, S21ResultWriter
-from aocapp.domain.s21_models import S21Config, S21Result
+from smcapp.domain.ports import S21Calculator, S21ResultWriter
+from smcapp.domain.s21_models import S21Config, S21Result
 
 
 @dataclass(frozen=True)

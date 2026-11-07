@@ -11,11 +11,11 @@ from PySide6.QtCore import QPoint, QSettings, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton, QScrollArea
 
-from aocapp.application.s21_use_case import CalculateS21UseCase
-from aocapp.application.use_cases import GenerateStructureUseCase
-from aocapp.infrastructure.geometry import IntegratedStructureCalculator
-from aocapp.infrastructure.svg_renderer import SvgRendererImpl
-from aocapp.ui.app import MainWindow
+from smcapp.application.s21_use_case import CalculateS21UseCase
+from smcapp.application.use_cases import GenerateStructureUseCase
+from smcapp.infrastructure.geometry import IntegratedStructureCalculator
+from smcapp.infrastructure.svg_renderer import SvgRendererImpl
+from smcapp.ui.app import MainWindow
 
 
 def test_main_window_supports_material_toggle_and_preview_refresh(tmp_path) -> None:

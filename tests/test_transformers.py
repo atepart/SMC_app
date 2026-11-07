@@ -5,8 +5,8 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
-from aocapp.api.impedance_transformers import ImpedanceTransformerCalculator
-from aocapp.domain.transformers import derive_transformer_steps, transformer_dl_max_um, transformer_length_m
+from smcapp.api.impedance_transformers import ImpedanceTransformerCalculator
+from smcapp.domain.transformers import derive_transformer_steps, transformer_dl_max_um, transformer_length_m
 
 
 @pytest.mark.parametrize(

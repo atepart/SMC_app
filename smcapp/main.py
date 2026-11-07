@@ -5,14 +5,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from aocapp.api import IOService
-from aocapp.application.s21_use_case import CalculateS21UseCase
-from aocapp.application.use_cases import GenerateStructureUseCase
-from aocapp.domain.s21_models import S21Config
-from aocapp.infrastructure.geometry import IntegratedStructureCalculator
-from aocapp.infrastructure.s21_calculator import S21FileWriter, build_default_s21_calculator
-from aocapp.infrastructure.svg_renderer import SvgRendererImpl
-from aocapp.ui.app import run_app
+from smcapp.api import IOService
+from smcapp.application.s21_use_case import CalculateS21UseCase
+from smcapp.application.use_cases import GenerateStructureUseCase
+from smcapp.domain.s21_models import S21Config
+from smcapp.infrastructure.geometry import IntegratedStructureCalculator
+from smcapp.infrastructure.s21_calculator import S21FileWriter, build_default_s21_calculator
+from smcapp.infrastructure.svg_renderer import SvgRendererImpl
+from smcapp.ui.app import run_app
 
 
 def run_s21_smoke_test() -> None:

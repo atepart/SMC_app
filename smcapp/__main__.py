@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aocapp.main import main
+from smcapp.main import main
 
 if __name__ == "__main__":
     main()

@@ -1,4 +1,4 @@
-# AOCapp
+# smcapp
 
 Настольное приложение на PySide6 для расчёта и визуализации сверхпроводящей интегральной структуры: микрополосковые линии, трансформаторы импеданса, SIS-переход, radial stub, DC-block и S21-отклик.
 
@@ -10,7 +10,8 @@
 - График S21 vs Frequency и текстовый лог расчёта.
 - Последний успешный расчёт серым за текущей синей кривой; редактируемый красный порог Y line (−5 dB по умолчанию).
 - Сохранение результата S21 в `.tab` файл.
-- Версификация приложения через `aocapp/application/version.py` и GitHub-теги.
+- Сохранение параметров в `.smcdesign` или `.json`; чтение старых `.aocdesign` и `.aocapp`.
+- Версификация приложения через `smcapp/application/version.py` и GitHub-теги.
 
 ## Запуск из исходников
 
@@ -18,8 +19,24 @@
 
 ```bash
 rtk uv sync
-rtk uv run python -m aocapp
+rtk uv run python -m smcapp
 ```
+
+Пакет переименован из `aocapp` в `smcapp`: после обновления исходников выполните `rtk uv sync`.
+Настройки темы, панелей и каталогов из AOCapp переносятся при первом запуске, не заменяя уже заданные настройки smcapp.
+
+## Файлы параметров
+
+`.smcdesign` — обычный UTF-8 JSON с полями `format: "SMCapp Design"`, `version: 1` и объектом `parameters`.
+Состав параметров и их backend-единицы не изменились. Можно сохранять тот же документ с расширением `.json`.
+Старый маркер `AOCapp Design` принимается без конвертации из `.aocdesign`, `.aocapp` и `.json`.
+При повторном сохранении записывается новый маркер; диалог предлагает `.smcdesign`.
+Чужой JSON, неизвестная версия и некорректные параметры отклоняются.
+
+Файл содержит входные параметры, а не рассчитанную кривую: после открытия нажмите `Run S21`.
+Результат S21 сохраняется отдельно в `.tab`, изображение графика — в `.png`.
+Чтобы сохранить совместимость с существующими установками и обновлениями, имя сборки `SMC_app`,
+каталог результатов `Documents/SMC_app` и адрес GitHub-репозитория остаются прежними.
 
 Тесты и проверки:
 
@@ -37,7 +54,7 @@ rtk uv run pytest
 macOS/Linux:
 
 ```bash
-rtk uv run pyinstaller aocapp/__main__.py -n SMC_app --onedir --icon=assets/smc-logo.ico --noconsole --windowed -y --add-data="assets:assets"
+rtk uv run pyinstaller smcapp/__main__.py -n SMC_app --onedir --icon=assets/smc-logo.ico --noconsole --windowed -y --add-data="assets:assets"
 ```
 
 Windows:
@@ -50,7 +67,7 @@ rtk build.bat
 
 ## Релиз и версии
 
-Версия хранится в `aocapp/application/version.py`:
+Версия хранится в `smcapp/application/version.py`:
 
 ```python
 __version__ = "0.1.0-dev"
@@ -86,12 +103,12 @@ Workflow находится в `.github/workflows/build.yml`.
 
 ## Структура проекта
 
-- `aocapp/main.py` - composition root приложения.
-- `aocapp/ui/` - PySide6 UI, SVG preview, график S21.
-- `aocapp/application/` - use cases и версия приложения.
-- `aocapp/domain/` - модели и параметры расчёта.
-- `aocapp/infrastructure/` - геометрия, S21-калькулятор, SVG-renderer.
-- `aocapp/api/` - адаптеры к расчётному backend-коду.
+- `smcapp/main.py` - composition root приложения.
+- `smcapp/ui/` - PySide6 UI, SVG preview, график S21.
+- `smcapp/application/` - use cases и версия приложения.
+- `smcapp/domain/` - модели и параметры расчёта.
+- `smcapp/infrastructure/` - геометрия, S21-калькулятор, SVG-renderer.
+- `smcapp/api/` - адаптеры к расчётному backend-коду.
 - `backend/` - исходные расчётные модули и старые примеры.
 
 ## Примечания

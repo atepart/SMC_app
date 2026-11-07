@@ -13,11 +13,11 @@ import shiboken6
 from PIL import Image
 from PySide6 import QtCore, QtWidgets
 
-from aocapp.application.use_cases import GenerateStructureUseCase
-from aocapp.domain.s21_models import S21Result
-from aocapp.infrastructure.geometry import IntegratedStructureCalculator
-from aocapp.infrastructure.svg_renderer import SvgRendererImpl
-from aocapp.ui.app import MainWindow
+from smcapp.application.use_cases import GenerateStructureUseCase
+from smcapp.domain.s21_models import S21Result
+from smcapp.infrastructure.geometry import IntegratedStructureCalculator
+from smcapp.infrastructure.svg_renderer import SvgRendererImpl
+from smcapp.ui.app import MainWindow
 
 
 def main() -> None:
@@ -25,8 +25,8 @@ def main() -> None:
     directory = Path(sys.argv[1])
     directory.mkdir(parents=True)
     app = QtWidgets.QApplication([])
-    QtCore.QCoreApplication.setOrganizationName("AOCappPNGLifecycleTests")
-    QtCore.QCoreApplication.setApplicationName("AOCappPNGLifecycleTests")
+    QtCore.QCoreApplication.setOrganizationName("smcappPNGLifecycleTests")
+    QtCore.QCoreApplication.setApplicationName("smcappPNGLifecycleTests")
     QtCore.QSettings.setDefaultFormat(QtCore.QSettings.Format.IniFormat)
     QtCore.QSettings.setPath(QtCore.QSettings.Format.IniFormat, QtCore.QSettings.Scope.UserScope, str(directory))
     for iteration in range(40):
