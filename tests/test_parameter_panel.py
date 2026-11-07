@@ -430,6 +430,42 @@ def test_parameter_redraw_keeps_the_zoomed_element_in_view(parameter_window: Mai
     assert view.transform().m11() < scale
 
 
+def test_issue_10_zoomed_drawing_does_not_creep_when_values_toggle(parameter_window: MainWindow) -> None:
+    """GitHub #10: 9 → 10 → 9 … must not move the drawing; the signal input stays put."""
+    from aocapp.infrastructure.geometry import SIGNAL_INPUT
+
+    window, view = parameter_window, parameter_window._view
+    _enter_value(window, "transf_4_w_end_m", 2)
+    _enter_value(window, "transf_4_w_start_m", 9)
+    _enter_value(window, "transf_4_length_m", 12)
+    for _ in range(20):
+        QtWidgets.QApplication.sendEvent(view.viewport(), _wheel_event(view.viewport()))
+    t4 = next(e for e in window._use_case.calculator.calculate(window._build_config()).elements if e.element_id == "T4")
+    corner = QtCore.QPointF(t4.bounds.x, t4.bounds.y)
+    view.centerOn(view._svg_to_scene(corner))
+    QtWidgets.QApplication.processEvents()
+    anchor = QtCore.QPointF(SIGNAL_INPUT.x, SIGNAL_INPUT.y)
+
+    def pixel(point: QtCore.QPointF) -> tuple[int, int]:
+        position = view.mapFromScene(view._svg_to_scene(point))
+        return position.x(), position.y()
+
+    start = pixel(anchor), pixel(corner)
+    for value in (10, 9) * 6:
+        _enter_value(window, "transf_4_w_start_m", value)
+        assert pixel(anchor) == start[0]
+    assert pixel(corner) == start[1]
+
+    # A pan by the user is kept: the new place is the one held from then on.
+    view.horizontalScrollBar().setValue(view.horizontalScrollBar().value() - 37)
+    view.verticalScrollBar().setValue(view.verticalScrollBar().value() + 11)
+    panned = pixel(anchor)
+    assert panned != start[0]
+    for value in (10, 9) * 3:
+        _enter_value(window, "transf_4_w_start_m", value)
+        assert pixel(anchor) == panned
+
+
 def test_parameter_redraw_keeps_the_scrolled_dimension_card(parameter_window: MainWindow) -> None:
     view = parameter_window._view
     parameter_window._schematic_details.setChecked(True)

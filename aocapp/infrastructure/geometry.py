@@ -46,6 +46,9 @@ FOOT_UM = 1.0
 SLOT_OFFSET_UM = 1.0
 # Transformers 7 and 9 bend from the line axis down onto the DC-block stubs.
 CORNER_TRANSFORMERS = ("T4", "T3")
+# The FFO signal enters at the left face of element 1; it never moves, so the
+# viewer keeps this point in place while parameters change (GitHub #10).
+SIGNAL_INPUT = Point(28.0, 0.0)
 
 
 def _um(value_m: float) -> float:
@@ -205,7 +208,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         if not isfinite(config.radial_angle_deg) or not 0 < config.radial_angle_deg < 360:
             raise ValueError("Угол радиального шлейфа должен лежать между 0 и 360°")
         canvas = _Canvas()
-        dw, y, x = _um(config.dw_m), 0.0, 28.0
+        dw, y, x = _um(config.dw_m), SIGNAL_INPUT.y, SIGNAL_INPUT.x
         for matrix, sections in SCHEMATIC_SECTIONS.items():
             for number, name in sections:
                 if name in CORNER_TRANSFORMERS:

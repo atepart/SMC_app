@@ -24,6 +24,7 @@ from PySide6.QtGui import (
     QImage,
     QImageWriter,
     QPainter,
+    QTransform,
     QWheelEvent,
 )
 from PySide6.QtSvg import QSvgRenderer
@@ -57,6 +58,7 @@ from aocapp.domain.models import SvgColorScheme
 from aocapp.domain.s21_models import S21Config
 from aocapp.domain.transformers import ELEMENT_NUMBERS, derive_transformer_steps, transformer_dl_max_um
 from aocapp.infrastructure.design_files import DesignFileService
+from aocapp.infrastructure.geometry import SIGNAL_INPUT
 from aocapp.infrastructure.trace_files import ComparisonTrace, TraceFileReader
 from aocapp.ui.theme import (
     THEME_COLORS,
@@ -123,17 +125,23 @@ class SvgGraphicsView(QGraphicsView):
         self._renderer: QSvgRenderer | None = None
         self._zoom_level = 0
         self._fit_width = False
+        # Last pin: SVG point, wanted viewport position, transform and the
+        # viewport position actually reached (scroll bars are whole pixels).
+        self._pin: tuple[QPointF, QPointF, QTransform, QPointF] | None = None
 
-    def set_svg(self, svg_text: str, *, fit_width: bool = False) -> None:
+    def set_svg(self, svg_text: str, *, fit_width: bool = False, anchor: QPointF | None = None) -> None:
         """Show a new drawing, keeping the user's zoom and place within one mode.
 
-        Parameter edits redraw the SVG while the user inspects an element, so
-        the view centre is kept in SVG user units: the viewBox origin moves
-        when the drawing grows. A different mode starts from the fitted view.
+        Parameter edits redraw the SVG while the user inspects an element.  A
+        zoomed drawing keeps *anchor* (the signal input, in SVG user units) at
+        the same place on screen; the dimension sheet keeps the SVG point in
+        the view centre.  The wanted place is remembered until the user pans
+        or zooms, so whole-pixel scrolling never accumulates into a drift.
+        A different mode starts from the fitted view.
         """
         keep_view = self._svg_item is not None and fit_width == self._fit_width
         if keep_view:
-            centre = self._scene_to_svg(self.mapToScene(self.viewport().rect().center()))
+            pin_svg, pin_px = self._current_pin(None if fit_width else anchor)
             transform = self.transform()
         renderer = QSvgRenderer(QByteArray(svg_text.encode("utf-8")))
         item = QGraphicsSvgItem()
@@ -151,6 +159,7 @@ class SvgGraphicsView(QGraphicsView):
         self._svg_item = item
         self._fit_width = fit_width
         if not keep_view:
+            self._pin = None
             self.reset_view()
             return
         if self._zoom_level == 0:
@@ -158,7 +167,34 @@ class SvgGraphicsView(QGraphicsView):
         else:
             self.setTransform(transform)
         if self._zoom_level != 0 or self._fit_width:
-            self.centerOn(self._svg_to_scene(centre))
+            self._place(pin_svg, pin_px)
+        else:
+            self._pin = None
+
+    def _viewport_position(self, svg_point: QPointF) -> QPointF:
+        """Exact (sub-pixel) viewport position of an SVG point."""
+        return self.viewportTransform().map(self._svg_to_scene(svg_point))
+
+    def _current_pin(self, anchor: QPointF | None) -> tuple[QPointF, QPointF]:
+        """The SVG point to keep and where on the viewport it should stay."""
+        if self._pin is not None:
+            svg, wanted, transform, reached = self._pin
+            moved = self._viewport_position(svg) - reached
+            same_point = anchor is None or anchor == svg
+            if same_point and transform == self.transform() and abs(moved.x()) + abs(moved.y()) < 1e-6:
+                return svg, wanted
+        if anchor is not None:
+            return anchor, self._viewport_position(anchor)
+        centre = QPointF(self.viewport().width() / 2, self.viewport().height() / 2)
+        inverse, _ok = self.viewportTransform().inverted()
+        return self._scene_to_svg(inverse.map(centre)), centre
+
+    def _place(self, svg_point: QPointF, wanted: QPointF) -> None:
+        """Scroll so that *svg_point* lands on *wanted* (to the nearest pixel)."""
+        offset = self._viewport_position(svg_point) - wanted
+        for bar, delta in ((self.horizontalScrollBar(), offset.x()), (self.verticalScrollBar(), offset.y())):
+            bar.setValue(bar.value() + round(delta))
+        self._pin = (svg_point, wanted, self.transform(), self._viewport_position(svg_point))
 
     def _scene_to_svg(self, point: QPointF) -> QPointF:
         box, rect = self._renderer.viewBoxF(), self._svg_item.boundingRect()
@@ -177,6 +213,7 @@ class SvgGraphicsView(QGraphicsView):
     def reset_view(self) -> None:
         if self._svg_item is None:
             return
+        self._pin = None
         self.resetTransform()
         self._zoom_level = 0
         self._fit_default(reset_scroll=True)
@@ -1256,7 +1293,8 @@ class MainWindow(QMainWindow):
         details = self._schematic_details.isChecked()
         svg = self._use_case.execute(self._build_config(), show_details=details, scheme=scheme)
         self._svg_scheme = scheme
-        self._view.set_svg(svg, fit_width=details)
+        anchor = QPointF(SIGNAL_INPUT.x, SIGNAL_INPUT.y)
+        self._view.set_svg(svg, fit_width=details, anchor=anchor)
 
     def _select_s21_output_directory(self) -> None:
         directory = QtWidgets.QFileDialog.getExistingDirectory(
