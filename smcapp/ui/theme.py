@@ -273,7 +273,7 @@ def run_button_stylesheet(theme: Theme) -> str:
     c = THEME_COLORS[Theme(theme)].run_button
     return f"""
 QPushButton {{ background: {c.background}; color: {c.text}; border: 1px solid {c.border};
-    border-radius: 5px; padding: 6px 16px; }}
+    border-radius: 5px; padding: 3px 12px; }}
 QPushButton:hover {{ background: {c.hover}; }}
 QPushButton:pressed {{ background: {c.pressed}; border: 2px solid {c.pressed_border}; }}
 QPushButton:disabled {{ background: {c.disabled_background}; color: {c.disabled_text};

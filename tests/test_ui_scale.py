@@ -15,7 +15,7 @@ from smcapp.application.s21_use_case import CalculateS21UseCase
 from smcapp.application.use_cases import GenerateStructureUseCase
 from smcapp.infrastructure.geometry import IntegratedStructureCalculator
 from smcapp.infrastructure.svg_renderer import SvgRendererImpl
-from smcapp.ui.app import MainWindow, format_plot_coordinates
+from smcapp.ui.app import MainWindow, format_plot_coordinates, scaled_font
 from smcapp.ui.theme import THEME_COLORS, Theme, apply_application_theme, run_button_stylesheet
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets"
@@ -102,13 +102,18 @@ def test_parameter_group_titles_and_fields_are_larger(window: MainWindow) -> Non
     assert spin.lineEdit().fontMetrics().horizontalAdvance(spin.text()) > plain
 
 
-def test_run_s21_button_is_much_larger(window: MainWindow) -> None:
+def test_run_s21_button_is_prominent_but_compact(window: MainWindow) -> None:
     button = window._run_s21_button
     preview = next(b for b in window.actions_box.findChildren(QtWidgets.QPushButton) if b.text() == "Update Preview")
     assert button.font().bold()
-    assert button.font().pointSizeF() >= 1.5 * _base_points()
-    assert button.height() >= 1.5 * preview.height()
-    assert button.fontMetrics().height() >= 1.4 * preview.fontMetrics().height()
+    assert button.font().pointSizeF() >= 1.1 * _base_points()
+    assert button.fontMetrics().height() > preview.fontMetrics().height()
+    # The text fits, yet the button is about half its WP-043 size (owner's request).
+    assert button.height() >= button.fontMetrics().height() + 4
+    wp043_font = QtGui.QFontMetrics(scaled_font(1.6, bold=True))
+    wp043_height = round(wp043_font.height() * 2.2)
+    assert button.height() <= 0.6 * wp043_height
+    assert button.fontMetrics().height() <= 0.8 * wp043_font.height()
 
 
 def _button_colour(button: QtWidgets.QPushButton) -> QtGui.QColor:

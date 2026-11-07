@@ -109,8 +109,9 @@ SMC_SYMBOL_SIZE = 3.5
 # application font: 13 pt on macOS and 9 pt on Windows scale alike.
 PARAMETER_TITLE_SCALE = 1.3
 PARAMETER_FIELD_SCALE = 1.15
-RUN_BUTTON_SCALE = 1.6
-RUN_BUTTON_HEIGHT_LINES = 2.2
+# Run S21: bold and a little larger than the fields, about half the WP-043 size.
+RUN_BUTTON_SCALE = 1.15
+RUN_BUTTON_HEIGHT_LINES = 1.5
 PLOT_TITLE_SCALE = 1.4
 PLOT_AXIS_LABEL_SCALE = 1.25
 PLOT_TICK_SCALE = 1.15
