@@ -23,7 +23,7 @@ ASSETS = Path(__file__).resolve().parents[1] / "assets"
 FREQUENCIES = [100.0, 300.0, 500.0, 700.0, 900.0]
 # Fields edited between «Записать» and «Восстановить»: a line, a dielectric, a
 # material (synced EL1 → EL2) and a transformer (its n/dl are derived).
-EDITS = {"mex4_width_m": 3.5, "e_sub": 11.9, "tc_top_k": 8.7, "transf_5_w_end_m": 16.0}
+EDITS = {"mex4_width_m": 3.5, "e_sub": 11.9, "tc_top_k": 8.7, "mex02_2_w1_m": 16.0}
 
 
 class FakeS21UseCase:

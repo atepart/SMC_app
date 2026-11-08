@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 
 import pytest
 
 from smcapp.domain.s21_models import S21Config
-from smcapp.infrastructure.design_files import DESIGN_FORMAT, DESIGN_VERSION, DesignFileService
+from smcapp.infrastructure.design_files import DESIGN_FORMAT, DESIGN_VERSION, DesignFileService, to_legacy_parameters
 
 
 def test_design_file_round_trip_keeps_backend_units(tmp_path) -> None:
@@ -28,9 +27,9 @@ def test_design_file_round_trip_keeps_backend_units(tmp_path) -> None:
 
 @pytest.mark.parametrize("suffix", [".aocdesign", ".aocapp", ".json"])
 def test_legacy_design_loads_and_saves_as_new_format(tmp_path, suffix) -> None:
-    original = S21Config(d_top_m=0.725e-6, tc_bot_k=8.7, transf_7_dl_m=0.125e-6)
+    original = S21Config().with_values(d_top_m=0.725e-6, tc_bot_k=8.7, mex01_1_dl_m=0.125e-6)
     source = tmp_path / f"legacy{suffix}"
-    payload = {"format": "AOCapp Design", "version": 1, "parameters": asdict(original)}
+    payload = {"format": "AOCapp Design", "version": 1, "parameters": to_legacy_parameters(original)}
     source.write_text(json.dumps(payload), encoding="utf-8")
     service = DesignFileService()
     loaded = service.load(source)

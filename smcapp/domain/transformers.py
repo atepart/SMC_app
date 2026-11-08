@@ -1,49 +1,10 @@
-"""Presentation order and exact conversion to the legacy width-step model."""
+"""Exact conversion between transformer sizes and the legacy width-step model.
+
+Element order and numbering live in :mod:`smcapp.domain.circuit`.
+"""
 
 from dataclasses import dataclass
 from math import floor, isclose, isfinite
-
-# Physical order from FFO to SIS. IDs remain stable in SI parameter files.
-SCHEMATIC_SECTIONS = {
-    "Mex01": ((1, "T7"), (2, "MSL8"), (3, "T6")),
-    "Mex02": ((4, "MSL7"), (5, "T5"), (6, "MSL6"), (7, "T4")),
-    "Mex03": ((9, "T3"), (10, "MSL5"), (11, "T2"), (12, "MSL4"), (13, "T1")),
-}
-ELEMENT_ORDER = (
-    "T7",
-    "MSL8",
-    "T6",
-    "MSL7",
-    "T5",
-    "MSL6",
-    "T4",
-    "DC",
-    "T3",
-    "MSL5",
-    "T2",
-    "MSL4",
-    "T1",
-    "SIS-line",
-    "SIS",
-    "Ww3",
-    "Radial",
-    "Ww1",
-)
-ELEMENT_NUMBERS = {element: number for number, element in enumerate(ELEMENT_ORDER, 1)}
-
-
-def element_group(element: str) -> str:
-    """One display number shared by parameter groups, diagnostics and drawing."""
-    titles = {
-        "DC": "DC block",
-        "SIS-line": "Линия SIS",
-        "SIS": "SIS",
-        "Ww3": "Radial Stub line",
-        "Radial": "Radial Stub",
-        "Ww1": "Выходная линия",
-    }
-    title = titles.get(element, "Трансформатор" if element.startswith("T") else "Линия")
-    return f"{ELEMENT_NUMBERS[element]} · {title}"
 
 
 def transformer_length_m(w1_m: float, w2_m: float, n_um: float, dl_m: float) -> float:
@@ -65,14 +26,14 @@ class TransformerSteps:
 
 DL_MIN_UM = 0.5
 DL_MAX_UM = 1.5
-# GitHub #10: the corner transformers 7 and 9 at the DC block accept longer
-# slices; every other transformer keeps 0.5…1.5 µm.
+# GitHub #10: the corner transformers at the DC block (7 and 9 by default)
+# accept longer slices; every other transformer keeps 0.5…1.5 µm.
 CORNER_DL_MAX_UM = 3.0
 
 
-def transformer_dl_max_um(element: str) -> float:
-    """Upper slice length of the automatic n/dl choice for *element*."""
-    return CORNER_DL_MAX_UM if element in ("T4", "T3") else DL_MAX_UM
+def transformer_dl_max_um(corner: bool) -> float:
+    """Upper slice length of the automatic n/dl choice; *corner* — at the DC block."""
+    return CORNER_DL_MAX_UM if corner else DL_MAX_UM
 
 
 def derive_transformer_steps(

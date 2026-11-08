@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, fields as dataclass_fields, replace
-from typing import ClassVar
 
-from smcapp.domain.transformers import (
-    ELEMENT_ORDER,
-    SCHEMATIC_SECTIONS,
-    element_group,
-    transformer_dl_max_um,
-    transformer_length_m,
+from smcapp.domain.circuit import (
+    CORNERS,
+    DEFAULT_CORNER_LEFT,
+    DEFAULT_CORNER_RIGHT,
+    DEFAULT_MEX01,
+    DEFAULT_MEX02,
+    DEFAULT_MEX03,
+    ElementSlot,
+    LineSection,
+    Section,
+    TransformerSection,
+    element_by_prefix,
+    element_slots,
+    validate_sections,
+    with_element,
 )
+from smcapp.domain.transformers import transformer_dl_max_um
 
 
 @dataclass(frozen=True)
@@ -29,19 +39,40 @@ class ConfigFieldInfo:
     decimals: int = 3
     visible: bool = True
     element_id: str | None = None
+    number: int | None = None
 
 
-def _transformer_width_description(element: str, number: int, label: str) -> str:
+def _transformer_width_description(slot: ElementSlot, label: str) -> str:
     side = "слева (от ФФО)" if label == "W1" else "справа (к SIS)"
-    contact = {"T4": "W2", "T3": "W1"}.get(element)
+    contact = {"corner_left": "W2", "corner_right": "W1"}.get(slot.prefix)
     if contact is None:
-        return f"Элемент {number}: ширина {side}, до поправки dW."
+        return f"Элемент {slot.number}: ширина {side}, до поправки dW."
     face = (
         "ширина ступни на шлейфе DC block (по центру шлейфа); при W ≠ Wms виден выступ с обеих сторон"
         if label == contact
         else "торец к соседней линии, высота горизонтальной части"
     )
-    return f"Элемент {number} (угловой): ширина {side} — {face}, до поправки dW."
+    return f"Элемент {slot.number} (угловой): ширина {side} — {face}, до поправки dW."
+
+
+# UI field names of the list elements: ``<prefix>_<attribute>``.
+TRANSFORMER_UI_FIELDS = ("w1_m", "w2_m", "length_m")
+LINE_UI_FIELDS = ("width_m", "length_m")
+ELEMENT_FIELD_SCALE = 1e6
+FIXED_GROUPS = ("General", "Backend Grid", "EL1 Material", "EL2 Material", "Dielectrics", "Block 1 / Block 2")
+
+
+def split_element_field(
+    name: str, attributes: tuple[str, ...] = ("w1_m", "w2_m", "width_m", "length_m")
+) -> tuple[str, str] | None:
+    """``("mex03_2", "width_m")`` for an element field name, else ``None``."""
+    for attribute in attributes:
+        suffix = "_" + attribute
+        if name.endswith(suffix):
+            prefix = name[: -len(suffix)]
+            if prefix in CORNERS or re.fullmatch(r"mex0[123]_[1-9][0-9]*", prefix):
+                return prefix, attribute
+    return None
 
 
 # GitHub #10: decimals shown in each editor. Stored SI values are not rounded;
@@ -85,16 +116,6 @@ class S21Config:
     The class also stores presentation metadata so the desktop UI can render
     the parameters in grouped sections with tooltips instead of a flat list.
     """
-
-    GROUP_ORDER: ClassVar[tuple[str, ...]] = (
-        "General",
-        "Backend Grid",
-        "EL1 Material",
-        "EL2 Material",
-        "Dielectrics",
-        "Block 1 / Block 2",
-        *tuple(element_group(element) for element in ELEMENT_ORDER),
-    )
 
     temperature_k: float = field(
         default=4.2,
@@ -490,7 +511,7 @@ class S21Config:
         metadata={
             "label": "Lms",
             "group": "DC block",
-            "description": "Длина вертикального открытого МПЛ-шлейфа от ступни углового трансформатора 7/9 до открытого конца.",
+            "description": "Длина вертикального открытого МПЛ-шлейфа от ступни углового трансформатора {corner_left}/{corner_right} до открытого конца.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 10000.0,
@@ -629,7 +650,7 @@ class S21Config:
         metadata={
             "label": "L2 · L4",
             "group": "Radial Stub",
-            "description": "Элемент 14 «Линия SIS», второй участок (бывший Lw4): длина от SIS до Radial Stub line.",
+            "description": "Элемент {sis_line} «Линия SIS», второй участок (бывший Lw4): длина от SIS до Radial Stub line.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -643,7 +664,7 @@ class S21Config:
         metadata={
             "label": "W2 · W4",
             "group": "Radial Stub",
-            "description": "Элемент 14 «Линия SIS», второй участок (бывший Ww4): ширина до поправки dW.",
+            "description": "Элемент {sis_line} «Линия SIS», второй участок (бывший Ww4): ширина до поправки dW.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -658,7 +679,7 @@ class S21Config:
         metadata={
             "label": "L1",
             "group": "Radial Stub",
-            "description": "Элемент 14 «Линия SIS», первый участок (бывшая линия у SIS): длина от трансформатора 13 до SIS.",
+            "description": "Элемент {sis_line} «Линия SIS», первый участок (бывшая линия у SIS): длина от элемента {before_sis} до SIS.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -672,7 +693,7 @@ class S21Config:
         metadata={
             "label": "W1",
             "group": "Radial Stub",
-            "description": "Элемент 14 «Линия SIS», первый участок (бывшая линия у SIS): ширина до поправки dW; металл на схеме W1 + dW.",
+            "description": "Элемент {sis_line} «Линия SIS», первый участок (бывшая линия у SIS): ширина до поправки dW; металл на схеме W1 + dW.",
             "suffix": " um",
             "minimum": 0.1,
             "maximum": 1000.0,
@@ -682,532 +703,13 @@ class S21Config:
         },
     )
 
-    transf_1_w_start_m: float = field(
-        default=6.0e-6,
-        metadata={
-            "label": "T1 Wstart",
-            "group": "Block SIS",
-            "description": "Transformer 1 start width.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_1_w_end_m: float = field(
-        default=18.0e-6,
-        metadata={
-            "label": "T1 Wend",
-            "group": "Block SIS",
-            "description": "Transformer 1 end width.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_1_dwdl_um: float = field(
-        default=6.0,
-        metadata={
-            "label": "T1 dW/dL",
-            "group": "Block SIS",
-            "description": "Width slope of transformer 1, used to infer its transition length.",
-            "suffix": " um/um",
-            "minimum": 0.01,
-            "maximum": 100.0,
-            "step": 0.1,
-            "decimals": 3,
-        },
-    )
-    transf_1_dl_m: float = field(
-        default=0.9e-6,
-        metadata={
-            "label": "T1 dL",
-            "group": "Block SIS",
-            "description": "Internal discretization step for transformer 1 in the calculator.",
-            "suffix": " um",
-            "minimum": 0.001,
-            "maximum": 100.0,
-            "step": 0.01,
-            "decimals": 4,
-            "scale": 1e6,
-        },
-    )
-    msl_4_len_m: float = field(
-        default=27.0e-6,
-        metadata={
-            "label": "MSL4 L",
-            "group": "Block SIS",
-            "description": "Length of microstrip line section 4.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 10000.0,
-            "step": 0.5,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    msl_4_width_m: float = field(
-        default=18.0e-6,
-        metadata={
-            "label": "MSL4 W",
-            "group": "Block SIS",
-            "description": "Width of microstrip line section 4.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_2_w_start_m: float = field(
-        default=18.0e-6,
-        metadata={
-            "label": "T2 Wstart",
-            "group": "Block SIS",
-            "description": "Transformer 2 start width.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_2_w_end_m: float = field(
-        default=4.0e-6,
-        metadata={
-            "label": "T2 Wend",
-            "group": "Block SIS",
-            "description": "Transformer 2 end width.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_2_dwdl_um: float = field(
-        default=2.0,
-        metadata={
-            "label": "T2 dW/dL",
-            "group": "Block SIS",
-            "description": "Width slope of transformer 2, used to infer its transition length.",
-            "suffix": " um/um",
-            "minimum": 0.01,
-            "maximum": 100.0,
-            "step": 0.1,
-            "decimals": 3,
-        },
-    )
-    transf_2_dl_m: float = field(
-        default=0.9e-6,
-        metadata={
-            "label": "T2 dL",
-            "group": "Block SIS",
-            "description": "Internal discretization step for transformer 2 in the calculator.",
-            "suffix": " um",
-            "minimum": 0.001,
-            "maximum": 100.0,
-            "step": 0.01,
-            "decimals": 4,
-            "scale": 1e6,
-        },
-    )
-    msl_5_len_m: float = field(
-        default=10.0e-6,
-        metadata={
-            "label": "MSL5 L",
-            "group": "Block SIS",
-            "description": "Length of microstrip line section 5.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 10000.0,
-            "step": 0.5,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    msl_5_width_m: float = field(
-        default=4.0e-6,
-        metadata={
-            "label": "MSL5 W",
-            "group": "Block SIS",
-            "description": "Width of microstrip line section 5.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_3_w_start_m: float = field(
-        default=6.0e-6,
-        metadata={
-            "label": "T3 Wstart",
-            "group": "Block SIS",
-            "description": "Transformer 3 start width.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_3_w_end_m: float = field(
-        default=10.0e-6,
-        metadata={
-            "label": "T3 Wend",
-            "group": "Block SIS",
-            "description": "Transformer 3 end width.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_3_dwdl_um: float = field(
-        default=1.0,
-        metadata={
-            "label": "T3 dW/dL",
-            "group": "Block SIS",
-            "description": "Width slope of transformer 3, used to infer its transition length.",
-            "suffix": " um/um",
-            "minimum": 0.01,
-            "maximum": 100.0,
-            "step": 0.1,
-            "decimals": 3,
-        },
-    )
-    transf_3_dl_m: float = field(
-        default=1.2e-6,
-        metadata={
-            "label": "T3 dL",
-            "group": "Block SIS",
-            "description": "Internal discretization step for transformer 3 in the calculator.",
-            "suffix": " um",
-            "minimum": 0.001,
-            "maximum": 100.0,
-            "step": 0.01,
-            "decimals": 4,
-            "scale": 1e6,
-        },
-    )
-
-    transf_4_w_start_m: float = field(
-        default=10.0e-6,
-        metadata={
-            "label": "T4 Wstart",
-            "group": "Block SIS",
-            "description": "Transformer 4 start width.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_4_w_end_m: float = field(
-        default=6.0e-6,
-        metadata={
-            "label": "T4 Wend",
-            "group": "Block SIS",
-            "description": "Transformer 4 end width.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_4_dwdl_um: float = field(
-        default=1.0,
-        metadata={
-            "label": "T4 dW/dL",
-            "group": "Block SIS",
-            "description": "Width slope of transformer 4, used to infer its transition length.",
-            "suffix": " um/um",
-            "minimum": 0.01,
-            "maximum": 100.0,
-            "step": 0.1,
-            "decimals": 3,
-        },
-    )
-    transf_4_dl_m: float = field(
-        default=1.2e-6,
-        metadata={
-            "label": "T4 dL",
-            "group": "Block SIS",
-            "description": "Internal discretization step for transformer 4 in the calculator.",
-            "suffix": " um",
-            "minimum": 0.001,
-            "maximum": 100.0,
-            "step": 0.01,
-            "decimals": 4,
-            "scale": 1e6,
-        },
-    )
-    msl_6_len_m: float = field(
-        default=25.0e-6,
-        metadata={
-            "label": "MSL6 L",
-            "group": "Block SIS",
-            "description": "Length of microstrip line section 6.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 10000.0,
-            "step": 0.5,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    msl_6_width_m: float = field(
-        default=4.0e-6,
-        metadata={
-            "label": "MSL6 W",
-            "group": "Block SIS",
-            "description": "Width of microstrip line section 6.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_5_w_start_m: float = field(
-        default=6.0e-6,
-        metadata={
-            "label": "T5 Wstart",
-            "group": "Block SIS",
-            "description": "Transformer 5 start width.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_5_w_end_m: float = field(
-        default=18.0e-6,
-        metadata={
-            "label": "T5 Wend",
-            "group": "Block SIS",
-            "description": "Transformer 5 end width.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_5_dwdl_um: float = field(
-        default=3.0,
-        metadata={
-            "label": "T5 dW/dL",
-            "group": "Block SIS",
-            "description": "Width slope of transformer 5, used to infer its transition length.",
-            "suffix": " um/um",
-            "minimum": 0.01,
-            "maximum": 100.0,
-            "step": 0.1,
-            "decimals": 3,
-        },
-    )
-    transf_5_dl_m: float = field(
-        default=1.2e-6,
-        metadata={
-            "label": "T5 dL",
-            "group": "Block SIS",
-            "description": "Internal discretization step for transformer 5 in the calculator.",
-            "suffix": " um",
-            "minimum": 0.001,
-            "maximum": 100.0,
-            "step": 0.01,
-            "decimals": 4,
-            "scale": 1e6,
-        },
-    )
-    msl_7_len_m: float = field(
-        default=24.0e-6,
-        metadata={
-            "label": "MSL7 L",
-            "group": "Block SIS",
-            "description": "Length of microstrip line section 7.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 10000.0,
-            "step": 0.5,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    msl_7_width_m: float = field(
-        default=18.0e-6,
-        metadata={
-            "label": "MSL7 W",
-            "group": "Block SIS",
-            "description": "Width of microstrip line section 7.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_6_w_start_m: float = field(
-        default=18.0e-6,
-        metadata={
-            "label": "T6 Wstart",
-            "group": "Block SIS",
-            "description": "Transformer 6 start width, leading into the 50 Ohm wide section.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_6_w_end_m: float = field(
-        default=48.0e-6,
-        metadata={
-            "label": "T6 Wend",
-            "group": "Block SIS",
-            "description": "Transformer 6 end width, leading into the 50 Ohm wide section.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_6_dwdl_um: float = field(
-        default=3.0,
-        metadata={
-            "label": "T6 dW/dL",
-            "group": "Block SIS",
-            "description": "Width slope of transformer 6, used to infer its transition length.",
-            "suffix": " um/um",
-            "minimum": 0.01,
-            "maximum": 100.0,
-            "step": 0.1,
-            "decimals": 3,
-        },
-    )
-    transf_6_dl_m: float = field(
-        default=1.2e-6,
-        metadata={
-            "label": "T6 dL",
-            "group": "Block SIS",
-            "description": "Internal discretization step for transformer 6 in the calculator.",
-            "suffix": " um",
-            "minimum": 0.001,
-            "maximum": 100.0,
-            "step": 0.01,
-            "decimals": 4,
-            "scale": 1e6,
-        },
-    )
-    msl_8_len_m: float = field(
-        default=13.0e-6,
-        metadata={
-            "label": "MSL8 L",
-            "group": "Block SIS",
-            "description": "Length of the wide 50 Ohm line near the SIS block.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 10000.0,
-            "step": 0.5,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    msl_8_width_m: float = field(
-        default=50.0e-6,
-        metadata={
-            "label": "MSL8 W",
-            "group": "Block SIS",
-            "description": "Width of the wide 50 Ohm line near the SIS block.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_7_w_start_m: float = field(
-        default=49.0e-6,
-        metadata={
-            "label": "T7 Wstart",
-            "group": "Block SIS",
-            "description": "Transformer 7 start width from the 50 Ohm line toward the SIS connection.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_7_w_end_m: float = field(
-        default=14.0e-6,
-        metadata={
-            "label": "T7 Wend",
-            "group": "Block SIS",
-            "description": "Transformer 7 end width from the 50 Ohm line toward the SIS connection.",
-            "suffix": " um",
-            "minimum": 0.1,
-            "maximum": 1000.0,
-            "step": 0.1,
-            "decimals": 3,
-            "scale": 1e6,
-        },
-    )
-    transf_7_dwdl_um: float = field(
-        default=5.0,
-        metadata={
-            "label": "T7 dW/dL",
-            "group": "Block SIS",
-            "description": "Width slope of transformer 7, used to infer its transition length.",
-            "suffix": " um/um",
-            "minimum": 0.01,
-            "maximum": 100.0,
-            "step": 0.1,
-            "decimals": 3,
-        },
-    )
-    transf_7_dl_m: float = field(
-        default=1.2e-6,
-        metadata={
-            "label": "T7 dL",
-            "group": "Block SIS",
-            "description": "Internal discretization step for transformer 7 in the calculator.",
-            "suffix": " um",
-            "minimum": 0.001,
-            "maximum": 100.0,
-            "step": 0.01,
-            "decimals": 4,
-            "scale": 1e6,
-        },
-    )
+    # Mex01/Mex02/Mex03 in drawing order (FFO -> SIS) and the two corner
+    # transformers at the DC block, which always end Mex02 / start Mex03.
+    mex01: tuple[Section, ...] = DEFAULT_MEX01
+    mex02: tuple[Section, ...] = DEFAULT_MEX02
+    corner_left: TransformerSection = DEFAULT_CORNER_LEFT
+    corner_right: TransformerSection = DEFAULT_CORNER_RIGHT
+    mex03: tuple[Section, ...] = DEFAULT_MEX03
 
     s21_freq_start_ghz: float = field(
         default=100.0,
@@ -1358,7 +860,7 @@ class S21Config:
 
     def validate(self) -> None:
         """Validate core configuration values."""
-        errors = []
+        errors = validate_sections(self)
         if self.temperature_k <= 0:
             errors.append("temperature_k must be > 0")
         if self.film_freq_step_ghz <= 0:
@@ -1382,32 +884,44 @@ class S21Config:
         if errors:
             raise ValueError("; ".join(errors))
 
-    @classmethod
-    def ui_fields(cls) -> list[ConfigFieldInfo]:
-        """Return visible field definitions for the grouped desktop UI."""
-        result: list[ConfigFieldInfo] = []
-        for config_field in dataclass_fields(cls):
+    def element_slots(self) -> tuple[ElementSlot, ...]:
+        """Numbered elements of this configuration in drawing order."""
+        return element_slots(self)
+
+    def group_order(self) -> tuple[str, ...]:
+        """Parameter groups top to bottom; element groups follow the drawing."""
+        return (*FIXED_GROUPS, *(slot.group for slot in self.element_slots()))
+
+    def ui_fields(self) -> list[ConfigFieldInfo]:
+        """Return visible field definitions for the grouped desktop UI.
+
+        Element groups and numbers follow the current composition of
+        Mex01/Mex02/Mex03, so the result depends on the instance.
+        """
+        slots = self.element_slots()
+        by_id = {slot.element_id: slot for slot in slots}
+        numbers = {
+            "corner_left": by_id["T2.C"].number,
+            "corner_right": by_id["T3.C"].number,
+            "sis_line": by_id["SIS-line"].number,
+            "before_sis": by_id["SIS-line"].number - 1,
+        }
+        visible: list[ConfigFieldInfo] = []
+        for config_field in dataclass_fields(self):
             meta = dict(config_field.metadata)
-            if not meta:
+            if not meta or not meta.get("visible", True):
                 continue
-            result.append(
-                ConfigFieldInfo(
-                    name=config_field.name,
-                    label=meta["label"],
-                    group=meta["group"],
-                    description=meta["description"],
-                    suffix=meta.get("suffix", ""),
-                    minimum=meta.get("minimum", 0.0),
-                    maximum=meta.get("maximum", 10000.0),
-                    step=meta.get("step", 0.1),
-                    decimals=meta.get("decimals", 3),
-                    visible=meta.get("visible", True),
-                )
+            info = ConfigFieldInfo(
+                name=config_field.name,
+                label=meta["label"],
+                group=meta["group"],
+                description=meta["description"].format(**numbers),
+                suffix=meta.get("suffix", ""),
+                minimum=meta.get("minimum", 0.0),
+                maximum=meta.get("maximum", 10000.0),
+                step=meta.get("step", 0.1),
+                decimals=meta.get("decimals", 3),
             )
-        visible = []
-        for info in result:
-            if not info.visible or info.name.startswith(("transf_", "msl_")):
-                continue
             if info.suffix == " GHz":
                 info = replace(info, step=1.0 if "step" in info.name else 10.0)
             if info.suffix == " um" and info.group in {"DC block", "Radial Stub", "SIS"}:
@@ -1426,60 +940,13 @@ class S21Config:
             elif info.group == "Radial Stub":
                 element = "Radial"
             if element is not None:
-                info = replace(info, element_id=element, group=element_group(element))
+                slot = by_id[element]
+                info = replace(info, element_id=element, group=slot.group, number=slot.number)
             visible.append(info)
-        by_name = {info.name: info for info in result}
-        for sections in SCHEMATIC_SECTIONS.values():
-            for number, element in sections:
-                group = element_group(element)
-                if element.startswith("T"):
-                    prefix = f"transf_{element[1:]}"
-                    # Backend width direction is opposite to the drawing.
-                    for suffix, label in (("w_end_m", "W1"), ("w_start_m", "W2")):
-                        visible.append(
-                            replace(
-                                by_name[f"{prefix}_{suffix}"],
-                                label=label,
-                                group=group,
-                                element_id=element,
-                                step=0.5,
-                                description=_transformer_width_description(element, number, label),
-                            )
-                        )
-                    visible.append(
-                        ConfigFieldInfo(
-                            f"{prefix}_length_m",
-                            "L",
-                            group,
-                            "Общая длина трансформатора. Автоподбор целых n и |W1−W2|/n; "
-                            + f"dl=0.5…{transformer_dl_max_um(element):g} µm."
-                            + (
-                                " У угловых 7/9 это осевая линия L1+L2+L3: по горизонтали от торца, по диагонали"
-                                " к оси ступни и вниз по ступне до шлейфа."
-                                if element in {"T4", "T3"}
-                                else ""
-                            ),
-                            suffix=" um",
-                            minimum=0.1,
-                            maximum=10000,
-                            step=0.5,
-                            decimals=6,
-                            element_id=element,
-                        )
-                    )
-                else:
-                    prefix = f"msl_{element[3:]}"
-                    for suffix, label in (("width_m", "W"), ("len_m", "L")):
-                        visible.append(
-                            replace(
-                                by_name[f"{prefix}_{suffix}"],
-                                label=label,
-                                group=group,
-                                element_id=element,
-                                step=0.5,
-                                description=f"Элемент {number}: {'ширина линии до поправки dW' if label == 'W' else 'длина линии'}.",
-                            )
-                        )
+        for slot in slots:
+            if slot.prefix is None:
+                continue
+            visible.extend(self._element_fields(slot))
         general = (
             "s21_freq_start_ghz",
             "s21_freq_stop_ghz",
@@ -1490,26 +957,101 @@ class S21Config:
             "e_sub",
             "h_sub_m",
         )
-        # 14 · Линия SIS: the first (former SIS line) and second (former Lw4) parts.
+        # «Линия SIS»: the first (former SIS line) and second (former Lw4) parts.
         sis_line = ("mex4_len_m", "mex4_width_m", "zrad4_len_m", "zrad4_width_m")
         order = {name: index for index, name in enumerate(general + sis_line)}
         # Grouping is per group name, so only the order inside these groups changes.
         visible.sort(key=lambda info: order.get(info.name, -1))
         return [replace(info, decimals=_display_decimals(info)) for info in visible]
 
+    @staticmethod
+    def _element_fields(slot: ElementSlot) -> list[ConfigFieldInfo]:
+        common = dict(
+            group=slot.group,
+            suffix=" um",
+            minimum=0.1,
+            step=0.5,
+            element_id=slot.element_id,
+            number=slot.number,
+        )
+        if slot.kind == "line":
+            return [
+                ConfigFieldInfo(
+                    f"{slot.prefix}_width_m",
+                    "W",
+                    description=f"Элемент {slot.number}: ширина линии до поправки dW.",
+                    maximum=1000.0,
+                    **common,
+                ),
+                ConfigFieldInfo(
+                    f"{slot.prefix}_length_m",
+                    "L",
+                    description=f"Элемент {slot.number}: длина линии.",
+                    maximum=10000.0,
+                    **common,
+                ),
+            ]
+        corner = slot.kind == "corner"
+        return [
+            *(
+                ConfigFieldInfo(
+                    f"{slot.prefix}_{attribute}",
+                    label,
+                    description=_transformer_width_description(slot, label),
+                    maximum=1000.0,
+                    **common,
+                )
+                for attribute, label in (("w1_m", "W1"), ("w2_m", "W2"))
+            ),
+            ConfigFieldInfo(
+                f"{slot.prefix}_length_m",
+                "L",
+                description="Общая длина трансформатора. Автоподбор целых n и |W1−W2|/n; "
+                + f"dl=0.5…{transformer_dl_max_um(corner):g} µm."
+                + (
+                    " У угловых трансформаторов это осевая линия L1+L2+L3: по горизонтали от торца,"
+                    " по диагонали к оси ступни и вниз по ступне до шлейфа."
+                    if corner
+                    else ""
+                ),
+                maximum=10000.0,
+                **common,
+            ),
+        ]
+
+    def element_prefixes(self) -> tuple[str, ...]:
+        """UI prefixes of the list elements and corners in drawing order."""
+        return tuple(slot.prefix for slot in self.element_slots() if slot.prefix is not None)
+
+    def element(self, prefix: str) -> TransformerSection | LineSection:
+        """List element or corner by its UI prefix (``mex01_2``, ``corner_left``)."""
+        return element_by_prefix(self, prefix)
+
+    def with_values(self, **values: float) -> S21Config:
+        """A copy with plain fields and element fields replaced, in SI units.
+
+        Element fields are ``<prefix>_<attribute>``: ``w1_m``, ``w2_m``,
+        ``n_um``, ``dl_m`` of a transformer, ``width_m``, ``length_m`` of a line.
+        """
+        plain: dict[str, float] = {}
+        elements: dict[str, dict[str, float]] = {}
+        for name, value in values.items():
+            target = split_element_field(name, ("w1_m", "w2_m", "n_um", "dl_m", "width_m", "length_m"))
+            if target is None:
+                plain[name] = value
+            else:
+                elements.setdefault(target[0], {})[target[1]] = value
+        config = replace(self, **plain)
+        for prefix, changes in elements.items():
+            config = with_element(config, prefix, replace(config.element(prefix), **changes))
+        return config
+
     def ui_value(self, name: str) -> float:
         """Return a UI value, including the derived transformer length."""
-        if name.startswith("transf_") and name.endswith("_length_m"):
-            prefix = name.removesuffix("_length_m")
-            return (
-                transformer_length_m(
-                    getattr(self, f"{prefix}_w_start_m"),
-                    getattr(self, f"{prefix}_w_end_m"),
-                    getattr(self, f"{prefix}_dwdl_um"),
-                    getattr(self, f"{prefix}_dl_m"),
-                )
-                * 1e6
-            )
+        target = split_element_field(name)
+        if target is not None:
+            prefix, attribute = target
+            return getattr(self.element(prefix), attribute) * ELEMENT_FIELD_SCALE
         return getattr(self, name) * self.field_scale(name)
 
     @classmethod
@@ -1521,8 +1063,8 @@ class S21Config:
         ``1e12`` so the UI presents pF/µm² while the calculation continues to
         receive the legacy F/µm² value.
         """
-        if name.startswith("transf_") and name.endswith("_length_m"):
-            return 1e6
+        if split_element_field(name) is not None:
+            return ELEMENT_FIELD_SCALE
         for config_field in dataclass_fields(cls):
             if config_field.name == name:
                 return config_field.metadata.get("scale", 1.0)

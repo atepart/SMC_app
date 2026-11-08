@@ -23,7 +23,7 @@ from smcapp.api import (
 )
 from smcapp.api.radial_stub import RADIAL_STEP_M, radial_slice_count
 from smcapp.domain.s21_models import S21Config
-from smcapp.infrastructure.design_files import DesignFileService
+from smcapp.infrastructure.design_files import DesignFileService, to_legacy_parameters
 from smcapp.infrastructure.s21_calculator import S21CalculatorImpl, build_default_s21_calculator
 
 _HA_M = 1.47 * 1.07e-9 * 10  # anodic Al2O3 thickness of the worksheet
@@ -204,7 +204,7 @@ def test_d5_radial_stub_slices_from_outer_edge_to_neck(radius_um, count) -> None
 
 def test_retired_f0_parameter_is_accepted_and_not_saved_again(tmp_path) -> None:
     original = S21Config(temperature_k=4.4, radial_r_max_m=36e-6)
-    parameters = {**asdict(original), "f0_ghz": 650.0}
+    parameters = {**to_legacy_parameters(original), "f0_ghz": 650.0}
     source = tmp_path / "HD35-old.aocdesign"
     source.write_text(json.dumps({"format": "AOCapp Design", "version": 1, "parameters": parameters}))
 
@@ -214,4 +214,4 @@ def test_retired_f0_parameter_is_accepted_and_not_saved_again(tmp_path) -> None:
     assert not hasattr(loaded, "f0_ghz")
     saved = json.loads(service.save(tmp_path / "new.smcdesign", loaded).read_text())
     assert "f0_ghz" not in saved["parameters"]
-    assert "f0_ghz" not in {info.name for info in S21Config.ui_fields()}
+    assert "f0_ghz" not in {info.name for info in S21Config().ui_fields()}

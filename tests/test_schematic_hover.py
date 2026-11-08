@@ -53,7 +53,7 @@ def _inside(geometry: StructureGeometry, element_id: str) -> Point:
 
 
 @pytest.mark.parametrize(
-    ("element_id", "number"), [("T4", "7"), ("DC", "8"), ("SIS-line", "14"), ("Radial", "17"), ("SIS", "15")]
+    ("element_id", "number"), [("T2.C", "7"), ("DC", "8"), ("SIS-line", "14"), ("Radial", "17"), ("SIS", "15")]
 )
 def test_hit_test_finds_the_element_and_its_number(element_id, number) -> None:
     geometry = _overview()
@@ -74,7 +74,7 @@ def _centre(rect) -> Point:
 def test_hit_test_ignores_empty_places_and_the_port() -> None:
     geometry = _overview()
     hit_map = ElementHitMap.from_geometry(geometry)
-    line_4 = _element(geometry, "MSL7").bounds
+    line_4 = _element(geometry, "MSL2.1").bounds
     # Below line 4 (no metal), far outside the drawing, inside the DC-block U
     # between its stubs, and on the 50 Ω port.
     stub_left, stub_right = _element(geometry, "DC").polygon[:4], _element(geometry, "DC").polygon[4:8]
@@ -88,10 +88,10 @@ def test_hit_test_ignores_empty_places_and_the_port() -> None:
 def test_hit_test_tolerance_catches_thin_lines_and_labels_count() -> None:
     geometry = _overview()
     hit_map = ElementHitMap.from_geometry(geometry)
-    line_6 = _element(geometry, "MSL6").bounds
+    line_6 = _element(geometry, "MSL2.3").bounds
     above = Point(_centre(line_6).x, line_6.y - 2)
     assert hit_map.element_at(above) is None
-    assert hit_map.element_at(above, tolerance=3) == "MSL6"
+    assert hit_map.element_at(above, tolerance=3) == "MSL2.3"
     # The number label itself and the "SIS" label count as their elements.
     eight = next(c for c in geometry.callouts if c.label.text == "8").label.position
     assert hit_map.element_at(Point(eight.x, eight.y - 2)) == "DC"
@@ -172,15 +172,15 @@ def test_mouse_move_highlights_the_number_and_leave_hides_it(window: MainWindow)
     geometry = _overview(window._build_config())
     plate, arrow = view.highlight_items
     assert not plate.isVisible() and not arrow.isVisible()
-    _move(view, _inside(geometry, "T4"))
-    assert view.hovered_element == "T4"
+    _move(view, _inside(geometry, "T2.C"))
+    assert view.hovered_element == "T2.C"
     _assert_highlight_at(view, geometry, "7")
     assert plate.brush().color().name() == THEME_COLORS[window.theme].schematic_highlight
     _move(view, _inside(geometry, "Radial"))
     assert view.hovered_element == "Radial"
     _assert_highlight_at(view, geometry, "17")
     # Away from every element: no highlight.
-    line_4 = _element(geometry, "MSL7").bounds
+    line_4 = _element(geometry, "MSL2.1").bounds
     _move(view, Point(_centre(line_4).x, line_4.bottom + 15))
     assert view.hovered_element is None
     assert not plate.isVisible() and not arrow.isVisible()
@@ -230,8 +230,8 @@ def test_highlight_survives_redraw_theme_and_explanations(window: MainWindow) ->
     toggle.setChecked(True)
     QtWidgets.QApplication.processEvents()
     full = IntegratedStructureCalculator().calculate(window._build_config())
-    _move(view, _inside(full, "T4"))
-    assert view.hovered_element == "T4"
+    _move(view, _inside(full, "T2.C"))
+    assert view.hovered_element == "T2.C"
     _assert_highlight_at(view, full, "7")
     QtWidgets.QApplication.sendEvent(view.viewport(), QtCore.QEvent(QtCore.QEvent.Type.Leave))
     assert not view.highlight_items[0].isVisible()

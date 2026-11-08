@@ -13,8 +13,9 @@ from PySide6.QtTest import QTest
 
 from smcapp.application.s21_use_case import CalculateS21UseCase
 from smcapp.application.use_cases import GenerateStructureUseCase
+from smcapp.domain.circuit import element_numbers, element_order
 from smcapp.domain.s21_models import S21Config
-from smcapp.domain.transformers import ELEMENT_NUMBERS, ELEMENT_ORDER, element_group
+from smcapp.infrastructure.design_files import to_legacy_parameters
 from smcapp.infrastructure.geometry import IntegratedStructureCalculator
 from smcapp.infrastructure.svg_renderer import SvgRendererImpl
 from smcapp.ui.app import MainWindow
@@ -124,8 +125,8 @@ def test_issue_10_field_precision_and_general_block(parameter_window: MainWindow
     """GitHub #10: editors show the requested precision instead of long zero tails."""
     window, inputs = parameter_window, parameter_window._config_inputs
     shown = {name: spin.text() for name, spin in inputs.items()}
-    assert shown["msl_6_len_m"] == "25.0" and shown["msl_6_width_m"] == "4.0"
-    assert shown["transf_7_length_m"] == "9.6"
+    assert shown["mex02_3_length_m"] == "25.0" and shown["mex02_3_width_m"] == "4.0"
+    assert shown["mex01_1_length_m"] == "9.6"
     assert shown["lso_m"] == "8.0" and shown["dc_gap_m"] == "4.0" and shown["mex4_len_m"] == "3.0"
     assert shown["dw_m"] == "0.50"
     assert "f0_ghz" not in shown  # WP-046: Mex04 uses the sweep frequency
@@ -169,9 +170,9 @@ def test_issue_10_field_precision_and_general_block(parameter_window: MainWindow
     assert config.h12_m == 0.465729e-6 and config.h1_m == 1.65729e-7
     _enter_value(window, "h12_m", 470)
     assert window._build_config().h12_m == pytest.approx(470e-9)
-    _enter_value(window, "msl_6_width_m", 4.26)  # a digit beyond 0.1 µm is not accepted
-    assert inputs["msl_6_width_m"].text() == "4.2"
-    assert window._build_config().msl_6_width_m == pytest.approx(4.2e-6)
+    _enter_value(window, "mex02_3_width_m", 4.26)  # a digit beyond 0.1 µm is not accepted
+    assert inputs["mex02_3_width_m"].text() == "4.2"
+    assert window._build_config().mex02[2].width_m == pytest.approx(4.2e-6)
 
 
 def test_issue_10_radial_stub_line_and_output_line_names(parameter_window: MainWindow) -> None:
@@ -208,26 +209,26 @@ def test_issue_10_keyboard_moves_between_fields_and_blocks(parameter_window: Mai
         widget = focused()
         return next(name for name, spin in inputs.items() if widget in (spin, spin.lineEdit()))
 
-    start = inputs["msl_6_width_m"]
+    start = inputs["mex02_3_width_m"]
     window._focus_field(start)
     press(start, QtCore.Qt.Key.Key_Down, ctrl)
-    assert field_name() == "msl_6_len_m"
-    press(inputs["msl_6_len_m"], QtCore.Qt.Key.Key_Down, ctrl)
-    assert field_name() == "transf_4_w_end_m"  # into the next block, like Tab
-    press(inputs["transf_4_w_end_m"], QtCore.Qt.Key.Key_Up, ctrl)
-    assert field_name() == "msl_6_len_m"
-    assert inputs["msl_6_len_m"].lineEdit().selectedText() == inputs["msl_6_len_m"].text()
+    assert field_name() == "mex02_3_length_m"
+    press(inputs["mex02_3_length_m"], QtCore.Qt.Key.Key_Down, ctrl)
+    assert field_name() == "corner_left_w1_m"  # into the next block, like Tab
+    press(inputs["corner_left_w1_m"], QtCore.Qt.Key.Key_Up, ctrl)
+    assert field_name() == "mex02_3_length_m"
+    assert inputs["mex02_3_length_m"].lineEdit().selectedText() == inputs["mex02_3_length_m"].text()
 
     # Ctrl+Tab: the first field of the next block; Ctrl+Shift+Tab: previous block.
-    press(inputs["msl_6_len_m"], QtCore.Qt.Key.Key_Tab, ctrl)
-    assert field_name() == "transf_4_w_end_m"
-    press(inputs["transf_4_w_end_m"], QtCore.Qt.Key.Key_Tab, ctrl)
+    press(inputs["mex02_3_length_m"], QtCore.Qt.Key.Key_Tab, ctrl)
+    assert field_name() == "corner_left_w1_m"
+    press(inputs["corner_left_w1_m"], QtCore.Qt.Key.Key_Tab, ctrl)
     assert field_name() == "w_slot_m"
     press(inputs["w_slot_m"], QtCore.Qt.Key.Key_Backtab, ctrl | QtCore.Qt.KeyboardModifier.ShiftModifier)
-    assert field_name() == "transf_4_w_end_m"
+    assert field_name() == "corner_left_w1_m"
     # A collapsed block opens when it is reached.
     window._parameter_groups["8 · DC block"].setChecked(False)
-    press(inputs["transf_4_w_end_m"], QtCore.Qt.Key.Key_Tab, ctrl)
+    press(inputs["corner_left_w1_m"], QtCore.Qt.Key.Key_Tab, ctrl)
     assert field_name() == "w_slot_m" and window._parameter_groups["8 · DC block"].isChecked()
 
     # Plain arrows keep the fine step; Alt gives the coarse ×10 step.
@@ -312,12 +313,13 @@ def test_enter_rejects_reversed_plot_bounds(parameter_window: MainWindow) -> Non
 def test_all_element_fields_have_matching_numbers_and_external_units(parameter_window: MainWindow) -> None:
     window = parameter_window
     groups = [name for name in window._parameter_groups if " · " in name]
-    assert groups == [element_group(element) for element in ELEMENT_ORDER]
+    config = S21Config()
+    assert groups == [slot.group for slot in config.element_slots()]
     labels = {label.text() for label in window.findChildren(QtWidgets.QLabel)}
-    fields = S21Config.ui_fields()
+    fields = config.ui_fields()
     correction = next(info for info in fields if info.name == "dw_m")
     assert correction.element_id is None and correction.group == "General"
-    assert {info.element_id for info in fields if info.element_id} == set(ELEMENT_ORDER)
+    assert {info.element_id for info in fields if info.element_id} == set(element_order(config))
     for info in fields:
         spin = window._config_inputs[info.name]
         assert spin.suffix() == ""
@@ -325,7 +327,8 @@ def test_all_element_fields_have_matching_numbers_and_external_units(parameter_w
         if info.suffix:
             assert window._parameter_units[info.name].text()
         if info.element_id:
-            assert f"{ELEMENT_NUMBERS[info.element_id]} · {info.label}" in labels
+            assert info.number == element_numbers(config)[info.element_id]
+            assert f"{info.number} · {info.label}" in labels
             assert window._parameter_groups[info.group].isAncestorOf(spin)
 
 
@@ -344,7 +347,11 @@ def test_all_element_fields_have_matching_numbers_and_external_units(parameter_w
         "radial_r_max_m",
         "radial_angle_deg",
         *(f"zrad{i}_{suffix}" for i in (1, 3, 4) for suffix in ("width_m", "len_m")),
-        *(f"msl_{i}_{suffix}" for i in (4, 5, 6, 7, 8) for suffix in ("width_m", "len_m")),
+        *(
+            f"{prefix}_{suffix}"
+            for prefix in ("mex01_2", "mex02_1", "mex02_3", "mex03_1", "mex03_3")
+            for suffix in ("width_m", "length_m")
+        ),
     ],
 )
 def test_enter_updates_each_geometry_field(parameter_window: MainWindow, name) -> None:
@@ -358,7 +365,7 @@ def test_enter_updates_each_geometry_field(parameter_window: MainWindow, name) -
         QTest.keyClick(spin.lineEdit(), QtCore.Qt.Key_Return)
     displayed.assert_called_once()
     assert displayed.call_args.args[0] != original
-    assert getattr(window._build_config(), name) == pytest.approx(value / S21Config.field_scale(name))
+    assert window._build_config().ui_value(name) == pytest.approx(value)
 
 
 @pytest.mark.parametrize("width", [0.1, 9, 500])
@@ -482,9 +489,9 @@ def test_starting_calculation_does_not_clear_successful_results(parameter_window
 def test_issue_7_element_labels(parameter_window: MainWindow) -> None:
     assert "8 · DC block" in parameter_window._parameter_groups
     assert "DC Break" not in parameter_window._parameter_groups
-    assert parameter_window._transformer_status[7].text().startswith("n=5;")
-    parameter_window._config_inputs["transf_7_w_end_m"].setValue(15)
-    assert " µm; ступеней" not in parameter_window._transformer_status[7].text()
+    assert parameter_window._transformer_status["mex01_1"].text().startswith("n=5;")
+    parameter_window._config_inputs["mex01_1_w1_m"].setValue(15)
+    assert " µm; ступеней" not in parameter_window._transformer_status["mex01_1"].text()
 
 
 def test_schematic_details_toggle_keeps_overview_large(parameter_window: MainWindow) -> None:
@@ -568,7 +575,7 @@ def test_parameter_redraw_keeps_the_zoomed_element_in_view(parameter_window: Mai
     scale, centre = view.transform().m11(), _view_centre(view)
     old_box = view._renderer.viewBoxF()
     # A wider line 2 grows the drawing upwards and moves the viewBox origin.
-    _enter_value(parameter_window, "msl_8_width_m", 90)
+    _enter_value(parameter_window, "mex01_2_width_m", 90)
     assert view._renderer.viewBoxF().y() < old_box.y()
     assert view._zoom_level == 12
     assert view.transform().m11() == pytest.approx(scale)
@@ -586,12 +593,14 @@ def test_issue_10_zoomed_drawing_does_not_creep_when_values_toggle(parameter_win
     from smcapp.infrastructure.geometry import SIGNAL_INPUT
 
     window, view = parameter_window, parameter_window._view
-    _enter_value(window, "transf_4_w_end_m", 2)
-    _enter_value(window, "transf_4_w_start_m", 9)
-    _enter_value(window, "transf_4_length_m", 12)
+    _enter_value(window, "corner_left_w1_m", 2)
+    _enter_value(window, "corner_left_w2_m", 9)
+    _enter_value(window, "corner_left_length_m", 12)
     for _ in range(20):
         QtWidgets.QApplication.sendEvent(view.viewport(), _wheel_event(view.viewport()))
-    t4 = next(e for e in window._use_case.calculator.calculate(window._build_config()).elements if e.element_id == "T4")
+    t4 = next(
+        e for e in window._use_case.calculator.calculate(window._build_config()).elements if e.element_id == "T2.C"
+    )
     corner = QtCore.QPointF(t4.bounds.x, t4.bounds.y)
     view.centerOn(view._svg_to_scene(corner))
     QtWidgets.QApplication.processEvents()
@@ -603,7 +612,7 @@ def test_issue_10_zoomed_drawing_does_not_creep_when_values_toggle(parameter_win
 
     start = pixel(anchor), pixel(corner)
     for value in (10, 9) * 6:
-        _enter_value(window, "transf_4_w_start_m", value)
+        _enter_value(window, "corner_left_w2_m", value)
         assert pixel(anchor) == start[0]
     assert pixel(corner) == start[1]
 
@@ -613,7 +622,7 @@ def test_issue_10_zoomed_drawing_does_not_creep_when_values_toggle(parameter_win
     panned = pixel(anchor)
     assert panned != start[0]
     for value in (10, 9) * 3:
-        _enter_value(window, "transf_4_w_start_m", value)
+        _enter_value(window, "corner_left_w2_m", value)
         assert pixel(anchor) == panned
 
 
@@ -642,7 +651,7 @@ def test_issue_5_steps_and_sigma_keyboard_input(parameter_window: MainWindow) ->
         if name.endswith("_ghz"):
             assert spin.singleStep() == (1.0 if "step" in name else 10.0)
     assert inputs["sis_rn_area_ohm_um2"].singleStep() == 0.5
-    for name in ("w_slot_m", "l_slot_m", "sis_width_um", "radial_r_min_m", "transf_7_length_m", "msl_8_width_m"):
+    for name in ("w_slot_m", "l_slot_m", "sis_width_um", "radial_r_min_m", "mex01_1_length_m", "mex01_2_width_m"):
         assert inputs[name].singleStep() == 0.5
     sigma = inputs["sigma0_top"]
     assert sigma.value() == 18.0
@@ -660,49 +669,49 @@ def test_issue_6_order_conversion_and_invalid_length(parameter_window: MainWindo
     groups = [name for name in parameter_window._parameter_groups if " · " in name]
     assert [int(name.split()[0]) for name in groups] == list(range(1, 19))
     inputs = parameter_window._config_inputs
-    assert "transf_7_dwdl_um" not in inputs
-    assert inputs["transf_7_w_end_m"].value() == 14  # W1 on the drawing's left
-    assert inputs["transf_7_w_start_m"].value() == 49  # W2 on the right
-    original = parameter_window._build_config()
-    assert original.transf_7_dwdl_um == 5
-    assert original.transf_7_dl_m == 1.2e-6
+    assert "mex01_1_n_um" not in inputs
+    assert inputs["mex01_1_w1_m"].value() == 14  # W1 on the drawing's left
+    assert inputs["mex01_1_w2_m"].value() == 49  # W2 on the right
+    original = parameter_window._build_config().element("mex01_1")
+    assert original.n_um == 5
+    assert original.dl_m == 1.2e-6
 
-    inputs["transf_7_w_end_m"].setValue(18)
-    inputs["transf_7_w_start_m"].setValue(6)
-    inputs["transf_7_length_m"].setValue(7)
-    converted = parameter_window._build_config()
-    assert converted.transf_7_w_end_m == pytest.approx(18e-6)
-    assert converted.transf_7_w_start_m == pytest.approx(6e-6)
-    assert converted.transf_7_dwdl_um == 2
-    assert converted.transf_7_dl_m == pytest.approx(1e-6)
-    assert "ступеней: 7" in parameter_window._transformer_status[7].text()
-    inputs["transf_7_length_m"].setValue(100)
+    inputs["mex01_1_w1_m"].setValue(18)
+    inputs["mex01_1_w2_m"].setValue(6)
+    inputs["mex01_1_length_m"].setValue(7)
+    converted = parameter_window._build_config().element("mex01_1")
+    assert converted.w1_m == pytest.approx(18e-6)
+    assert converted.w2_m == pytest.approx(6e-6)
+    assert converted.n_um == 2
+    assert converted.dl_m == pytest.approx(1e-6)
+    assert "ступеней: 7" in parameter_window._transformer_status["mex01_1"].text()
+    inputs["mex01_1_length_m"].setValue(100)
     with patch.object(QtWidgets.QMessageBox, "warning") as warning:
         parameter_window._update_svg()
     assert "Элемент 1" in warning.call_args.args[2]
-    assert "нет целого n" in parameter_window._transformer_status[7].text()
+    assert "нет целого n" in parameter_window._transformer_status["mex01_1"].text()
 
 
 def test_issue_10_corner_transformers_accept_dl_up_to_3_um(parameter_window: MainWindow) -> None:
     """GitHub #10: 7 and 9 choose dl in 0.5…3 µm, the other transformers keep 1.5 µm."""
     inputs = parameter_window._config_inputs
     status = parameter_window._transformer_status
-    for index in (4, 3, 5):  # elements 7, 9 and, for comparison, 5
-        inputs[f"transf_{index}_w_end_m"].setValue(8)
-        inputs[f"transf_{index}_w_start_m"].setValue(10)
-        inputs[f"transf_{index}_length_m"].setValue(4.5)
+    for prefix in ("corner_left", "corner_right", "mex02_2"):  # elements 7, 9 and, for comparison, 5
+        inputs[f"{prefix}_w1_m"].setValue(8)
+        inputs[f"{prefix}_w2_m"].setValue(10)
+        inputs[f"{prefix}_length_m"].setValue(4.5)
     config = parameter_window._build_config()
-    for index in (4, 3):
-        assert status[index].text() == "n=2; ступеней: 2; dl=2.25 µm"
-        assert getattr(config, f"transf_{index}_dwdl_um") == 2
-        assert getattr(config, f"transf_{index}_dl_m") == pytest.approx(2.25e-6)
-    assert status[5].text() == "n=1; ступеней: 3; dl=1.5 µm"
+    for prefix in ("corner_left", "corner_right"):
+        assert status[prefix].text() == "n=2; ступеней: 2; dl=2.25 µm"
+        assert config.element(prefix).n_um == 2
+        assert config.element(prefix).dl_m == pytest.approx(2.25e-6)
+    assert status["mex02_2"].text() == "n=1; ступеней: 3; dl=1.5 µm"
 
-    inputs["transf_5_length_m"].setValue(9)
-    assert "dl от 0.5 до 1.5 µm" in status[5].text()
-    inputs["transf_5_length_m"].setValue(4.5)
-    inputs["transf_4_length_m"].setValue(12)
-    assert "dl от 0.5 до 3 µm" in status[4].text()
+    inputs["mex02_2_length_m"].setValue(9)
+    assert "dl от 0.5 до 1.5 µm" in status["mex02_2"].text()
+    inputs["mex02_2_length_m"].setValue(4.5)
+    inputs["corner_left_length_m"].setValue(12)
+    assert "dl от 0.5 до 3 µm" in status["corner_left"].text()
     with patch.object(QtWidgets.QMessageBox, "warning") as warning:
         parameter_window._update_svg()
     assert "Элемент 7" in warning.call_args.args[2]
@@ -713,9 +722,9 @@ def test_preview_button_uses_current_fields_for_dimensions(parameter_window: Mai
     window._schematic_details.setChecked(True)
     inputs = window._config_inputs
     for name, value in {
-        "transf_1_w_end_m": 22,
-        "transf_1_w_start_m": 8,
-        "transf_1_length_m": 8,
+        "mex03_4_w1_m": 22,
+        "mex03_4_w2_m": 8,
+        "mex03_4_length_m": 8,
         "mex4_len_m": 12,
         "mex4_width_m": 9,
         "dw_m": 0.75,
@@ -743,16 +752,15 @@ def test_preview_button_uses_current_fields_for_dimensions(parameter_window: Mai
 def test_legacy_transformer_round_trip_preserves_discretization(parameter_window: MainWindow, tmp_path) -> None:
     from smcapp.domain.s21_models import S21Config
 
-    legacy = S21Config(transf_7_dwdl_um=1.7, transf_7_dl_m=0.125e-6, transf_7_w_start_m=49.123456e-6)
+    legacy = S21Config().with_values(mex01_1_n_um=1.7, mex01_1_dl_m=0.125e-6, mex01_1_w2_m=49.123456e-6)
     source = tmp_path / "legacy.smcdesign"
     destination = tmp_path / "saved.smcdesign"
     parameter_window._design_files.save(source, legacy)
     parameter_window.load_design_from_path(source)
     parameter_window.save_design_to_path(destination)
     saved = parameter_window._design_files.load(destination)
-    for name, value in legacy.__dict__.items():
-        if name.startswith("transf_"):
-            assert getattr(saved, name) == value
+    for prefix in saved.element_prefixes():
+        assert saved.element(prefix) == legacy.element(prefix)
 
 
 def test_s21_output_filename_folder_and_worker(parameter_window: MainWindow, tmp_path) -> None:
@@ -849,7 +857,7 @@ def test_save_dialog_uses_new_format_and_selected_extension(
     assert "*.aocdesign" not in dialog.call_args.args[3]
     payload = json.loads(target.with_suffix(suffix).read_text())
     assert payload["format"] == "SMCapp Design"
-    assert payload["parameters"] == parameter_window._build_config().__dict__
+    assert payload["parameters"] == to_legacy_parameters(parameter_window._build_config())
     assert parameter_window.windowTitle().startswith("smcapp ")
 
 
@@ -859,7 +867,7 @@ def test_open_dialog_accepts_legacy_and_new_files(parameter_window, tmp_path, su
     payload = {
         "format": "SMCapp Design" if suffix == ".smcdesign" else "AOCapp Design",
         "version": 1,
-        "parameters": {**S21Config().__dict__, "tc_bot_k": 8.7},
+        "parameters": {**to_legacy_parameters(S21Config()), "tc_bot_k": 8.7},
     }
     target.write_text(json.dumps(payload))
     with patch.object(QtWidgets.QFileDialog, "getOpenFileName", return_value=(str(target), "")) as dialog:

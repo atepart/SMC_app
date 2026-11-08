@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from math import cos, hypot, isfinite, radians, sin
 
 from smcapp.api.dc_block import base_distance_m
+from smcapp.domain.circuit import CORNER_IDS, TransformerSection, element_numbers
 from smcapp.domain.models import (
     Callout,
     CircleShape,
@@ -30,7 +31,6 @@ from smcapp.domain.models import (
 )
 from smcapp.domain.ports import StructureCalculator
 from smcapp.domain.s21_models import S21Config
-from smcapp.domain.transformers import ELEMENT_NUMBERS, SCHEMATIC_SECTIONS, transformer_length_m
 from smcapp.infrastructure.callouts import CalloutPlacer
 
 LENGTH_SCALE = WIDTH_SCALE = 2.0
@@ -50,8 +50,10 @@ SEAM_WIDTH = 0.6
 # (the foot of a corner transformer), the slot top 1 µm below the stub tops.
 FOOT_UM = 1.0
 SLOT_OFFSET_UM = 1.0
-# Transformers 7 and 9 bend from the line axis down onto the DC-block stubs.
-CORNER_TRANSFORMERS = ("T4", "T3")
+# The corner transformers (7 and 9 by default) bend from the line axis down
+# onto the DC-block stubs.
+LEFT_CORNER, RIGHT_CORNER = CORNER_IDS["corner_left"], CORNER_IDS["corner_right"]
+CORNER_TRANSFORMERS = (LEFT_CORNER, RIGHT_CORNER)
 # The FFO signal enters at the left face of element 1; it never moves, so the
 # viewer keeps this point in place while parameters change (GitHub #10).
 SIGNAL_INPUT = Point(28.0, 0.0)
@@ -222,46 +224,48 @@ class IntegratedStructureCalculator(StructureCalculator):
             raise ValueError("Угол радиального шлейфа должен лежать между 0 и 360°")
         canvas = _Canvas()
         dw, y, x = _um(config.dw_m), SIGNAL_INPUT.y, SIGNAL_INPUT.x
-        for matrix, sections in SCHEMATIC_SECTIONS.items():
-            for number, name in sections:
-                if name in CORNER_TRANSFORMERS:
+        numbers = element_numbers(config)
+        for section in ("mex01", "mex02", "dc", "mex03"):
+            if section == "dc":
+                x = self._dc_block(canvas, config, x, y, dw)
+                continue
+            for slot in config.element_slots():
+                if slot.section != section:
                     continue
-                if name.startswith("T"):
-                    i = int(name[1:])
-                    w1 = _um(getattr(config, f"transf_{i}_w_end_m"))
-                    w2 = _um(getattr(config, f"transf_{i}_w_start_m"))
-                    length = self._transformer_physical_length_um(
-                        getattr(config, f"transf_{i}_w_start_m"),
-                        getattr(config, f"transf_{i}_w_end_m"),
-                        getattr(config, f"transf_{i}_dwdl_um"),
-                        getattr(config, f"transf_{i}_dl_m"),
-                    )
-                    x = self._strip(canvas, name, f"{number} · Трансформатор", x, y, length, w1, w2, dw, number)
-                else:
-                    i = int(name[3:])
-                    w = _um(getattr(config, f"msl_{i}_width_m"))
+                element = getattr(config, section)[slot.index]
+                if isinstance(element, TransformerSection):
                     x = self._strip(
                         canvas,
-                        name,
-                        f"{number} · Линия",
+                        slot.element_id,
+                        f"{slot.number} · Трансформатор",
                         x,
                         y,
-                        _um(getattr(config, f"msl_{i}_len_m")),
+                        _um(element.length_m),
+                        _um(element.w1_m),
+                        _um(element.w2_m),
+                        dw,
+                        slot.number,
+                    )
+                else:
+                    w = _um(element.width_m)
+                    x = self._strip(
+                        canvas,
+                        slot.element_id,
+                        f"{slot.number} · Линия",
+                        x,
+                        y,
+                        _um(element.length_m),
                         w,
                         w,
                         dw,
-                        number,
+                        slot.number,
                     )
-            if matrix == "Mex02":
-                x = self._dc_block(canvas, config, x, y, dw)
         x = self._radial_and_sis(canvas, config, x, y, dw)
         canvas.elements = [
             replace(
                 element,
-                number=ELEMENT_NUMBERS[element.element_id],
-                title=f"{ELEMENT_NUMBERS[element.element_id]} · {element.title}"
-                if element.number is None
-                else element.title,
+                number=numbers[element.element_id],
+                title=f"{numbers[element.element_id]} · {element.title}" if element.number is None else element.title,
             )
             for element in canvas.elements
         ]
@@ -320,40 +324,34 @@ class IntegratedStructureCalculator(StructureCalculator):
         * ``Ls`` — arm length from the top edge of the slot;
         * ``Pibase = 2·Wms + 2·Lso + gap`` — between the inner arm edges.
         """
-        widths = {
-            name: (
-                (_um(getattr(config, f"transf_{name[1:]}_w_end_m")) + dw) * WIDTH_SCALE,
-                (_um(getattr(config, f"transf_{name[1:]}_w_start_m")) + dw) * WIDTH_SCALE,
-            )
-            for name in CORNER_TRANSFORMERS
-        }
-        (t4_line, t4_contact), (t3_contact, t3_line) = widths["T4"], widths["T3"]
+        left_corner, right_corner = config.corner_left, config.corner_right
+        # Left corner: W1 on its line, W2 on the stub; right corner the other way.
+        t4_line, t4_contact = ((_um(w) + dw) * WIDTH_SCALE for w in (left_corner.w1_m, left_corner.w2_m))
+        t3_contact, t3_line = ((_um(w) + dw) * WIDTH_SCALE for w in (right_corner.w1_m, right_corner.w2_m))
         lengths = {
-            name: self._transformer_physical_length_um(
-                getattr(config, f"transf_{name[1:]}_w_start_m"),
-                getattr(config, f"transf_{name[1:]}_w_end_m"),
-                getattr(config, f"transf_{name[1:]}_dwdl_um"),
-                getattr(config, f"transf_{name[1:]}_dl_m"),
-            )
-            * LENGTH_SCALE
-            for name in CORNER_TRANSFORMERS
+            LEFT_CORNER: _um(left_corner.length_m) * LENGTH_SCALE,
+            RIGHT_CORNER: _um(right_corner.length_m) * LENGTH_SCALE,
         }
+        numbers = element_numbers(config)
         stub_w = (_um(config.w_ms_m) + dw) * WIDTH_SCALE
         stub_l = _um(config.l_ms_m) * LENGTH_SCALE
         gap = _um(config.dc_gap_m) * WIDTH_SCALE
         slot_w = (_um(config.w_slot_m) - dw) * WIDTH_SCALE
         if (t4_contact + t3_contact) / 2 >= stub_w + gap:
             raise ValueError(
-                "Трансформаторы 7 и 9 смыкаются над зазором DC block: "
-                "(W2(7) + W1(9))/2 с dW должно быть меньше Wms + dW + зазор"
+                f"Трансформаторы {numbers[LEFT_CORNER]} и {numbers[RIGHT_CORNER]} смыкаются над зазором DC block: "
+                f"(W2({numbers[LEFT_CORNER]}) + W1({numbers[RIGHT_CORNER]}))/2 с dW должно быть меньше Wms + dW + зазор"
             )
-        # Both stubs start on one plane below every adjacent line (6, 7, 9, 10),
-        # so a wider neighbouring line never touches the side of a stub.
-        neighbours = [(_um(config.msl_6_width_m) + dw) * WIDTH_SCALE, (_um(config.msl_5_width_m) + dw) * WIDTH_SCALE]
+        # Both stubs start on one plane below every element next to them (6, 7,
+        # 9, 10 by default), so a wider neighbour never touches a stub side.
+        neighbours = [
+            (_um(config.mex02[-1].right_width_m) + dw) * WIDTH_SCALE,
+            (_um(config.mex03[0].left_width_m) + dw) * WIDTH_SCALE,
+        ]
         depth = max(t4_line, t3_line, *neighbours) / 2 + FOOT_UM * WIDTH_SCALE
         contact_y = y + depth
-        left_layout = _CornerLayout.solve(t4_line, t4_contact, depth, lengths["T4"])
-        right_layout = _CornerLayout.solve(t3_line, t3_contact, depth, lengths["T3"])
+        left_layout = _CornerLayout.solve(t4_line, t4_contact, depth, lengths[LEFT_CORNER])
+        right_layout = _CornerLayout.solve(t3_line, t3_contact, depth, lengths[RIGHT_CORNER])
         # Feet are centred on the stubs.
         outer_l = x + left_layout.foot + t4_contact / 2 - stub_w / 2
         inner_l = outer_l + stub_w
@@ -363,8 +361,8 @@ class IntegratedStructureCalculator(StructureCalculator):
 
         corners = {}
         for name, joint, direction, line_w, contact_w, layout, number in (
-            ("T4", x, 1, t4_line, t4_contact, left_layout, 7),
-            ("T3", right_joint, -1, t3_line, t3_contact, right_layout, 9),
+            (LEFT_CORNER, x, 1, t4_line, t4_contact, left_layout, numbers[LEFT_CORNER]),
+            (RIGHT_CORNER, right_joint, -1, t3_line, t3_contact, right_layout, numbers[RIGHT_CORNER]),
         ):
             contour, centre = _corner_points(joint, direction, y, line_w, contact_w, depth, layout)
             canvas.polygon(contour, TRANSFORMER_FILL)
@@ -417,11 +415,8 @@ class IntegratedStructureCalculator(StructureCalculator):
             contour, centre, line_w, contact_w, layout, number, joint = corners[name]
             l1, l2, l3 = (piece / LENGTH_SCALE for piece in (layout.l1, layout.l2, layout.l3))
             length = lengths[name] / LENGTH_SCALE
-            line_label, contact_label = ("W1", "W2") if name == "T4" else ("W2", "W1")
-            raw = {
-                "W1": _um(getattr(config, f"transf_{name[1:]}_w_end_m")),
-                "W2": _um(getattr(config, f"transf_{name[1:]}_w_start_m")),
-            }
+            corner = left_corner if name == LEFT_CORNER else right_corner
+            raw = {"W1": _um(corner.w1_m), "W2": _um(corner.w2_m)}
             params = (
                 ElementParameter("W1", raw["W1"]),
                 ElementParameter("W2", raw["W2"]),
@@ -437,15 +432,15 @@ class IntegratedStructureCalculator(StructureCalculator):
                     "Трансформатор · угловой",
                     bounds_from_points(contour),
                     params,
-                    input_port=port if name == "T4" else None,
-                    output_port=port if name == "T3" else None,
+                    input_port=port if name == LEFT_CORNER else None,
+                    output_port=port if name == RIGHT_CORNER else None,
                     polygon=tuple(contour),
                     auxiliary_lines=tuple(
                         LineShape(a, b, stroke=CENTRE_LINE_COLOR, stroke_width=1.0) for a, b in zip(centre, centre[1:])
                     ),
                 )
             )
-            if name == "T4":
+            if name == LEFT_CORNER:
                 params = tuple(
                     ElementParameter(label, _um(getattr(config, field_name)))
                     for label, field_name in (
@@ -866,7 +861,7 @@ class IntegratedStructureCalculator(StructureCalculator):
     ) -> None:
         """Corner transformer with the top of its stub and the L1/L2/L3 centre line."""
         values = {p.label: p.value for p in element.parameters}
-        left_side = element.element_id == "T4"
+        left_side = element.element_id == LEFT_CORNER
         stub = dc.polygon[:4] if left_side else dc.polygon[4:]
         contour = element.polygon
         contact_y = stub[0].y
@@ -1146,9 +1141,3 @@ class IntegratedStructureCalculator(StructureCalculator):
                 ),
             )
         )
-
-    @staticmethod
-    def _transformer_physical_length_um(
-        start_width_m: float, end_width_m: float, width_step_um: float, length_step_m: float
-    ) -> float:
-        return _um(transformer_length_m(start_width_m, end_width_m, width_step_um, length_step_m))

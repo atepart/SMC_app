@@ -44,8 +44,8 @@ def test_impossible_input_is_rejected(w1, w2, length) -> None:
         derive_transformer_steps(w1 * 1e-6, w2 * 1e-6, length * 1e-6)
 
 
-def _steps(w1, w2, length, element):
-    steps = derive_transformer_steps(w1 * 1e-6, w2 * 1e-6, length * 1e-6, max_dl_um=transformer_dl_max_um(element))
+def _steps(w1, w2, length, corner: bool):
+    steps = derive_transformer_steps(w1 * 1e-6, w2 * 1e-6, length * 1e-6, max_dl_um=transformer_dl_max_um(corner))
     return steps.n_um, round(steps.dl_m * 1e6, 9)
 
 
@@ -61,20 +61,18 @@ def _steps(w1, w2, length, element):
 )
 def test_corner_transformers_accept_dl_up_to_3_um(w1, w2, length, corner, other) -> None:
     """GitHub #10: elements 7 and 9 accept dl = 0.5…3 µm, the others 0.5…1.5 µm."""
-    for element in ("T4", "T3"):
-        assert _steps(w1, w2, length, element) == corner
-    for element in ("T1", "T2", "T5", "T6", "T7"):
-        if other is None:
-            with pytest.raises(ValueError, match="dl от 0.5 до 1.5 µm"):
-                _steps(w1, w2, length, element)
-        else:
-            assert _steps(w1, w2, length, element) == other
+    assert _steps(w1, w2, length, True) == corner
+    if other is None:
+        with pytest.raises(ValueError, match="dl от 0.5 до 1.5 µm"):
+            _steps(w1, w2, length, False)
+    else:
+        assert _steps(w1, w2, length, False) == other
 
 
 @pytest.mark.parametrize("w1,w2,length", [(8, 10, 9.03), (8, 10, 12), (6, 10, 0.4)])
 def test_corner_transformers_still_reject_dl_outside_0_5_to_3_um(w1, w2, length) -> None:
     with pytest.raises(ValueError, match="dl от 0.5 до 3 µm"):
-        _steps(w1, w2, length, "T4")
+        _steps(w1, w2, length, True)
 
 
 def test_default_limit_is_unchanged() -> None:

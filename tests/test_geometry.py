@@ -10,9 +10,9 @@ from xml.etree import ElementTree
 import pytest
 from numpy import arange
 
+from smcapp.domain.circuit import TransformerSection, element_numbers
 from smcapp.domain.models import Point, Rect, StructureGeometry, SvgColorScheme, TextLabel
 from smcapp.domain.s21_models import S21Config
-from smcapp.domain.transformers import ELEMENT_NUMBERS
 from smcapp.infrastructure.callouts import point_in_polygon, segment_hits_box, segments_intersect, text_box
 from smcapp.infrastructure.geometry import DC_FILL, LENGTH_SCALE, SLOT_FILL, WIDTH_SCALE, IntegratedStructureCalculator
 from smcapp.infrastructure.svg_renderer import DARK_SVG_SCHEME, SvgRendererImpl
@@ -50,7 +50,8 @@ def test_preview_contains_every_section_without_matrix_frames() -> None:
 
 
 def test_transformer_length_matches_backend_slice_formula() -> None:
-    assert IntegratedStructureCalculator._transformer_physical_length_um(6e-6, 18e-6, 6, 0.9e-6) == pytest.approx(2.7)
+    transformer = TransformerSection(18e-6, 6e-6, 6, 0.9e-6)  # element 13 by default
+    assert transformer.length_m * 1e6 == pytest.approx(2.7)
 
 
 def test_svg_has_element_dimensions_and_no_calculation_boxes() -> None:
@@ -107,9 +108,11 @@ def test_qt_renders_multiline_parameters_on_separate_baselines() -> None:
 
 
 def test_dimensions_use_raw_inputs_and_corrected_metal_widths() -> None:
-    config = S21Config(dw_m=0.75e-6, msl_8_width_m=41e-6, msl_8_len_m=23e-6, w_slot_m=4e-6, l_slot_m=37e-6)
+    config = S21Config().with_values(
+        dw_m=0.75e-6, mex01_2_width_m=41e-6, mex01_2_length_m=23e-6, w_slot_m=4e-6, l_slot_m=37e-6
+    )
     geometry = IntegratedStructureCalculator().calculate(config)
-    line = _elements(geometry)["MSL8"]
+    line = _elements(geometry)["MSL1.2"]
     assert _parameters(line) == pytest.approx({"W": 41, "L": 23})
     assert line.input_port.width == pytest.approx(41.75 * 2)
     assert line.bounds.width == pytest.approx(23 * 2)
@@ -164,7 +167,7 @@ def _outline_vertical_spans(overview, x: float) -> list[tuple[float, float]]:
         S21Config(),
         # Different widths on each side: the seam spans only the shared face.
         S21Config(mex4_width_m=9e-6, zrad4_width_m=5e-6, zrad3_width_m=7e-6, zrad1_width_m=3e-6),
-        S21Config(mex4_width_m=3e-6, zrad4_width_m=8e-6, transf_1_w_start_m=4e-6),
+        S21Config().with_values(mex4_width_m=3e-6, zrad4_width_m=8e-6, mex03_4_w2_m=4e-6),
     ],
 )
 def test_every_boundary_near_sis_has_exactly_one_seam_across_the_shared_face(config) -> None:
@@ -175,8 +178,8 @@ def test_every_boundary_near_sis_has_exactly_one_seam_across_the_shared_face(con
     first, second = elements["SIS-line"].auxiliary_rects
     joins = {
         "13|14": (
-            elements["T1"].output_port.center.x,
-            elements["T1"].output_port.width,
+            elements["T3.4"].output_port.center.x,
+            elements["T3.4"].output_port.width,
             elements["SIS-line"].input_port.width,
         ),
         "14 L1|L2": (first.right, first.height, second.height),
@@ -233,8 +236,8 @@ def test_sis_line_dimensions_use_its_editable_fields_not_sis_model_width() -> No
 EXTREME_CONFIGS = [
     S21Config(),
     # GitHub #10: a vanishing line 2 and huge radial fans must not pile numbers up.
-    S21Config(msl_8_len_m=1e-9, radial_r_max_m=90e-6, l_slot_m=80e-6),
-    S21Config(msl_8_len_m=1e-9, radial_r_max_m=90e-6, radial_angle_deg=300),
+    S21Config().with_values(mex01_2_length_m=1e-9, radial_r_max_m=90e-6, l_slot_m=80e-6),
+    S21Config().with_values(mex01_2_length_m=1e-9, radial_r_max_m=90e-6, radial_angle_deg=300),
 ]
 
 
@@ -290,7 +293,7 @@ def test_numbers_sit_next_to_their_elements_with_arrows_to_the_edge(config) -> N
     numbers = [c for c in overview.callouts if c.label.text.isdigit()]
     assert sorted(int(c.label.text) for c in numbers) == list(range(1, 19))
     assert {c.label.text: c.element_id for c in numbers} == {
-        str(ELEMENT_NUMBERS[element_id]): element_id for element_id in elements
+        str(element_numbers(config)[element_id]): element_id for element_id in elements
     }
     sis = [c for c in overview.callouts if c.label.text == "SIS"]
     assert len(sis) == 1 and sis[0].element_id == "SIS"
@@ -385,36 +388,39 @@ def test_radial_arcs_use_radius_angle_and_exact_shared_join_points(angle) -> Non
         assert actual_end.y == pytest.approx(end.y, abs=1e-9)
         assert f"A76,76 0 {int(angle > 180)}" in path.data
     # No extra flange before the first taper.
-    first = elements["T7"].bounds.x
+    first = elements["T1.1"].bounds.x
     assert not any(rect.rect.right <= first for rect in geometry.overview.rects)
 
 
 def test_every_transformer_size_matches_actual_backend_slices() -> None:
+    # The seven transformers (former T1…T7: elements 13, 11, 9, 7, 5, 3, 1).
+    prefixes = ("mex03_4", "mex03_2", "corner_right", "corner_left", "mex02_2", "mex01_3", "mex01_1")
     values = {}
-    for i in range(1, 8):
+    for i, prefix in enumerate(prefixes, 1):
         values.update(
             {
-                f"transf_{i}_w_start_m": (6 + i) * 1e-6,
-                f"transf_{i}_w_end_m": (16 + i) * 1e-6,
-                f"transf_{i}_dwdl_um": 2,
-                f"transf_{i}_dl_m": (0.5 + i * 0.1) * 1e-6,
+                f"{prefix}_w2_m": (6 + i) * 1e-6,
+                f"{prefix}_w1_m": (16 + i) * 1e-6,
+                f"{prefix}_n_um": 2,
+                f"{prefix}_dl_m": (0.5 + i * 0.1) * 1e-6,
             }
         )
-    # Wide stubs keep the 19.5 µm contact of T3 clear of T4 across the gap.
-    config = S21Config(w_ms_m=20e-6, **values)
+    # Wide stubs keep the 19.5 µm contact of the right corner clear of the left one.
+    config = S21Config().with_values(w_ms_m=20e-6, **values)
     geometry = IntegratedStructureCalculator().calculate(config)
     elements = _elements(geometry)
-    for i in range(1, 8):
-        element = elements[f"T{i}"]
-        w1, w2 = getattr(config, f"transf_{i}_w_end_m"), getattr(config, f"transf_{i}_w_start_m")
-        dl = getattr(config, f"transf_{i}_dl_m")
+    slots = {slot.prefix: slot for slot in config.element_slots()}
+    for prefix in prefixes:
+        element = elements[slots[prefix].element_id]
+        w1, w2 = config.element(prefix).w1_m, config.element(prefix).w2_m
+        dl = config.element(prefix).dl_m
         length = len(arange(min(w1, w2), max(w1, w2) + 0.01e-6, 2e-6)) * dl * 1e6
-        assert element.number == ELEMENT_NUMBERS[f"T{i}"]
+        assert element.number == slots[prefix].number
         parameters = _parameters(element)
         assert {k: parameters[k] for k in ("W1", "W2", "L")} == pytest.approx(
             {"W1": w1 * 1e6, "W2": w2 * 1e6, "L": length}
         )
-        if i in (3, 4):
+        if prefix.startswith("corner"):
             continue  # corner transformers: see the dedicated tests below
         assert element.input_port.width == pytest.approx((w1 + config.dw_m) * 1e6 * 2)
         assert element.output_port.width == pytest.approx((w2 + config.dw_m) * 1e6 * 2)
@@ -423,8 +429,8 @@ def test_every_transformer_size_matches_actual_backend_slices() -> None:
 
 @pytest.mark.parametrize("length_um,width_um", [(0.001, 0.5), (23, 41), (500, 200)])
 def test_line_dimensions_are_unclamped_with_one_scale(length_um, width_um) -> None:
-    config = S21Config(msl_8_len_m=length_um * 1e-6, msl_8_width_m=width_um * 1e-6)
-    line = _elements(IntegratedStructureCalculator().calculate(config))["MSL8"]
+    config = S21Config().with_values(mex01_2_length_m=length_um * 1e-6, mex01_2_width_m=width_um * 1e-6)
+    line = _elements(IntegratedStructureCalculator().calculate(config))["MSL1.2"]
     assert LENGTH_SCALE == WIDTH_SCALE
     assert line.bounds.width == pytest.approx(length_um * LENGTH_SCALE)
     assert line.bounds.height == pytest.approx((width_um + config.dw_m * 1e6) * WIDTH_SCALE)
@@ -532,29 +538,29 @@ def test_dc_dimension_view_stays_inside_its_card(changes) -> None:
 def _corner_config(**changes):
     # L = 12 µm for both corners: long enough for a horizontal arm.
     values = {
-        "transf_4_w_end_m": 6e-6,
-        "transf_4_w_start_m": 8e-6,
-        "transf_4_dwdl_um": 1,
-        "transf_4_dl_m": 4e-6,
-        "transf_3_w_end_m": 8e-6,
-        "transf_3_w_start_m": 6e-6,
-        "transf_3_dwdl_um": 1,
-        "transf_3_dl_m": 4e-6,
+        "corner_left_w1_m": 6e-6,
+        "corner_left_w2_m": 8e-6,
+        "corner_left_n_um": 1,
+        "corner_left_dl_m": 4e-6,
+        "corner_right_w1_m": 8e-6,
+        "corner_right_w2_m": 6e-6,
+        "corner_right_n_um": 1,
+        "corner_right_dl_m": 4e-6,
     }
     values.update(changes)
-    return S21Config(**values)
+    return S21Config().with_values(**values)
 
 
 def test_corner_transformers_bend_from_the_lines_onto_the_stubs() -> None:
     config = _corner_config()
     geometry = IntegratedStructureCalculator().calculate(config)
     elements, dc, left, right = _dc_parts(geometry)
-    t4, t3 = elements["T4"], elements["T3"]
+    t4, t3 = elements["T2.C"], elements["T3.C"]
     dw = config.dw_m * 1e6
     # Ends meet the neighbouring lines 6 and 10 (old trapezoids are gone).
-    assert t4.input_port.center == elements["MSL6"].output_port.center
+    assert t4.input_port.center == elements["MSL2.3"].output_port.center
     assert t4.input_port.width == pytest.approx((6 + dw) * 2)
-    assert t3.output_port.center == elements["MSL5"].input_port.center
+    assert t3.output_port.center == elements["MSL3.1"].input_port.center
     assert t3.output_port.width == pytest.approx((6 + dw) * 2)
     assert t4.output_port is None and t3.input_port is None
     # Stubs start 1 µm below the lowest adjacent line edge (the HFSS foot).
@@ -588,7 +594,7 @@ def test_corner_transformers_bend_from_the_lines_onto_the_stubs() -> None:
 
 @pytest.mark.parametrize("contact_um,stub_um", [(8, 8), (6, 9), (11, 9)])
 def test_corner_contact_and_stub_share_a_seam_with_a_visible_step(contact_um, stub_um) -> None:
-    config = _corner_config(transf_4_w_start_m=contact_um * 1e-6, w_ms_m=stub_um * 1e-6)
+    config = _corner_config(corner_left_w2_m=contact_um * 1e-6, w_ms_m=stub_um * 1e-6)
     geometry = IntegratedStructureCalculator().calculate(config)
     elements, dc, left, _right = _dc_parts(geometry)
     dw = config.dw_m * 1e6
@@ -621,7 +627,7 @@ def test_short_corner_length_is_drawn_at_its_minimum_with_a_warning() -> None:
     config = S21Config()  # T4: L = 6 µm, W1 = 6 µm, W2 = 10 µm
     geometry = IntegratedStructureCalculator().calculate(config)
     elements, _dc, left, _right = _dc_parts(geometry)
-    t4 = elements["T4"]
+    t4 = elements["T2.C"]
     values = _parameters(t4)
     dw = config.dw_m * 1e6
     minimum = hypot(6 + dw, 10 + dw) / 2 + 1
@@ -648,20 +654,20 @@ def test_corner_line_end_face_is_centred_on_its_line(line_um, w1_um, length_um) 
 
     steps = derive_transformer_steps(w1_um * 1e-6, 10e-6, length_um * 1e-6, max_dl_um=3.0)
     config = _corner_config(
-        msl_6_width_m=line_um * 1e-6,
-        msl_5_width_m=line_um * 1e-6,
-        transf_4_w_end_m=w1_um * 1e-6,
-        transf_4_w_start_m=10e-6,
-        transf_4_dwdl_um=steps.n_um,
-        transf_4_dl_m=steps.dl_m,
-        transf_3_w_end_m=10e-6,
-        transf_3_w_start_m=w1_um * 1e-6,
-        transf_3_dwdl_um=steps.n_um,
-        transf_3_dl_m=steps.dl_m,
+        mex02_3_width_m=line_um * 1e-6,
+        mex03_1_width_m=line_um * 1e-6,
+        corner_left_w1_m=w1_um * 1e-6,
+        corner_left_w2_m=10e-6,
+        corner_left_n_um=steps.n_um,
+        corner_left_dl_m=steps.dl_m,
+        corner_right_w1_m=10e-6,
+        corner_right_w2_m=w1_um * 1e-6,
+        corner_right_n_um=steps.n_um,
+        corner_right_dl_m=steps.dl_m,
     )
     elements = _elements(IntegratedStructureCalculator().calculate(config))
     dw = config.dw_m * 1e6
-    for corner, line in (("T4", "MSL6"), ("T3", "MSL5")):
+    for corner, line in (("T2.C", "MSL2.3"), ("T3.C", "MSL3.1")):
         port = elements[corner].input_port or elements[corner].output_port
         face = sorted(p.y for p in elements[corner].polygon if p.x == pytest.approx(port.center.x))
         # Exactly two vertices on the face: W1 tall, centred on the line axis.
@@ -681,14 +687,14 @@ def test_corner_line_end_face_is_centred_on_its_line(line_um, w1_um, length_um) 
 
 def test_corner_contacts_must_not_close_the_stub_gap() -> None:
     with pytest.raises(ValueError, match="смыкаются"):
-        IntegratedStructureCalculator().calculate(_corner_config(transf_4_w_start_m=14e-6, transf_3_w_end_m=14e-6))
+        IntegratedStructureCalculator().calculate(_corner_config(corner_left_w2_m=14e-6, corner_right_w1_m=14e-6))
 
 
 def test_wider_neighbouring_line_never_touches_a_stub() -> None:
-    config = _corner_config(msl_5_width_m=14e-6)
+    config = _corner_config(mex03_1_width_m=14e-6)
     elements, _dc, left, right = _dc_parts(IntegratedStructureCalculator().calculate(config))
-    assert elements["MSL5"].bounds.bottom + 1 * 2 == pytest.approx(right[0].y)
-    assert elements["MSL6"].bounds.bottom < left[0].y
+    assert elements["MSL3.1"].bounds.bottom + 1 * 2 == pytest.approx(right[0].y)
+    assert elements["MSL2.3"].bounds.bottom < left[0].y
 
 
 def test_radial_lines_have_exact_lengths_widths_and_connected_ports() -> None:
@@ -712,13 +718,13 @@ def test_default_width_mismatches_remain_steps_not_gaps_or_input_changes() -> No
     config = S21Config()
     geometry = IntegratedStructureCalculator().calculate(config)
     elements = _elements(geometry)
-    assert elements["T7"].output_port.center == elements["MSL8"].input_port.center
-    assert elements["MSL8"].output_port.center == elements["T6"].input_port.center
-    assert elements["T7"].output_port.width == 99
-    assert elements["MSL8"].input_port.width == 101
-    assert elements["T6"].input_port.width == 97
+    assert elements["T1.1"].output_port.center == elements["MSL1.2"].input_port.center
+    assert elements["MSL1.2"].output_port.center == elements["T1.3"].input_port.center
+    assert elements["T1.1"].output_port.width == 99
+    assert elements["MSL1.2"].input_port.width == 101
+    assert elements["T1.3"].input_port.width == 97
     # One thin seam at the overlap, not two thick polygon outlines.
-    joint_x = elements["T7"].output_port.center.x
+    joint_x = elements["T1.1"].output_port.center.x
     seams = [line for line in geometry.overview.seams if line.start.x == joint_x == line.end.x]
     assert len(seams) == 1
     assert config == S21Config()
@@ -728,7 +734,7 @@ def test_dimensioned_views_use_one_zoom_for_both_axes() -> None:
     geometry = IntegratedStructureCalculator().calculate(_corner_config())
     elements = _elements(geometry)
     for element in elements.values():
-        if element.input_port is None or element.element_id in {"DC", "Radial", "T4", "SIS-line"}:
+        if element.input_port is None or element.element_id in {"DC", "Radial", "T2.C", "SIS-line"}:
             continue
         dims = [d for d in geometry.dimensions if d.element_id == element.element_id]
         length = next(d for d in dims if d.label.split("=")[0] in ("L", "L1", "L3"))
@@ -751,7 +757,7 @@ def test_dimensioned_views_use_one_zoom_for_both_axes() -> None:
     ]
     assert zooms == pytest.approx([zooms[0]] * 4)
     # Corner cards: the line-end and contact widths use the same zoom.
-    for name, line_label, contact_label in (("T4", "W1эфф", "W2эфф"), ("T3", "W2эфф", "W1эфф")):
+    for name, line_label, contact_label in (("T2.C", "W1эфф", "W2эфф"), ("T3.C", "W2эфф", "W1эфф")):
         corner = elements[name]
         dims = {d.label.split("=")[0]: d for d in geometry.dimensions if d.element_id == name}
         port = corner.input_port or corner.output_port
@@ -768,7 +774,7 @@ def test_dimensioned_views_use_one_zoom_for_both_axes() -> None:
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("msl_8_len_m", 0),
+        ("mex01_2_length_m", 0),
         ("w_slot_m", 0.1e-6),
         ("radial_r_max_m", 0),
         ("radial_angle_deg", 360),
@@ -778,7 +784,7 @@ def test_dimensioned_views_use_one_zoom_for_both_axes() -> None:
 )
 def test_invalid_geometry_is_reported_instead_of_producing_broken_svg(field, value) -> None:
     with pytest.raises(ValueError):
-        IntegratedStructureCalculator().calculate(replace(S21Config(), **{field: value}))
+        IntegratedStructureCalculator().calculate(S21Config().with_values(**{field: value}))
 
 
 @pytest.mark.parametrize("details", [False, True])

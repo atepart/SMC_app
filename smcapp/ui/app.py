@@ -8,7 +8,7 @@ import os
 import subprocess
 import sys
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict
 
@@ -61,9 +61,10 @@ from PySide6QtAds import CDockManager, CDockWidget, DockWidgetArea
 from smcapp.application.s21_use_case import CalculateS21UseCase
 from smcapp.application.use_cases import GenerateStructureUseCase
 from smcapp.application.version import REPO_SLUG, __version__
+from smcapp.domain.circuit import CORNERS, TransformerSection, with_element
 from smcapp.domain.models import Point, SvgColorScheme
-from smcapp.domain.s21_models import S21Config
-from smcapp.domain.transformers import ELEMENT_NUMBERS, derive_transformer_steps, transformer_dl_max_um
+from smcapp.domain.s21_models import S21Config, split_element_field
+from smcapp.domain.transformers import derive_transformer_steps, transformer_dl_max_um
 from smcapp.infrastructure.design_files import DesignFileService
 from smcapp.infrastructure.geometry import SIGNAL_INPUT
 from smcapp.infrastructure.hover import ElementHitMap, NumberMark
@@ -724,11 +725,12 @@ class MainWindow(QMainWindow):
         self._parameter_groups: Dict[str, CollapsibleParameterGroup] = {}
         self._engineering_orders: Dict[str, QLabel] = {}
         self._parameter_units: Dict[str, QLabel] = {}
-        self._transformer_baselines: dict[int, tuple[float, ...]] = {}
+        # Transformer editors (W1, W2, L) by element prefix when last filled.
+        self._transformer_baselines: dict[str, tuple[float, ...]] = {}
         # Values shown when the editors were filled; an untouched editor keeps
         # the exact loaded value instead of its rounded display (GitHub #10).
         self._loaded_ui_values: dict[str, float] = {}
-        self._transformer_status: dict[int, QLabel] = {}
+        self._transformer_status: dict[str, QLabel] = {}
         self._s21_output: QLineEdit | None = None
         self._s21_output_directory: QLineEdit | None = None
         self._active_s21_output_path: str | None = None
@@ -871,11 +873,11 @@ class MainWindow(QMainWindow):
         self._muted_labels.append(subtitle)
         vbox.addWidget(subtitle)
 
-        fields_by_group = {group: [] for group in S21Config.GROUP_ORDER}
-        for field_info in S21Config.ui_fields():
+        fields_by_group = {group: [] for group in self._defaults.group_order()}
+        for field_info in self._defaults.ui_fields():
             fields_by_group.setdefault(field_info.group, []).append(field_info)
 
-        for group_name in S21Config.GROUP_ORDER:
+        for group_name in self._defaults.group_order():
             group_fields = fields_by_group.get(group_name, [])
             if not group_fields:
                 continue
@@ -892,7 +894,7 @@ class MainWindow(QMainWindow):
 
             for field_info in group_fields:
                 spin = self._create_spinbox(field_info.name, field_info)
-                prefix = f"{ELEMENT_NUMBERS[field_info.element_id]} · " if field_info.element_id else ""
+                prefix = f"{field_info.number} · " if field_info.number is not None else ""
                 label = QLabel(prefix + field_info.label)
                 label.setToolTip(field_info.description)
                 spin.setToolTip(field_info.description)
@@ -900,17 +902,19 @@ class MainWindow(QMainWindow):
                 form.addRow(label, self._build_parameter_editor(field_info.name, spin, field_info.suffix))
 
             if group_fields[0].element_id == "SIS":
+                sis_line = next(slot.number for slot in self._defaults.element_slots() if slot.element_id == "SIS-line")
                 hint = QLabel(
-                    "Wb — ширина для индуктивности растекания токов у детектора. Ширина металла у SIS: элемент 14 «Линия SIS», W1 и W2."
+                    "Wb — ширина для индуктивности растекания токов у детектора. "
+                    f"Ширина металла у SIS: элемент {sis_line} «Линия SIS», W1 и W2."
                 )
                 hint.setWordWrap(True)
                 form.addRow(hint)
 
-            if group_fields[0].name.startswith("transf_"):
-                index = int(group_fields[0].name.split("_")[1])
+            element = split_element_field(group_fields[0].name)
+            if element is not None and isinstance(self._defaults.element(element[0]), TransformerSection):
                 status = QLabel()
                 status.setWordWrap(True)
-                self._transformer_status[index] = status
+                self._transformer_status[element[0]] = status
                 form.addRow(status)
                 for info in group_fields:
                     self._config_inputs[info.name].valueChanged.connect(self._refresh_transformer_status)
@@ -1808,61 +1812,69 @@ class MainWindow(QMainWindow):
 
     def _build_config(self) -> S21Config:
         values = dict(self._defaults.__dict__)
+        elements: dict[str, dict[str, float]] = {}
         for name, spin in self._config_inputs.items():
             spin.interpretText()
-            if name.endswith("_length_m"):
-                continue
             if spin.value() == self._loaded_ui_values.get(name):
                 continue  # untouched: keep the exact value, not its rounded display
-            scale = S21Config.field_scale(name)
-            values[name] = spin.value() / scale
-
-        for index in range(1, 8):
-            current = self._transformer_inputs(index)
-            if current == self._transformer_baselines[index]:
-                # Keep the exact original discretization for untouched legacy files.
-                for suffix in ("w_start_m", "w_end_m"):
-                    name = f"transf_{index}_{suffix}"
-                    values[name] = getattr(self._defaults, name)
-                continue
-            try:
-                steps = derive_transformer_steps(
-                    *(value * 1e-6 for value in current), max_dl_um=transformer_dl_max_um(f"T{index}")
-                )
-            except ValueError as error:
-                raise ValueError(f"Элемент {ELEMENT_NUMBERS[f'T{index}']}: {error}") from error
-            values[f"transf_{index}_dwdl_um"] = steps.n_um
-            values[f"transf_{index}_dl_m"] = steps.dl_m
+            value = spin.value() / S21Config.field_scale(name)
+            target = split_element_field(name)
+            if target is None:
+                values[name] = value
+            else:
+                elements.setdefault(target[0], {})[target[1]] = value
 
         if self._same_materials_checkbox is not None and self._same_materials_checkbox.isChecked():
             for top_name, bot_name in self._material_sync_map.items():
                 values[bot_name] = values[top_name]
+        config = S21Config(**values)
 
-        return S21Config(**values)
+        for prefix, changes in elements.items():
+            element = config.element(prefix)
+            if isinstance(element, TransformerSection):
+                continue  # derived below from W1, W2 and L together
+            config = with_element(config, prefix, replace(element, **changes))
+        for prefix in self._transformer_status:
+            current = self._transformer_inputs(prefix)
+            if current == self._transformer_baselines.get(prefix):
+                # Keep the exact original discretization for untouched elements.
+                continue
+            try:
+                steps = derive_transformer_steps(
+                    *(value * 1e-6 for value in current), max_dl_um=transformer_dl_max_um(prefix in CORNERS)
+                )
+            except ValueError as error:
+                number = next(slot.number for slot in config.element_slots() if slot.prefix == prefix)
+                raise ValueError(f"Элемент {number}: {error}") from error
+            # A touched width takes the editor value, an untouched one stays exact.
+            changes = elements.get(prefix, {})
+            element = config.element(prefix)
+            transformer = TransformerSection(
+                changes.get("w1_m", element.w1_m), changes.get("w2_m", element.w2_m), steps.n_um, steps.dl_m
+            )
+            config = with_element(config, prefix, transformer)
+        return config
 
-    def _transformer_inputs(self, index: int) -> tuple[float, ...]:
-        return tuple(
-            self._config_inputs[f"transf_{index}_{suffix}"].value() for suffix in ("w_end_m", "w_start_m", "length_m")
-        )
+    def _transformer_inputs(self, prefix: str) -> tuple[float, ...]:
+        return tuple(self._config_inputs[f"{prefix}_{suffix}"].value() for suffix in ("w1_m", "w2_m", "length_m"))
 
     def _remember_transformer_inputs(self) -> None:
-        self._transformer_baselines = {index: self._transformer_inputs(index) for index in range(1, 8)}
+        self._transformer_baselines = {prefix: self._transformer_inputs(prefix) for prefix in self._transformer_status}
         self._refresh_transformer_status()
 
     def _refresh_transformer_status(self) -> None:
         colors = THEME_COLORS[self._theme]
-        for index, status in self._transformer_status.items():
-            if index not in self._transformer_baselines:
+        for prefix, status in self._transformer_status.items():
+            if prefix not in self._transformer_baselines:
                 continue
             try:
-                current = self._transformer_inputs(index)
-                if current == self._transformer_baselines[index]:
-                    n = getattr(self._defaults, f"transf_{index}_dwdl_um")
-                    dl_um = getattr(self._defaults, f"transf_{index}_dl_m") * 1e6
-                    status.setText(f"n={n:g}; dl={dl_um:g} µm (из файла/исходных параметров)")
+                current = self._transformer_inputs(prefix)
+                if current == self._transformer_baselines[prefix]:
+                    element = self._defaults.element(prefix)
+                    status.setText(f"n={element.n_um:g}; dl={element.dl_m * 1e6:g} µm (из файла/исходных параметров)")
                 else:
                     steps = derive_transformer_steps(
-                        *(value * 1e-6 for value in current), max_dl_um=transformer_dl_max_um(f"T{index}")
+                        *(value * 1e-6 for value in current), max_dl_um=transformer_dl_max_um(prefix in CORNERS)
                     )
                     status.setText(f"n={steps.n_um}; ступеней: {steps.intervals + 1}; dl={steps.dl_m * 1e6:g} µm")
                 status.setStyleSheet(f"color: {colors.muted_text};")

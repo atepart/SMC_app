@@ -23,6 +23,7 @@ from smcapp.api import (
     SISJunctionCalculator,
     SuperconductingGapCalculator,
 )
+from smcapp.domain.circuit import TransformerSection
 from smcapp.domain.ports import S21Calculator, S21ResultWriter
 from smcapp.domain.s21_models import S21Config, S21Result
 
@@ -203,154 +204,45 @@ class S21CalculatorImpl(S21Calculator):
                 )
             )
 
-            # Mex3 is the detector-side cascade T1 -> MSL4 -> T2 -> MSL5 -> T3.
-            m_transf_1 = lambda f: self._transformer_matrix(
-                top_film,
-                bot_film,
-                config,
-                f,
-                config.transf_1_w_start_m,
-                config.transf_1_w_end_m,
-                config.transf_1_dwdl_um,
-                e12,
-                h12,
-                config.transf_1_dl_m,
-            )
-            m_msl_4 = lambda f: self.microstrip.matrix(
-                f,
-                config.msl_4_len_m,
-                config.msl_4_width_m + dw,
-                e12,
-                h12,
-                top_film,
-                bot_film,
-                config.d_top_m,
-                config.d_bot_m,
-            )
-            m_transf_2 = lambda f: self._transformer_matrix(
-                top_film,
-                bot_film,
-                config,
-                f,
-                config.transf_2_w_start_m,
-                config.transf_2_w_end_m,
-                config.transf_2_dwdl_um,
-                e12,
-                h12,
-                config.transf_2_dl_m,
-            )
-            m_msl_5 = lambda f: self.microstrip.matrix(
-                f,
-                config.msl_5_len_m,
-                config.msl_5_width_m + dw,
-                e12,
-                h12,
-                top_film,
-                bot_film,
-                config.d_top_m,
-                config.d_bot_m,
-            )
-            m_transf_3 = lambda f: self._transformer_matrix(
-                top_film,
-                bot_film,
-                config,
-                f,
-                config.transf_3_w_start_m,
-                config.transf_3_w_end_m,
-                config.transf_3_dwdl_um,
-                e12,
-                h12,
-                config.transf_3_dl_m,
-            )
-            mex3 = lambda f: self.results.group(f, (m_transf_1, m_msl_4, m_transf_2, m_msl_5, m_transf_3))
+            # Mex1/Mex2/Mex3 are lists in drawing order (FFO -> SIS); the
+            # network is multiplied detector-to-FFO, so each list is reversed:
+            # Mex3 = Mex03[last] ... Mex03[first] · corner 9, Mex2 = corner 7 ·
+            # Mex02[last] ... Mex02[first], Mex1 = Mex01[last] ... Mex01[first].
+            # Mex1 uses the E1/H1 dielectric stack, the others E12/H12.
+            def section_matrix(element, dielectric, thickness):
+                if isinstance(element, TransformerSection):
+                    # Backend widths run from the SIS side (start) to the FFO side (end).
+                    return lambda f: self._transformer_matrix(
+                        top_film,
+                        bot_film,
+                        config,
+                        f,
+                        element.w2_m,
+                        element.w1_m,
+                        element.n_um,
+                        dielectric,
+                        thickness,
+                        element.dl_m,
+                    )
+                return lambda f: self.microstrip.matrix(
+                    f,
+                    element.length_m,
+                    element.width_m + dw,
+                    dielectric,
+                    thickness,
+                    top_film,
+                    bot_film,
+                    config.d_top_m,
+                    config.d_bot_m,
+                )
 
-            # Mex2 is the middle cascade T4 -> MSL6 -> T5 -> MSL7.
-            m_transf_4 = lambda f: self._transformer_matrix(
-                top_film,
-                bot_film,
-                config,
-                f,
-                config.transf_4_w_start_m,
-                config.transf_4_w_end_m,
-                config.transf_4_dwdl_um,
-                e12,
-                h12,
-                config.transf_4_dl_m,
-            )
-            m_msl_6 = lambda f: self.microstrip.matrix(
-                f,
-                config.msl_6_len_m,
-                config.msl_6_width_m + dw,
-                e12,
-                h12,
-                top_film,
-                bot_film,
-                config.d_top_m,
-                config.d_bot_m,
-            )
-            m_transf_5 = lambda f: self._transformer_matrix(
-                top_film,
-                bot_film,
-                config,
-                f,
-                config.transf_5_w_start_m,
-                config.transf_5_w_end_m,
-                config.transf_5_dwdl_um,
-                e12,
-                h12,
-                config.transf_5_dl_m,
-            )
-            m_msl_7 = lambda f: self.microstrip.matrix(
-                f,
-                config.msl_7_len_m,
-                config.msl_7_width_m + dw,
-                e12,
-                h12,
-                top_film,
-                bot_film,
-                config.d_top_m,
-                config.d_bot_m,
-            )
-            mex2 = lambda f: self.results.group(f, (m_transf_4, m_msl_6, m_transf_5, m_msl_7))
+            def cascade(elements, dielectric, thickness):
+                matrices = tuple(section_matrix(element, dielectric, thickness) for element in reversed(elements))
+                return lambda f: self.results.group(f, matrices)
 
-            # Mex1 is the FFO-side cascade T6 -> MSL8 -> T7 and uses the E1/H1
-            # dielectric stack rather than the E12/H12 stack used above.
-            m_transf_6 = lambda f: self._transformer_matrix(
-                top_film,
-                bot_film,
-                config,
-                f,
-                config.transf_6_w_start_m,
-                config.transf_6_w_end_m,
-                config.transf_6_dwdl_um,
-                e1,
-                h1,
-                config.transf_6_dl_m,
-            )
-            m_msl_8 = lambda f: self.microstrip.matrix(
-                f,
-                config.msl_8_len_m,
-                config.msl_8_width_m + dw,
-                e1,
-                h1,
-                top_film,
-                bot_film,
-                config.d_top_m,
-                config.d_bot_m,
-            )
-            m_transf_7 = lambda f: self._transformer_matrix(
-                top_film,
-                bot_film,
-                config,
-                f,
-                config.transf_7_w_start_m,
-                config.transf_7_w_end_m,
-                config.transf_7_dwdl_um,
-                e1,
-                h1,
-                config.transf_7_dl_m,
-            )
-            mex1 = lambda f: self.results.group(f, (m_transf_6, m_msl_8, m_transf_7))
+            mex3 = cascade((config.corner_right, *config.mex03), e12, h12)
+            mex2 = cascade((*config.mex02, config.corner_left), e12, h12)
+            mex1 = cascade(config.mex01, e1, h1)
 
             log("Assembling network: Mex4 -> Mex3 -> M_DCB -> Mex2 -> Mex1.")
             m_total = lambda f: self.results.group(f, (mex4, mex3, m_dcb, mex2, mex1))
