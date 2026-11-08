@@ -2203,6 +2203,11 @@ class MainWindow(QMainWindow):
 
     def _redraw_plot(self) -> None:
         """Render SMC and all optional comparisons with a shared legend."""
+        # Keep what the user is looking at: a recalculation, import or buffer
+        # write must not throw a zoomed/panned view back to Home (WP-047).
+        # With auto-range on (the "A" button) the view follows the new data.
+        view_box = self._plot.getPlotItem().vb
+        kept_range = None if any(view_box.state["autoRange"]) else view_box.viewRange()
         self._plot.clear()
         self._plot.addItem(self._plot_threshold_line, ignoreBounds=True)
         curves: list[tuple[str, object, object]] = []
@@ -2224,10 +2229,9 @@ class MainWindow(QMainWindow):
             item.setVisible(self.is_curve_visible(name))
         self._arrange_legend()
 
-        # PlotItem enables auto-range again when curves are cleared/re-added.
-        # Reapply the user's Home range so recalculation/import cannot silently
-        # replace the requested issue-4 defaults (100…900 GHz, -20…0 dB).
-        self._restore_plot_scale()
+        if kept_range is not None:
+            (x_min, x_max), (y_min, y_max) = kept_range
+            view_box.setRange(xRange=(x_min, x_max), yRange=(y_min, y_max), padding=0)
 
     def _arrange_legend(self) -> None:
         """Lay the legend out from its top row: one column, two for many curves.

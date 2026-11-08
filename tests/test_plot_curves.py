@@ -300,3 +300,41 @@ def test_bad_hfss_file_shows_dialog_and_keeps_previous_curve(window: MainWindow,
     assert shown == [("Ошибка импорта HFSS", "Строка 3: частота и S21 должны быть числами: '0.2\\tabc'.")]
     assert window._comparison_traces["HFSS"].source == HFSS_EXAMPLE
     assert len(_curves(window)["HFSS"].xData) == 81
+
+
+def test_zoom_and_pan_survive_recalculation_import_and_buffer(window: MainWindow, tmp_path) -> None:
+    """WP-047, BUG-025: redrawing the plot must not throw the user's view back to Home."""
+    view_box = window._plot.getPlotItem().vb
+    home = window._plot_initial_range
+
+    # Without zooming the first calculation stays on Home, not on the data range.
+    window._update_s21_plot(FREQUENCIES, [-10.0, -4.0, -2.0, -5.0, -12.0])
+    assert view_box.viewRange() == [pytest.approx([home[0], home[1]]), pytest.approx([home[2], home[3]])]
+
+    view_box.scaleBy((0.5, 0.5))
+    view_box.translateBy(x=40.0, y=1.5)
+    zoomed = view_box.viewRange()
+    assert zoomed[0] != pytest.approx([home[0], home[1]])
+
+    window._update_s21_plot(FREQUENCIES, [-9.0, -3.0, -1.5, -4.0, -11.0])
+    experiment = tmp_path / "experiment.txt"
+    experiment.write_text("100 -11\n500 -2.5\n900 -13\n", encoding="utf-8")
+    window.load_comparison_trace("Experiment", experiment)
+    window.load_comparison_trace("HFSS", HFSS_EXAMPLE)
+    window.store_buffer()
+    assert view_box.viewRange() == [pytest.approx(zoomed[0]), pytest.approx(zoomed[1])]
+
+    # Home still returns to the requested range.
+    window._restore_plot_scale()
+    assert view_box.viewRange() == [pytest.approx([home[0], home[1]]), pytest.approx([home[2], home[3]])]
+
+
+def test_auto_range_follows_new_data(window: MainWindow) -> None:
+    """With the "A" button pressed the view keeps following the curves."""
+    view_box = window._plot.getPlotItem().vb
+    view_box.enableAutoRange()
+    window._update_s21_plot([1000.0, 1200.0, 1400.0], [-40.0, -35.0, -30.0])
+    QtWidgets.QApplication.processEvents()
+    x_range, y_range = view_box.viewRange()
+    assert x_range[0] < 1000.0 < 1400.0 < x_range[1] and x_range[1] < 1600.0
+    assert y_range[0] < -40.0 and y_range[1] < -20.0
