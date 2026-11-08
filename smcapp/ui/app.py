@@ -61,7 +61,7 @@ from PySide6QtAds import CDockManager, CDockWidget, DockWidgetArea
 from smcapp.application.s21_use_case import CalculateS21UseCase
 from smcapp.application.use_cases import GenerateStructureUseCase
 from smcapp.application.version import REPO_SLUG, __version__
-from smcapp.domain.circuit import CORNERS, TransformerSection, with_element
+from smcapp.domain.circuit import CORNERS, TransformerSection, composition, with_element
 from smcapp.domain.models import Point, SvgColorScheme
 from smcapp.domain.s21_models import S21Config, split_element_field
 from smcapp.domain.transformers import derive_transformer_steps, transformer_dl_max_um
@@ -1425,6 +1425,9 @@ class MainWindow(QMainWindow):
         Untouched editors then build back the exact values (not their rounded
         display), and the transformer n/dl come from ``config`` itself.
         """
+        if composition(config) != composition(self._defaults):
+            # The panel is rebuilt for another composition in WP-044, stage 3.
+            raise ValueError("Состав элементов Mex01/Mex02/Mex03 отличается от текущей панели.")
         if self._same_materials_checkbox is not None:
             self._same_materials_checkbox.setChecked(same_material)
 

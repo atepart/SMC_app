@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import json
+from pathlib import Path
 from typing import cast
 from unittest.mock import Mock, patch
 
@@ -15,7 +16,7 @@ from smcapp.application.s21_use_case import CalculateS21UseCase
 from smcapp.application.use_cases import GenerateStructureUseCase
 from smcapp.domain.circuit import element_numbers, element_order
 from smcapp.domain.s21_models import S21Config
-from smcapp.infrastructure.design_files import to_legacy_parameters
+from smcapp.infrastructure.design_files import DesignFileService
 from smcapp.infrastructure.geometry import IntegratedStructureCalculator
 from smcapp.infrastructure.svg_renderer import SvgRendererImpl
 from smcapp.ui.app import MainWindow
@@ -857,18 +858,19 @@ def test_save_dialog_uses_new_format_and_selected_extension(
     assert "*.aocdesign" not in dialog.call_args.args[3]
     payload = json.loads(target.with_suffix(suffix).read_text())
     assert payload["format"] == "SMCapp Design"
-    assert payload["parameters"] == to_legacy_parameters(parameter_window._build_config())
+    assert payload["version"] == 2
+    assert DesignFileService().load(target.with_suffix(suffix)) == parameter_window._build_config()
     assert parameter_window.windowTitle().startswith("smcapp ")
 
 
 @pytest.mark.parametrize("suffix", [".aocdesign", ".aocapp", ".json", ".smcdesign"])
 def test_open_dialog_accepts_legacy_and_new_files(parameter_window, tmp_path, suffix) -> None:
     target = tmp_path / f"parameters{suffix}"
-    payload = {
-        "format": "SMCapp Design" if suffix == ".smcdesign" else "AOCapp Design",
-        "version": 1,
-        "parameters": {**to_legacy_parameters(S21Config()), "tc_bot_k": 8.7},
-    }
+    if suffix == ".smcdesign":  # the current version 2
+        payload = json.loads(DesignFileService().save(target, S21Config()).read_text())
+    else:  # a version-1 file of the former transf_*/msl_* layout
+        payload = json.loads((Path(__file__).parent / "data" / "design_v1_variant.aocdesign").read_text())
+    payload["parameters"]["tc_bot_k"] = 8.7
     target.write_text(json.dumps(payload))
     with patch.object(QtWidgets.QFileDialog, "getOpenFileName", return_value=(str(target), "")) as dialog:
         parameter_window.open_files_menu.actions()[0].trigger()
