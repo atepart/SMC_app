@@ -2,5 +2,5 @@
 
 __all__ = ["__version__", "REPO_SLUG"]
 
-__version__ = "008"
+__version__ = "009"
 REPO_SLUG = "atepart/SMC_app"
