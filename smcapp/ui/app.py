@@ -61,10 +61,20 @@ from PySide6QtAds import CDockManager, CDockWidget, DockWidgetArea
 from smcapp.application.s21_use_case import CalculateS21UseCase
 from smcapp.application.use_cases import GenerateStructureUseCase
 from smcapp.application.version import REPO_SLUG, __version__
-from smcapp.domain.circuit import CORNERS, TransformerSection, composition, with_element
+from smcapp.domain.circuit import (
+    CORNERS,
+    SECTION_TITLES,
+    TransformerSection,
+    can_insert_after,
+    can_remove,
+    composition,
+    insert_after,
+    remove_element,
+    with_element,
+)
 from smcapp.domain.models import Point, SvgColorScheme
 from smcapp.domain.s21_models import S21Config, split_element_field
-from smcapp.domain.transformers import derive_transformer_steps, transformer_dl_max_um
+from smcapp.domain.transformers import DL_MIN_UM, derive_transformer_steps, transformer_dl_max_um
 from smcapp.infrastructure.design_files import DesignFileService
 from smcapp.infrastructure.geometry import SIGNAL_INPUT
 from smcapp.infrastructure.hover import ElementHitMap, NumberMark
@@ -658,6 +668,8 @@ class CollapsibleParameterGroup(QWidget):
 
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        # Element of the drawing this group edits (None for General, materials…).
+        self.element_id: str | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 2, 6, 4)
         self.toggle_button = QtWidgets.QToolButton(self)
@@ -867,60 +879,20 @@ class MainWindow(QMainWindow):
         subtitle = QLabel(
             "Номера элементов идут слева направо от ФФО. W1 — ширина слева, W2 — справа; L — общая длина. "
             "Enter в поле обновляет схему; Run S21 пересчитывает график. "
+            "Правая кнопка на названии трансформатора или линии — «Удалить» / «Добавить». "
             "Ctrl+↓/↑ — следующее/предыдущее поле, Ctrl+Tab — следующий блок, Alt+↑/↓ — грубый шаг ×10."
         )
         subtitle.setWordWrap(True)
         self._muted_labels.append(subtitle)
         vbox.addWidget(subtitle)
 
-        fields_by_group = {group: [] for group in self._defaults.group_order()}
-        for field_info in self._defaults.ui_fields():
-            fields_by_group.setdefault(field_info.group, []).append(field_info)
-
-        for group_name in self._defaults.group_order():
-            group_fields = fields_by_group.get(group_name, [])
-            if not group_fields:
-                continue
-            box = CollapsibleParameterGroup(group_name)
-            self._parameter_groups[group_name] = box
-            form = box.form_layout
-
-            if group_name == "EL2 Material":
-                checkbox = QCheckBox("Use the same material as EL1")
-                checkbox.setChecked(True)
-                checkbox.toggled.connect(self._on_same_materials_toggled)
-                self._same_materials_checkbox = checkbox
-                form.addRow("", checkbox)
-
-            for field_info in group_fields:
-                spin = self._create_spinbox(field_info.name, field_info)
-                prefix = f"{field_info.number} · " if field_info.number is not None else ""
-                label = QLabel(prefix + field_info.label)
-                label.setToolTip(field_info.description)
-                spin.setToolTip(field_info.description)
-                self._config_inputs[field_info.name] = spin
-                form.addRow(label, self._build_parameter_editor(field_info.name, spin, field_info.suffix))
-
-            if group_fields[0].element_id == "SIS":
-                sis_line = next(slot.number for slot in self._defaults.element_slots() if slot.element_id == "SIS-line")
-                hint = QLabel(
-                    "Wb — ширина для индуктивности растекания токов у детектора. "
-                    f"Ширина металла у SIS: элемент {sis_line} «Линия SIS», W1 и W2."
-                )
-                hint.setWordWrap(True)
-                form.addRow(hint)
-
-            element = split_element_field(group_fields[0].name)
-            if element is not None and isinstance(self._defaults.element(element[0]), TransformerSection):
-                status = QLabel()
-                status.setWordWrap(True)
-                self._transformer_status[element[0]] = status
-                form.addRow(status)
-                for info in group_fields:
-                    self._config_inputs[info.name].valueChanged.connect(self._refresh_transformer_status)
-
-            box.apply_field_font()
-            vbox.addWidget(box)
+        # Parameter groups live in their own host so that removing or adding
+        # elements (WP-044) can rebuild them without touching the rest.
+        self._groups_host = QWidget(inner)
+        self._groups_layout = QVBoxLayout(self._groups_host)
+        self._groups_layout.setContentsMargins(0, 0, 0, 0)
+        self._populate_parameter_groups()
+        vbox.addWidget(self._groups_host)
 
         controls_box = QGroupBox("Actions")
         controls_box.setObjectName("actions_box")
@@ -1012,6 +984,63 @@ class MainWindow(QMainWindow):
         # calculation and design persistence are always reachable.
         outer.addWidget(controls_box, stretch=0)
         return panel
+
+    def _populate_parameter_groups(self) -> None:
+        """Create every parameter group of ``self._defaults`` in drawing order."""
+        fields_by_group = {group: [] for group in self._defaults.group_order()}
+        for field_info in self._defaults.ui_fields():
+            fields_by_group.setdefault(field_info.group, []).append(field_info)
+
+        for group_name in self._defaults.group_order():
+            group_fields = fields_by_group.get(group_name, [])
+            if not group_fields:
+                continue
+            box = CollapsibleParameterGroup(group_name)
+            self._parameter_groups[group_name] = box
+            box.element_id = group_fields[0].element_id
+            if box.element_id is not None:
+                box.toggle_button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                box.toggle_button.customContextMenuRequested.connect(
+                    lambda position, current=box: self._show_element_menu(current, position)
+                )
+            form = box.form_layout
+
+            if group_name == "EL2 Material":
+                checkbox = QCheckBox("Use the same material as EL1")
+                checkbox.setChecked(True)
+                checkbox.toggled.connect(self._on_same_materials_toggled)
+                self._same_materials_checkbox = checkbox
+                form.addRow("", checkbox)
+
+            for field_info in group_fields:
+                spin = self._create_spinbox(field_info.name, field_info)
+                prefix = f"{field_info.number} · " if field_info.number is not None else ""
+                label = QLabel(prefix + field_info.label)
+                label.setToolTip(field_info.description)
+                spin.setToolTip(field_info.description)
+                self._config_inputs[field_info.name] = spin
+                form.addRow(label, self._build_parameter_editor(field_info.name, spin, field_info.suffix))
+
+            if group_fields[0].element_id == "SIS":
+                sis_line = next(slot.number for slot in self._defaults.element_slots() if slot.element_id == "SIS-line")
+                hint = QLabel(
+                    "Wb — ширина для индуктивности растекания токов у детектора. "
+                    f"Ширина металла у SIS: элемент {sis_line} «Линия SIS», W1 и W2."
+                )
+                hint.setWordWrap(True)
+                form.addRow(hint)
+
+            element = split_element_field(group_fields[0].name)
+            if element is not None and isinstance(self._defaults.element(element[0]), TransformerSection):
+                status = QLabel()
+                status.setWordWrap(True)
+                self._transformer_status[element[0]] = status
+                form.addRow(status)
+                for info in group_fields:
+                    self._config_inputs[info.name].valueChanged.connect(self._refresh_transformer_status)
+
+            box.apply_field_font()
+            self._groups_layout.addWidget(box)
 
     def _build_schematic_panel(self) -> QWidget:
         """Build the SVG panel; its Home control sits at the lower left."""
@@ -1426,8 +1455,7 @@ class MainWindow(QMainWindow):
         display), and the transformer n/dl come from ``config`` itself.
         """
         if composition(config) != composition(self._defaults):
-            # The panel is rebuilt for another composition in WP-044, stage 3.
-            raise ValueError("Состав элементов Mex01/Mex02/Mex03 отличается от текущей панели.")
+            self._rebuild_parameter_groups(config, self._group_states())
         if self._same_materials_checkbox is not None:
             self._same_materials_checkbox.setChecked(same_material)
 
@@ -1444,6 +1472,140 @@ class MainWindow(QMainWindow):
             for bottom_name in self._material_sync_map.values():
                 self._config_inputs[bottom_name].setEnabled(True)
         self._update_svg()
+
+    @staticmethod
+    def _group_keys(config: S21Config) -> dict[str, tuple]:
+        """Stable key of every group name: the n-th editable element, a fixed
+        element (corners, DC block, SIS node) or a general group."""
+        keys: dict[str, tuple] = {}
+        editable = 0
+        for slot in config.element_slots():
+            if slot.editable:
+                keys[slot.group] = ("editable", editable)
+                editable += 1
+            else:
+                keys[slot.group] = ("fixed", slot.element_id)
+        return keys
+
+    def _group_states(self) -> dict[tuple, bool]:
+        """Expanded/collapsed state of every group by its stable key."""
+        keys = self._group_keys(self._defaults)
+        return {keys.get(name, ("general", name)): box.isChecked() for name, box in self._parameter_groups.items()}
+
+    def _rebuild_parameter_groups(self, config: S21Config, states: dict[tuple, bool]) -> None:
+        """Recreate every parameter group for *config*'s composition.
+
+        Values come from *config* (editors are filled as from a file), groups
+        keep their expanded state by key and the scroll position stays.
+        """
+        scroll_bar = self.parameters_scroll.verticalScrollBar()
+        scroll = scroll_bar.value()
+        for box in self._parameter_groups.values():
+            self._groups_layout.removeWidget(box)
+            box.hide()
+            box.deleteLater()
+        for registry in (
+            self._parameter_groups,
+            self._config_inputs,
+            self._engineering_orders,
+            self._parameter_units,
+            self._transformer_status,
+            self._transformer_baselines,
+            self._loaded_ui_values,
+        ):
+            registry.clear()
+        self._same_materials_checkbox = None
+        self._defaults = config
+        self._populate_parameter_groups()
+        keys = self._group_keys(config)
+        for name, box in self._parameter_groups.items():
+            state = states.get(keys.get(name, ("general", name)))
+            if state is not None:
+                box.setChecked(state)
+        self._refresh_transformer_status()
+        self.parameters_scroll.widget().layout().activate()
+        scroll_bar.setValue(min(scroll, scroll_bar.maximum()))
+        self._sync_parameters_minimum_width()
+
+    def _element_menu(self, box: CollapsibleParameterGroup) -> QtWidgets.QMenu | None:
+        """«Удалить» / «Добавить» for transformers and lines of Mex01/Mex02/Mex03.
+
+        Corners, the DC block and the SIS/radial node have no menu (owner's
+        decision, GitHub #11).
+        """
+        if box.element_id is None or not can_insert_after(self._defaults, box.element_id):
+            return None
+        menu = QtWidgets.QMenu(box)
+        menu.setToolTipsVisible(True)
+        remove = menu.addAction("Удалить")
+        remove.setObjectName("remove_element_action")
+        slot = next(slot for slot in self._defaults.element_slots() if slot.element_id == box.element_id)
+        if can_remove(self._defaults, box.element_id):
+            remove.setToolTip(f"Убрать элемент {slot.number} из панели, схемы и расчёта")
+        else:
+            remove.setEnabled(False)
+            remove.setToolTip(f"Последний элемент {SECTION_TITLES[slot.section]}: без него не к чему добавлять")
+        remove.triggered.connect(lambda _checked=False, element=box.element_id: self.remove_element(element))
+        add = menu.addAction("Добавить")
+        add.setObjectName("insert_elements_action")
+        follower = "трансформатор и линию" if slot.kind == "line" else "линию и трансформатор"
+        add.setToolTip(f"Добавить после элемента {slot.number} {follower}")
+        add.triggered.connect(lambda _checked=False, element=box.element_id: self.insert_elements_after(element))
+        return menu
+
+    def _show_element_menu(self, box: CollapsibleParameterGroup, position: QtCore.QPoint) -> None:
+        menu = self._element_menu(box)
+        if menu is not None:
+            self._exec_element_menu(menu, box.toggle_button.mapToGlobal(position))
+            menu.deleteLater()
+
+    @staticmethod
+    def _exec_element_menu(menu: QtWidgets.QMenu, position: QtCore.QPoint) -> None:
+        """Show the menu modally under the cursor (a seam for tests)."""
+        menu.exec(position)
+
+    def remove_element(self, element_id: str) -> S21Config | None:
+        """«Удалить»: drop the element; the numbers after it move up."""
+        return self._change_composition(element_id, removing=True)
+
+    def insert_elements_after(self, element_id: str) -> S21Config | None:
+        """«Добавить»: two new elements after *element_id* (GitHub #11 rules)."""
+        return self._change_composition(element_id, removing=False)
+
+    def _change_composition(self, element_id: str, *, removing: bool) -> S21Config | None:
+        slots = self._defaults.element_slots()
+        slot = next(slot for slot in slots if slot.element_id == element_id)
+        try:
+            # The element being removed may itself hold an unfinished edit.
+            config = self._build_config(skip_prefix=slot.prefix if removing else None)
+            changed = remove_element(config, element_id) if removing else insert_after(config, element_id)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Ошибка изменения схемы", str(exc))
+            return None
+        same_material = self._same_materials_checkbox is not None and self._same_materials_checkbox.isChecked()
+        editable = [s.element_id for s in slots if s.editable].index(element_id)
+        states = {}
+        for key, expanded in self._group_states().items():
+            if key[0] == "editable" and key[1] > editable:
+                key = ("editable", key[1] + (-1 if removing else 2))
+            elif key == ("editable", editable) and removing:
+                continue
+            states[key] = expanded
+        self._rebuild_parameter_groups(changed, states)
+        self._apply_config(changed, same_material)
+        if removing:
+            message = f"Элемент {slot.number} удалён; номера следующих элементов уменьшены на 1."
+        else:
+            kinds = {s.number: s.title.lower() for s in changed.element_slots()}
+            first, second = slot.number + 1, slot.number + 2
+            message = (
+                f"После элемента {slot.number} добавлены {kinds[first]} {first} и {kinds[second]} {second}; "
+                "номера следующих элементов увеличены на 2."
+            )
+        self._append_log_message(message)
+        if self._s21_status is not None:
+            self._s21_status.setText(message)
+        return changed
 
     @property
     def parameter_buffer(self) -> ParameterBuffer | None:
@@ -1813,7 +1975,8 @@ class MainWindow(QMainWindow):
             legend.setFlag(ignores_transformations, True)
             rebuild(CheckableItemSample, only_visible=False)
 
-    def _build_config(self) -> S21Config:
+    def _build_config(self, skip_prefix: str | None = None) -> S21Config:
+        """Current parameters; *skip_prefix* keeps that element as loaded."""
         values = dict(self._defaults.__dict__)
         elements: dict[str, dict[str, float]] = {}
         for name, spin in self._config_inputs.items():
@@ -1824,7 +1987,7 @@ class MainWindow(QMainWindow):
             target = split_element_field(name)
             if target is None:
                 values[name] = value
-            else:
+            elif target[0] != skip_prefix:
                 elements.setdefault(target[0], {})[target[1]] = value
 
         if self._same_materials_checkbox is not None and self._same_materials_checkbox.isChecked():
@@ -1839,7 +2002,7 @@ class MainWindow(QMainWindow):
             config = with_element(config, prefix, replace(element, **changes))
         for prefix in self._transformer_status:
             current = self._transformer_inputs(prefix)
-            if current == self._transformer_baselines.get(prefix):
+            if prefix == skip_prefix or current == self._transformer_baselines.get(prefix):
                 # Keep the exact original discretization for untouched elements.
                 continue
             try:
@@ -1874,7 +2037,13 @@ class MainWindow(QMainWindow):
                 current = self._transformer_inputs(prefix)
                 if current == self._transformer_baselines[prefix]:
                     element = self._defaults.element(prefix)
-                    status.setText(f"n={element.n_um:g}; dl={element.dl_m * 1e6:g} µm (из файла/исходных параметров)")
+                    text = f"n={element.n_um:g}; dl={element.dl_m * 1e6:g} µm (из файла/исходных параметров)"
+                    dl_um, max_dl = element.dl_m * 1e6, transformer_dl_max_um(prefix in CORNERS)
+                    if not (DL_MIN_UM - 1e-9 <= dl_um <= max_dl + 1e-9 and float(element.n_um).is_integer()):
+                        # E.g. a rectangular transformer just added (GitHub #11 allows it):
+                        # it is calculated as it is until W1, W2 or L are edited.
+                        text += f"; вне правила подбора (целое n, dl {DL_MIN_UM:g}…{max_dl:g} µm) — считается как есть"
+                    status.setText(text)
                 else:
                     steps = derive_transformer_steps(
                         *(value * 1e-6 for value in current), max_dl_um=transformer_dl_max_um(prefix in CORNERS)
