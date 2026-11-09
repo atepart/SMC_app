@@ -2530,7 +2530,9 @@ class MainWindow(QMainWindow):
         quantity = self._right_axis_quantity
         axis = plot_item.getAxis("right")
         plot_item.showAxis("right")
-        axis.setLabel(quantity.axis_label, **{"font-size": f"{scaled_point_size(PLOT_AXIS_LABEL_SCALE)}pt"})
+        # setLabel replaces the whole label style: keep the theme colour from setTextPen (BUG-028).
+        label_style = {**axis.labelStyle, "font-size": f"{scaled_point_size(PLOT_AXIS_LABEL_SCALE)}pt"}
+        axis.setLabel(quantity.axis_label, **label_style)
         # Plain current: log scale (ticks 10^y); "Log" data: y as it is.
         axis.setLogMode(y=not quantity.logarithmic)
         unit = right_axis_range_unit(quantity)

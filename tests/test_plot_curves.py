@@ -496,3 +496,27 @@ def test_log_values_use_a_linear_right_axis_and_db_goes_back_left(window: MainWi
     assert window._right_curve_items == [] and not right.isVisible()
     assert _curves(window)["HFSS"].yData.tolist() == [-1.5, 0.25]
     assert not window._plot_y2_inputs["y2_max"].isVisible()
+
+
+@pytest.mark.parametrize("first, second", [(Theme.DARK, Theme.LIGHT), (Theme.LIGHT, Theme.DARK)])
+def test_right_axis_label_follows_the_theme(window: MainWindow, tmp_path, monkeypatch, first, second) -> None:
+    """BUG-028: the right axis label kept Qt's default black instead of the theme colour."""
+    window.set_theme(first)
+    _import_choosing(window, "HFSS", _origin_file(tmp_path), monkeypatch, 2, "A log")
+    plot_item = window._plot.getPlotItem()
+    right, left = plot_item.getAxis("right"), plot_item.getAxis("left")
+
+    def colour(axis) -> str:
+        return QtGui.QColor(axis.labelStyle["color"]).name()
+
+    assert right.isVisible() and right.labelText == "log₁₀(I / A)"
+    assert colour(right) == colour(left) == QtGui.QColor(THEME_COLORS[first].plot_foreground).name()
+    assert right.labelStyle["color"] in right.label.toHtml()  # the drawn text, not only the style
+    font_size = right.labelStyle["font-size"]
+
+    window.set_theme(second)
+    assert colour(right) == QtGui.QColor(THEME_COLORS[second].plot_foreground).name()
+    # A new import of a current keeps the theme colour and the label size.
+    _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "A log")
+    assert colour(right) == QtGui.QColor(THEME_COLORS[second].plot_foreground).name()
+    assert right.labelStyle["font-size"] == font_size
