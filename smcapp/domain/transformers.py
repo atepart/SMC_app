@@ -7,14 +7,20 @@ from dataclasses import dataclass
 from math import floor, isclose, isfinite
 
 
+def transformer_slice_count(w1_m: float, w2_m: float, n_um: float) -> int:
+    """Number of slices the calculator's inclusive arange makes for width step *n_um*."""
+    if not all(isfinite(value) for value in (w1_m, w2_m, n_um)) or n_um <= 0:
+        raise ValueError("Шаг ширины dw должен быть положительным конечным числом")
+    # arange stops before max(widths) + 0.01 µm, exactly as in the backend.
+    ratio = (abs(w1_m - w2_m) * 1e6 + 0.01) / n_um
+    return max(1, -floor(-ratio))
+
+
 def transformer_length_m(w1_m: float, w2_m: float, n_um: float, dl_m: float) -> float:
     """Match the calculator's inclusive arange, including its endpoint tolerance."""
     if not all(isfinite(value) for value in (w1_m, w2_m, n_um, dl_m)) or n_um <= 0 or dl_m <= 0:
         raise ValueError("Шаг ширины и длина ступени должны быть положительными конечными числами")
-    # arange stops before max(widths) + 0.01 µm, exactly as in the backend.
-    ratio = (abs(w1_m - w2_m) * 1e6 + 0.01) / n_um
-    count = max(1, -floor(-ratio))
-    return count * dl_m
+    return transformer_slice_count(w1_m, w2_m, n_um) * dl_m
 
 
 @dataclass(frozen=True)
@@ -51,7 +57,7 @@ def derive_transformer_steps(
     delta_um = abs(w1_m - w2_m) * 1e6
     delta = round(delta_um)
     if not isclose(delta_um, delta, abs_tol=1e-7, rel_tol=0):
-        raise ValueError("Разность W1 и W2 должна быть целой в µm для целых n и |W1−W2|/n")
+        raise ValueError("Разность W1 и W2 должна быть целой в µm для целых dw и |W1−W2|/dw")
     candidates = []
     for n in range(1, max(delta, 4) + 1):
         if delta % n:
@@ -61,5 +67,5 @@ def derive_transformer_steps(
         if DL_MIN_UM - 1e-9 <= dl_um <= max_dl_um + 1e-9:
             candidates.append(TransformerSteps(n, intervals, dl_um * 1e-6))
     if not candidates:
-        raise ValueError(f"Для W1, W2 и L нет целого n с целым |W1−W2|/n и dl от {DL_MIN_UM:g} до {max_dl_um:g} µm")
+        raise ValueError(f"Для W1, W2 и L нет целого dw с целым |W1−W2|/dw и dl от {DL_MIN_UM:g} до {max_dl_um:g} µm")
     return min(candidates, key=lambda steps: (0 if steps.n_um == 2 else 1 if steps.n_um == 4 else 2, steps.n_um))

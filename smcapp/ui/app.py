@@ -31,6 +31,7 @@ from PySide6.QtGui import (
     QPainterPathStroker,
     QPen,
     QTransform,
+    QValidator,
     QWheelEvent,
 )
 from PySide6.QtSvg import QSvgRenderer
@@ -74,7 +75,12 @@ from smcapp.domain.circuit import (
 )
 from smcapp.domain.models import Point, SvgColorScheme
 from smcapp.domain.s21_models import S21Config, split_element_field
-from smcapp.domain.transformers import DL_MIN_UM, derive_transformer_steps, transformer_dl_max_um
+from smcapp.domain.transformers import (
+    DL_MIN_UM,
+    derive_transformer_steps,
+    transformer_dl_max_um,
+    transformer_slice_count,
+)
 from smcapp.infrastructure.design_files import DesignFileService
 from smcapp.infrastructure.geometry import SIGNAL_INPUT
 from smcapp.infrastructure.hover import ElementHitMap, NumberMark
@@ -560,6 +566,12 @@ class SafeDoubleSpinBox(QDoubleSpinBox):
         # The line edit would otherwise use Cmd+↓ (end of text) on macOS.
         if watched is self.lineEdit() and (self._block_navigation(event) or self._arrow_keys(event)):
             return True
+        if (
+            watched is self.lineEdit()
+            and event.type() == QtCore.QEvent.Type.KeyPress
+            and self._overwrite_overflow(event)
+        ):
+            return True  # keys delivered straight to the line edit
         return super().eventFilter(watched, event)
 
     def event(self, event) -> bool:  # noqa: D401 - Qt API
@@ -583,8 +595,52 @@ class SafeDoubleSpinBox(QDoubleSpinBox):
         event.accept()
         return True
 
+    def _overwrite_overflow(self, event) -> bool:
+        """Type a digit or point that does not fit by pushing a character out.
+
+        Without this Qt silently drops the key (e.g. a third decimal in a
+        two-decimal field).  A digit pushes out the last character, so typing
+        at the very end changes nothing; a point first removes the existing
+        point (always: Qt itself would accept "0..38"), and digits beyond the
+        allowed decimals are then cut from the end.  Other keys that fit as
+        typed keep Qt's ordinary insertion.
+        """
+        char = event.text()
+        if len(char) != 1 or not (char.isdigit() or char in ".,") or self.isReadOnly():
+            return False
+        if event.modifiers() & ~(Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.KeypadModifier):
+            return False
+        edit = self.lineEdit()
+        text, pos = edit.text(), edit.cursorPosition()
+        start, end = len(self.prefix()), len(edit.text()) - len(self.suffix())
+        if edit.hasSelectedText() or not start <= pos <= end:
+            return False
+        number, offset = text[start:end], pos - start
+        point = next((index for index, symbol in enumerate(number) if symbol in ".,"), -1)
+        moves_point = char in ".," and point >= 0  # Qt itself accepts e.g. "0..38"
+        if not moves_point and self.validate(text[:pos] + char + text[pos:], pos + 1)[0] != QValidator.State.Invalid:
+            return False
+        if moves_point:
+            number = number[:point] + number[point + 1 :]
+            offset -= point < offset
+            candidate = number[:offset] + char + number[offset:]
+            while candidate and self.validate(text[:start] + candidate + text[end:], 0)[0] == QValidator.State.Invalid:
+                if candidate.index(char) >= len(candidate) - 1:
+                    break  # only decimals may be cut
+                candidate = candidate[:-1]
+        else:
+            candidate = (number[:offset] + char + number[offset:])[:-1]
+        replaced = text[:start] + candidate + text[end:]
+        if self.validate(replaced, 0)[0] != QValidator.State.Acceptable:
+            return False  # cannot fit even by pushing out: Qt drops the key
+        edit.selectAll()
+        edit.insert(replaced)  # through the line edit, so Cmd/Ctrl+Z undoes it
+        edit.setCursorPosition(start + min(offset + 1, len(candidate)))
+        event.accept()
+        return True
+
     def keyPressEvent(self, event) -> None:
-        if self._arrow_keys(event):
+        if self._arrow_keys(event) or self._overwrite_overflow(event):
             return
         super().keyPressEvent(event)
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -2037,18 +2093,24 @@ class MainWindow(QMainWindow):
                 current = self._transformer_inputs(prefix)
                 if current == self._transformer_baselines[prefix]:
                     element = self._defaults.element(prefix)
-                    text = f"n={element.n_um:g}; dl={element.dl_m * 1e6:g} µm (из файла/исходных параметров)"
+                    # The issue calls the width step "n"; the owner asked to show it as dw
+                    # and to call the number of slices n.
+                    slices = transformer_slice_count(element.w1_m, element.w2_m, element.n_um)
+                    text = (
+                        f"dw={element.n_um:g} µm; n={slices}; dl={element.dl_m * 1e6:g} µm"
+                        " (из файла/исходных параметров)"
+                    )
                     dl_um, max_dl = element.dl_m * 1e6, transformer_dl_max_um(prefix in CORNERS)
                     if not (DL_MIN_UM - 1e-9 <= dl_um <= max_dl + 1e-9 and float(element.n_um).is_integer()):
                         # E.g. a rectangular transformer just added (GitHub #11 allows it):
                         # it is calculated as it is until W1, W2 or L are edited.
-                        text += f"; вне правила подбора (целое n, dl {DL_MIN_UM:g}…{max_dl:g} µm) — считается как есть"
+                        text += f"; вне правила подбора (целое dw, dl {DL_MIN_UM:g}…{max_dl:g} µm) — считается как есть"
                     status.setText(text)
                 else:
                     steps = derive_transformer_steps(
                         *(value * 1e-6 for value in current), max_dl_um=transformer_dl_max_um(prefix in CORNERS)
                     )
-                    status.setText(f"n={steps.n_um}; ступеней: {steps.intervals + 1}; dl={steps.dl_m * 1e6:g} µm")
+                    status.setText(f"dw={steps.n_um} µm; n={steps.intervals + 1}; dl={steps.dl_m * 1e6:g} µm")
                 status.setStyleSheet(f"color: {colors.muted_text};")
             except ValueError as error:
                 status.setText(str(error))

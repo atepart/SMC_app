@@ -648,7 +648,7 @@ class S21Config:
     zrad4_len_m: float = field(
         default=3.0e-6,
         metadata={
-            "label": "L2 · L4",
+            "label": "L2 · L4/2",
             "group": "Radial Stub",
             "description": "Элемент {sis_line} «Линия SIS», второй участок (бывший Lw4): длина от SIS до Radial Stub line.",
             "suffix": " um",
@@ -677,7 +677,7 @@ class S21Config:
     mex4_len_m: float = field(
         default=3.0e-6,
         metadata={
-            "label": "L1",
+            "label": "L1 · L4/2",
             "group": "Radial Stub",
             "description": "Элемент {sis_line} «Линия SIS», первый участок (бывшая линия у SIS): длина от элемента {before_sis} до SIS.",
             "suffix": " um",
@@ -691,7 +691,7 @@ class S21Config:
     mex4_width_m: float = field(
         default=6.0e-6,
         metadata={
-            "label": "W1",
+            "label": "W1 · W4",
             "group": "Radial Stub",
             "description": "Элемент {sis_line} «Линия SIS», первый участок (бывшая линия у SIS): ширина до поправки dW; металл на схеме W1 + dW.",
             "suffix": " um",
@@ -1006,7 +1006,7 @@ class S21Config:
             ConfigFieldInfo(
                 f"{slot.prefix}_length_m",
                 "L",
-                description="Общая длина трансформатора. Автоподбор целых n и |W1−W2|/n; "
+                description="Общая длина трансформатора. Автоподбор целого шага ширины dw и числа срезов n = |W1−W2|/dw + 1; "
                 + f"dl=0.5…{transformer_dl_max_um(corner):g} µm."
                 + (
                     " У угловых трансформаторов это осевая линия L1+L2+L3: по горизонтали от торца,"

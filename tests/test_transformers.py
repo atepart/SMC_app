@@ -6,7 +6,12 @@ import numpy as np
 import pytest
 
 from smcapp.api.impedance_transformers import ImpedanceTransformerCalculator
-from smcapp.domain.transformers import derive_transformer_steps, transformer_dl_max_um, transformer_length_m
+from smcapp.domain.transformers import (
+    derive_transformer_steps,
+    transformer_dl_max_um,
+    transformer_length_m,
+    transformer_slice_count,
+)
 
 
 @pytest.mark.parametrize(
@@ -87,3 +92,18 @@ def test_legacy_length_matches_inclusive_backend_arange(w1, w2, n) -> None:
     calculator = ImpedanceTransformerCalculator(microstrip)
     calculator.transformer_matrix(100, w1 * 1e-6, w2 * 1e-6, n, 4, 1e-6, None, None, 1e-6, 1e-6, 0.9e-6)
     assert transformer_length_m(w1 * 1e-6, w2 * 1e-6, n, 0.9e-6) == pytest.approx(microstrip.matrix.call_count * 0.9e-6)
+
+
+@pytest.mark.parametrize("w1,w2,n", [(6, 18, 6), (6, 17.995, 6), (18, 6, 1.7), (6, 6, 2), (14, 50, 6)])
+def test_slice_count_shown_as_n_matches_backend(w1, w2, n) -> None:
+    """The panel's n (number of slices) is exactly what the calculator slices."""
+    microstrip = Mock()
+    microstrip.matrix.return_value = np.eye(2)
+    calculator = ImpedanceTransformerCalculator(microstrip)
+    calculator.transformer_matrix(100, w1 * 1e-6, w2 * 1e-6, n, 4, 1e-6, None, None, 1e-6, 1e-6, 0.9e-6)
+    assert transformer_slice_count(w1 * 1e-6, w2 * 1e-6, n) == microstrip.matrix.call_count
+
+
+def test_slice_count_rejects_non_positive_width_step() -> None:
+    with pytest.raises(ValueError, match="dw"):
+        transformer_slice_count(6e-6, 18e-6, 0)

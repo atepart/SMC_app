@@ -131,7 +131,7 @@ def test_remove_2_renumbers_panel_schematic_and_calculation(window) -> None:
     assert window._config_inputs["e_sub"].value() == 11.5
     assert "mex01_3_w1_m" not in window._config_inputs
     labels = {label.text() for label in window.findChildren(QtWidgets.QLabel) if label.isVisible()}
-    assert "2 · W1" in labels and "13 · L1" in labels
+    assert "2 · W1" in labels and "13 · L1 · L4/2" in labels
     assert "Элемент 2 удалён" in window._s21_status.text()
 
     geometry = displayed.call_args.kwargs["hit_map"]
@@ -158,7 +158,7 @@ def test_add_to_line_4_gives_transformer_5_and_line_6(window) -> None:
     )
     assert (inputs["mex02_3_width_m"].value(), inputs["mex02_3_length_m"].value()) == (18, 20)
     status = window._transformer_status["mex02_2"].text()
-    assert status.startswith("n=1; dl=4 µm") and "считается как есть" in status
+    assert status.startswith("dw=1 µm; n=1; dl=4 µm") and "считается как есть" in status
     assert "добавлены трансформатор 5 и линия 6" in window._s21_status.text()
     config = _run_s21(window)  # a rectangular transformer is calculated as one slice
     assert len(config.mex02) == 5
@@ -173,7 +173,7 @@ def test_add_to_transformer_and_widths_at_the_section_ends(window) -> None:
     _trigger(window, 6, "Добавить")  # end of Mex02: line 6 (4) before corner 7 (W1 = 6)
     assert (inputs := window._config_inputs)["mex02_4_w1_m"].value() == 4
     assert inputs["mex02_4_w2_m"].value() == 6
-    assert window._transformer_status["mex02_4"].text() == "n=1; dl=1.33333 µm (из файла/исходных параметров)"
+    assert window._transformer_status["mex02_4"].text() == "dw=1 µm; n=3; dl=1.33333 µm (из файла/исходных параметров)"
     assert "9 · Трансформатор" in window._parameter_groups  # corner, now 9
 
 
@@ -244,7 +244,7 @@ def test_transformer_n_dl_follow_the_new_composition(window) -> None:
     inputs["mex01_2_w1_m"].setValue(8)
     inputs["mex01_2_w2_m"].setValue(10)
     inputs["mex01_2_length_m"].setValue(4.5)
-    assert window._transformer_status["mex01_2"].text() == "n=1; ступеней: 3; dl=1.5 µm"
+    assert window._transformer_status["mex01_2"].text() == "dw=1 µm; n=3; dl=1.5 µm"
     element = window._build_config().element("mex01_2")
     assert (element.n_um, element.dl_m) == (1, pytest.approx(1.5e-6))
     inputs["mex01_2_length_m"].setValue(100)

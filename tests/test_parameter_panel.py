@@ -19,7 +19,7 @@ from smcapp.domain.s21_models import S21Config
 from smcapp.infrastructure.design_files import DesignFileService
 from smcapp.infrastructure.geometry import IntegratedStructureCalculator
 from smcapp.infrastructure.svg_renderer import SvgRendererImpl
-from smcapp.ui.app import MainWindow
+from smcapp.ui.app import MainWindow, SafeDoubleSpinBox
 from smcapp.ui.theme import THEME_COLORS
 
 
@@ -83,6 +83,55 @@ def test_wheel_requires_click_and_groups_collapse(parameter_window: MainWindow) 
     assert not group.content.isVisible()
     assert group.toggle_button.arrowType() == QtCore.Qt.ArrowType.RightArrow
     assert not parameter_window.parameters_scroll.isAncestorOf(parameter_window.actions_box)
+
+
+def _typed(value: float, decimals: int, cursor: int, keys: str, maximum: float = 1000.0) -> tuple[str, int]:
+    spin = SafeDoubleSpinBox()
+    spin.setDecimals(decimals)
+    spin.setRange(0.1, maximum)
+    spin.setValue(value)
+    spin.lineEdit().deselect()
+    spin.lineEdit().setCursorPosition(cursor)
+    QTest.keyClicks(spin, keys)
+    return spin.lineEdit().text(), spin.lineEdit().cursorPosition()
+
+
+@pytest.mark.parametrize(
+    "value,decimals,cursor,keys,expected",
+    [
+        (7.0, 1, 2, "5", ("7.5", 3)),  # a digit that does not fit pushes the last one out
+        (0.8, 2, 2, "3", ("0.38", 3)),
+        (3.0, 3, 0, "1", ("13.000", 1)),  # fits as typed: ordinary insertion
+        (7.0, 1, 3, "5", ("7.0", 3)),  # typed at the very end: nothing changes
+        (12.5, 2, 1, ".", ("1.25", 2)),  # a point first removes the existing point
+        (12.5, 2, 1, ",", ("1,25", 2)),
+        (0.38, 2, 1, ".", ("0.38", 2)),  # Qt alone would accept "0..38"
+        (12.5, 1, 1, ".", ("1.2", 2)),  # …then decimals that no longer fit are cut
+        (123.0, 0, 1, "4", ("142", 2)),  # no point to remove: the last character goes
+        (999.0, 1, 0, "5", ("999.0", 0)),  # above the maximum even after pushing out
+        (7.0, 1, 2, "a", ("7.0", 2)),
+    ],
+)
+def test_typing_into_a_full_field_pushes_out_a_character(value, decimals, cursor, keys, expected) -> None:
+    assert QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    assert _typed(value, decimals, cursor, keys) == expected
+
+
+def test_pushed_out_value_is_applied_and_undoable(parameter_window: MainWindow) -> None:
+    spin = parameter_window._config_inputs["sis_area_um2"]
+    spin.setValue(0.8)
+    spin.setFocus()
+    edit = spin.lineEdit()
+    edit.deselect()
+    edit.setCursorPosition(2)
+    QTest.keyClicks(spin, "3")
+    assert edit.text() == "0.38" and spin.value() == pytest.approx(0.8)  # applied on Enter, as before
+    edit.undo()
+    assert edit.text() == "0.80"
+    edit.redo()
+    QTest.keyClick(spin, QtCore.Qt.Key.Key_Return)
+    assert spin.value() == pytest.approx(0.38)
+    assert parameter_window._build_config().sis_area_um2 == pytest.approx(0.38)
 
 
 def test_greek_labels_fixed_orders_and_design_round_trip(parameter_window: MainWindow, tmp_path) -> None:
@@ -490,9 +539,10 @@ def test_starting_calculation_does_not_clear_successful_results(parameter_window
 def test_issue_7_element_labels(parameter_window: MainWindow) -> None:
     assert "8 · DC block" in parameter_window._parameter_groups
     assert "DC Break" not in parameter_window._parameter_groups
-    assert parameter_window._transformer_status["mex01_1"].text().startswith("n=5;")
+    # dw — width step in µm (the issue's "n"), n — number of slices (owner's request).
+    assert parameter_window._transformer_status["mex01_1"].text().startswith("dw=5 µm; n=8; dl=1.2 µm")
     parameter_window._config_inputs["mex01_1_w1_m"].setValue(15)
-    assert " µm; ступеней" not in parameter_window._transformer_status["mex01_1"].text()
+    assert "ступеней" not in parameter_window._transformer_status["mex01_1"].text()
 
 
 def test_schematic_details_toggle_keeps_overview_large(parameter_window: MainWindow) -> None:
@@ -685,12 +735,12 @@ def test_issue_6_order_conversion_and_invalid_length(parameter_window: MainWindo
     assert converted.w2_m == pytest.approx(6e-6)
     assert converted.n_um == 2
     assert converted.dl_m == pytest.approx(1e-6)
-    assert "ступеней: 7" in parameter_window._transformer_status["mex01_1"].text()
+    assert parameter_window._transformer_status["mex01_1"].text() == "dw=2 µm; n=7; dl=1 µm"
     inputs["mex01_1_length_m"].setValue(100)
     with patch.object(QtWidgets.QMessageBox, "warning") as warning:
         parameter_window._update_svg()
     assert "Элемент 1" in warning.call_args.args[2]
-    assert "нет целого n" in parameter_window._transformer_status["mex01_1"].text()
+    assert "нет целого dw" in parameter_window._transformer_status["mex01_1"].text()
 
 
 def test_issue_10_corner_transformers_accept_dl_up_to_3_um(parameter_window: MainWindow) -> None:
@@ -703,10 +753,10 @@ def test_issue_10_corner_transformers_accept_dl_up_to_3_um(parameter_window: Mai
         inputs[f"{prefix}_length_m"].setValue(4.5)
     config = parameter_window._build_config()
     for prefix in ("corner_left", "corner_right"):
-        assert status[prefix].text() == "n=2; ступеней: 2; dl=2.25 µm"
+        assert status[prefix].text() == "dw=2 µm; n=2; dl=2.25 µm"
         assert config.element(prefix).n_um == 2
         assert config.element(prefix).dl_m == pytest.approx(2.25e-6)
-    assert status["mex02_2"].text() == "n=1; ступеней: 3; dl=1.5 µm"
+    assert status["mex02_2"].text() == "dw=1 µm; n=3; dl=1.5 µm"
 
     inputs["mex02_2_length_m"].setValue(9)
     assert "dl от 0.5 до 1.5 µm" in status["mex02_2"].text()
@@ -746,7 +796,8 @@ def test_preview_button_uses_current_fields_for_dimensions(parameter_window: Mai
     ):
         assert expected in svg
     labels = {label.text() for label in window.findChildren(QtWidgets.QLabel)}
-    assert {"14 · L1", "14 · W1", "14 · L2 · L4", "14 · W2 · W4"} <= labels
+    # One element of the Mathcad sheet (L4, W4) split by the SIS into two halves.
+    assert {"14 · L1 · L4/2", "14 · W1 · W4", "14 · L2 · L4/2", "14 · W2 · W4"} <= labels
     assert "14 · Линия SIS" in window._parameter_groups
 
 
