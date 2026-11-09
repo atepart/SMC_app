@@ -30,27 +30,19 @@ class TransformerSteps:
     dl_m: float
 
 
-DL_MIN_UM = 0.5
-DL_MAX_UM = 1.5
-# GitHub #10: the corner transformers at the DC block (7 and 9 by default)
-# accept longer slices; every other transformer keeps 0.5…1.5 µm.
-CORNER_DL_MAX_UM = 3.0
+# Slice length of the automatic n/dl choice, the same for every transformer
+# (owner, 09.11.2026; before that 0.5…1.5 µm and 0.5…3 µm at the DC block).
+DL_MIN_UM = 0.2
+DL_MAX_UM = 5.0
 
 
-def transformer_dl_max_um(corner: bool) -> float:
-    """Upper slice length of the automatic n/dl choice; *corner* — at the DC block."""
-    return CORNER_DL_MAX_UM if corner else DL_MAX_UM
-
-
-def derive_transformer_steps(
-    w1_m: float, w2_m: float, length_m: float, *, max_dl_um: float = DL_MAX_UM
-) -> TransformerSteps:
+def derive_transformer_steps(w1_m: float, w2_m: float, length_m: float) -> TransformerSteps:
     """Choose integer n and ΔW/n without rounding the requested geometry.
 
     The issue's formula defines n as a width increment (µm), despite calling
     it a step count. The number of slices is ΔW/n + 1. Prefer n=2, then 4;
     otherwise choose the smallest feasible integer increment. The slice
-    length dl must lie in ``DL_MIN_UM…max_dl_um``.
+    length dl must lie in ``DL_MIN_UM…DL_MAX_UM``.
     """
     if not all(isfinite(value) and value > 0 for value in (w1_m, w2_m, length_m)):
         raise ValueError("W1, W2 и L должны быть положительными конечными числами")
@@ -64,8 +56,8 @@ def derive_transformer_steps(
             continue
         intervals = delta // n
         dl_um = length_m * 1e6 / (intervals + 1)
-        if DL_MIN_UM - 1e-9 <= dl_um <= max_dl_um + 1e-9:
+        if DL_MIN_UM - 1e-9 <= dl_um <= DL_MAX_UM + 1e-9:
             candidates.append(TransformerSteps(n, intervals, dl_um * 1e-6))
     if not candidates:
-        raise ValueError(f"Для W1, W2 и L нет целого dw с целым |W1−W2|/dw и dl от {DL_MIN_UM:g} до {max_dl_um:g} µm")
+        raise ValueError(f"Для W1, W2 и L нет целого dw с целым |W1−W2|/dw и dl от {DL_MIN_UM:g} до {DL_MAX_UM:g} µm")
     return min(candidates, key=lambda steps: (0 if steps.n_um == 2 else 1 if steps.n_um == 4 else 2, steps.n_um))

@@ -276,8 +276,8 @@ def new_transformer(w1_m: float, w2_m: float, length_m: float = NEW_TRANSFORMER_
     """A transformer of length *length_m* between two widths.
 
     n and dl follow the usual automatic choice. When no such choice exists
-    (equal widths — a rectangular transformer — or a fractional difference)
-    the owner accepts an element outside the 0.5…1.5 µm rule: the slices
+    (a fractional width difference, or a dl outside the rule) the owner
+    accepts an element outside the rule: the slices
     still add up to *length_m*, so drawing and calculation stay consistent.
     """
     try:

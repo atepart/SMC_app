@@ -63,7 +63,6 @@ from smcapp.application.s21_use_case import CalculateS21UseCase
 from smcapp.application.use_cases import GenerateStructureUseCase
 from smcapp.application.version import REPO_SLUG, __version__
 from smcapp.domain.circuit import (
-    CORNERS,
     SECTION_TITLES,
     TransformerSection,
     can_insert_after,
@@ -75,12 +74,7 @@ from smcapp.domain.circuit import (
 )
 from smcapp.domain.models import Point, SvgColorScheme
 from smcapp.domain.s21_models import S21Config, split_element_field
-from smcapp.domain.transformers import (
-    DL_MIN_UM,
-    derive_transformer_steps,
-    transformer_dl_max_um,
-    transformer_slice_count,
-)
+from smcapp.domain.transformers import DL_MAX_UM, DL_MIN_UM, derive_transformer_steps, transformer_slice_count
 from smcapp.infrastructure.design_files import DesignFileService
 from smcapp.infrastructure.geometry import SIGNAL_INPUT
 from smcapp.infrastructure.hover import ElementHitMap, NumberMark
@@ -835,6 +829,9 @@ class MainWindow(QMainWindow):
         self._hidden_curves: set[str] = set()
         self._theme = load_theme()
         self._svg_scheme: SvgColorScheme | None = None
+        # Field values the schematic was last drawn (or refused) for: Ctrl+↓/↑ and
+        # Ctrl+Tab redraw it only when a field changed since (WP-054).
+        self._drawn_values: dict[str, float] | None = None
         self._muted_labels: list[QLabel] = []
         self._heading_labels: list[QLabel] = []
 
@@ -1780,14 +1777,30 @@ class MainWindow(QMainWindow):
         spin.setFocus(Qt.FocusReason.TabFocusReason)  # selects the value, as Tab does
         spin.selectAll()
 
+    def _input_values(self) -> dict[str, float]:
+        """Every parameter field's value, with text typed but not yet applied."""
+        for spin in self._config_inputs.values():
+            spin.interpretText()
+        return {name: spin.value() for name, spin in self._config_inputs.items()}
+
+    def _redraw_if_edited(self) -> None:
+        """Apply the fields as Enter does, unless nothing changed since the last drawing."""
+        if self._input_values() != self._drawn_values:
+            self._update_svg()
+
     def _move_to_field(self, current: SafeDoubleSpinBox, step: int) -> None:
-        """Ctrl+↓/Ctrl+↑: the next/previous field of expanded blocks, like Tab."""
+        """Ctrl+↓/Ctrl+↑: the next/previous field of expanded blocks, like Tab.
+
+        Leaving an edited field redraws the schematic, as Enter would (WP-054).
+        """
+        self._redraw_if_edited()
         spins = [spin for box, block in self._parameter_blocks() if box.isChecked() for spin in block]
         if current in spins:
             self._focus_field(spins[(spins.index(current) + step) % len(spins)])
 
     def _move_to_block(self, current: SafeDoubleSpinBox, step: int) -> None:
         """Ctrl+Tab/Ctrl+Shift+Tab: the first field of the next/previous block."""
+        self._redraw_if_edited()
         blocks = [(box, spins) for box, spins in self._parameter_blocks() if spins]
         index = next((i for i, (_box, spins) in enumerate(blocks) if current in spins), None)
         if index is None:
@@ -2096,9 +2109,7 @@ class MainWindow(QMainWindow):
                 # Keep the exact original discretization for untouched elements.
                 continue
             try:
-                steps = derive_transformer_steps(
-                    *(value * 1e-6 for value in current), max_dl_um=transformer_dl_max_um(prefix in CORNERS)
-                )
+                steps = derive_transformer_steps(*(value * 1e-6 for value in current))
             except ValueError as error:
                 number = next(slot.number for slot in config.element_slots() if slot.prefix == prefix)
                 raise ValueError(f"Элемент {number}: {error}") from error
@@ -2134,16 +2145,16 @@ class MainWindow(QMainWindow):
                         f"dw={element.n_um:g} µm; n={slices}; dl={element.dl_m * 1e6:g} µm"
                         " (из файла/исходных параметров)"
                     )
-                    dl_um, max_dl = element.dl_m * 1e6, transformer_dl_max_um(prefix in CORNERS)
-                    if not (DL_MIN_UM - 1e-9 <= dl_um <= max_dl + 1e-9 and float(element.n_um).is_integer()):
+                    dl_um = element.dl_m * 1e6
+                    if not (DL_MIN_UM - 1e-9 <= dl_um <= DL_MAX_UM + 1e-9 and float(element.n_um).is_integer()):
                         # E.g. a rectangular transformer just added (GitHub #11 allows it):
                         # it is calculated as it is until W1, W2 or L are edited.
-                        text += f"; вне правила подбора (целое dw, dl {DL_MIN_UM:g}…{max_dl:g} µm) — считается как есть"
+                        text += (
+                            f"; вне правила подбора (целое dw, dl {DL_MIN_UM:g}…{DL_MAX_UM:g} µm) — считается как есть"
+                        )
                     status.setText(text)
                 else:
-                    steps = derive_transformer_steps(
-                        *(value * 1e-6 for value in current), max_dl_um=transformer_dl_max_um(prefix in CORNERS)
-                    )
+                    steps = derive_transformer_steps(*(value * 1e-6 for value in current))
                     status.setText(f"dw={steps.n_um} µm; n={steps.intervals + 1}; dl={steps.dl_m * 1e6:g} µm")
                 status.setStyleSheet(f"color: {colors.muted_text};")
             except ValueError as error:
@@ -2172,6 +2183,9 @@ class MainWindow(QMainWindow):
             self._render_svg()
         except (ValueError, OSError) as exc:
             QMessageBox.warning(self, "Invalid input", str(exc))
+        finally:
+            # A refused input is not reported again on every Ctrl+↓ (WP-054).
+            self._drawn_values = self._input_values()
 
     def _render_svg(self) -> None:
         """Draw the current parameters in the colours of the current theme."""

@@ -21,7 +21,7 @@ from smcapp.domain.circuit import (
     validate_sections,
     with_element,
 )
-from smcapp.domain.transformers import transformer_dl_max_um
+from smcapp.domain.transformers import DL_MAX_UM, DL_MIN_UM
 
 
 @dataclass(frozen=True)
@@ -1007,7 +1007,7 @@ class S21Config:
                 f"{slot.prefix}_length_m",
                 "L",
                 description="Общая длина трансформатора. Автоподбор целого шага ширины dw и числа срезов n = |W1−W2|/dw + 1; "
-                + f"dl=0.5…{transformer_dl_max_um(corner):g} µm."
+                + f"dl={DL_MIN_UM:g}…{DL_MAX_UM:g} µm."
                 + (
                     " У угловых трансформаторов это осевая линия L1+L2+L3: по горизонтали от торца,"
                     " по диагонали к оси ступни и вниз по ступне до шлейфа."

@@ -102,8 +102,8 @@ def test_added_sizes_follow_the_issue_rules_after_a_transformer() -> None:
     assert isinstance(transformer, TransformerSection)
     assert (transformer.w1_m, transformer.w2_m) == (6e-6, 4e-6)
     assert transformer.length_m == pytest.approx(4e-6)
-    # Calculable: integer n and dl within 0.5…1.5 µm.
-    assert transformer.n_um == 1 and transformer.dl_m == pytest.approx(4e-6 / 3)
+    # Calculable: integer n, dw=2 preferred, dl within 0.2…5 µm (WP-054).
+    assert transformer.n_um == 2 and transformer.dl_m == pytest.approx(2e-6)
     assert _element(changed, 8) == config.mex02[2]
 
 

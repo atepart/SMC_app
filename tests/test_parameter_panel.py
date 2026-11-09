@@ -310,6 +310,44 @@ def test_issue_10_keyboard_moves_between_fields_and_blocks(parameter_window: Mai
     assert field_name() == "w_slot_m"  # Alt never moves the focus
 
 
+def test_ctrl_navigation_redraws_an_edited_schematic(parameter_window: MainWindow) -> None:
+    """WP-054: Ctrl+↓/↑ and Ctrl+Tab apply an edited field as Enter does, and only then."""
+    window, inputs = parameter_window, parameter_window._config_inputs
+    ctrl = QtCore.Qt.KeyboardModifier.ControlModifier
+
+    def press(spin, key, modifiers=ctrl):
+        QTest.keyClick(spin.lineEdit(), key, modifiers)
+        QtWidgets.QApplication.processEvents()
+
+    window._update_svg()
+    with patch.object(window._view, "set_svg", wraps=window._view.set_svg) as drawn:
+        spin = inputs["mex02_3_width_m"]
+        window._focus_field(spin)
+        press(spin, QtCore.Qt.Key.Key_Down)  # nothing changed: no redraw
+        assert drawn.call_count == 0
+
+        # Typed but not applied with Enter (keyboard tracking is off).
+        length = inputs["mex02_3_length_m"]
+        QTest.keyClicks(length.lineEdit(), "37")
+        press(length, QtCore.Qt.Key.Key_Down)
+        assert drawn.call_count == 1 and length.value() == 37
+        assert window._build_config().element("mex02_3").length_m == pytest.approx(37e-6)
+
+        corner = inputs["corner_left_w1_m"]
+        press(corner, QtCore.Qt.Key.Key_Up)  # unchanged since: still one drawing
+        assert drawn.call_count == 1
+        press(length, QtCore.Qt.Key.Key_Up, QtCore.Qt.KeyboardModifier.AltModifier)  # coarse step, no move
+        press(length, QtCore.Qt.Key.Key_Tab)  # Ctrl+Tab redraws too
+        assert drawn.call_count == 2
+
+    # A refused input warns once, not on every following move.
+    inputs["corner_left_length_m"].setValue(1000)
+    with patch.object(QtWidgets.QMessageBox, "warning") as warning:
+        press(inputs["corner_left_length_m"], QtCore.Qt.Key.Key_Down)
+        press(inputs["corner_left_w1_m"], QtCore.Qt.Key.Key_Down)
+    assert warning.call_count == 1
+
+
 def test_preview_rejects_nonpositive_corrected_dc_slot(parameter_window: MainWindow) -> None:
     parameter_window._config_inputs["w_slot_m"].setValue(0.1)
     parameter_window._config_inputs["dw_m"].setValue(0.5)
@@ -753,15 +791,15 @@ def test_issue_6_order_conversion_and_invalid_length(parameter_window: MainWindo
     assert converted.n_um == 2
     assert converted.dl_m == pytest.approx(1e-6)
     assert parameter_window._transformer_status["mex01_1"].text() == "dw=2 µm; n=7; dl=1 µm"
-    inputs["mex01_1_length_m"].setValue(100)
+    inputs["mex01_1_length_m"].setValue(1000)
     with patch.object(QtWidgets.QMessageBox, "warning") as warning:
         parameter_window._update_svg()
     assert "Элемент 1" in warning.call_args.args[2]
     assert "нет целого dw" in parameter_window._transformer_status["mex01_1"].text()
 
 
-def test_issue_10_corner_transformers_accept_dl_up_to_3_um(parameter_window: MainWindow) -> None:
-    """GitHub #10: 7 and 9 choose dl in 0.5…3 µm, the other transformers keep 1.5 µm."""
+def test_every_transformer_accepts_dl_from_0_2_to_5_um(parameter_window: MainWindow) -> None:
+    """WP-054: 7, 9 and the other transformers alike choose dl in 0.2…5 µm."""
     inputs = parameter_window._config_inputs
     status = parameter_window._transformer_status
     for prefix in ("corner_left", "corner_right", "mex02_2"):  # elements 7, 9 and, for comparison, 5
@@ -769,17 +807,18 @@ def test_issue_10_corner_transformers_accept_dl_up_to_3_um(parameter_window: Mai
         inputs[f"{prefix}_w2_m"].setValue(10)
         inputs[f"{prefix}_length_m"].setValue(4.5)
     config = parameter_window._build_config()
-    for prefix in ("corner_left", "corner_right"):
+    for prefix in ("corner_left", "corner_right", "mex02_2"):
         assert status[prefix].text() == "dw=2 µm; n=2; dl=2.25 µm"
         assert config.element(prefix).n_um == 2
         assert config.element(prefix).dl_m == pytest.approx(2.25e-6)
-    assert status["mex02_2"].text() == "dw=1 µm; n=3; dl=1.5 µm"
 
-    inputs["mex02_2_length_m"].setValue(9)
-    assert "dl от 0.5 до 1.5 µm" in status["mex02_2"].text()
+    inputs["mex02_2_length_m"].setValue(15)
+    assert status["mex02_2"].text() == "dw=1 µm; n=3; dl=5 µm"
+    inputs["mex02_2_length_m"].setValue(16)
+    assert "dl от 0.2 до 5 µm" in status["mex02_2"].text()
     inputs["mex02_2_length_m"].setValue(4.5)
-    inputs["corner_left_length_m"].setValue(12)
-    assert "dl от 0.5 до 3 µm" in status["corner_left"].text()
+    inputs["corner_left_length_m"].setValue(16)
+    assert "dl от 0.2 до 5 µm" in status["corner_left"].text()
     with patch.object(QtWidgets.QMessageBox, "warning") as warning:
         parameter_window._update_svg()
     assert "Элемент 7" in warning.call_args.args[2]
