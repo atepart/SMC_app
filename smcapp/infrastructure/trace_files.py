@@ -27,12 +27,16 @@ _UNIT_BY_LOWER = {unit.lower(): unit for unit in FREQUENCY_UNITS}
 SEPARATORS: dict[str, str] = {
     "tab": "Табуляция",
     "semicolon": "Точка с запятой «;»",
-    "space": "Пробелы",
+    "space": "Пробелы и табуляция",
     "comma": "Запятая «,»",
     "any": "Любой (пробелы, «,», «;»)",
 }
 DECIMAL_MARKS: dict[str, str] = {".": "Точка «.»", ",": "Запятая «,»"}
 # Tried in this order; the one that reads the most data rows wins, ties by order.
+# Columns are usually split by tabs or spaces and a comma is a decimal mark
+# (owner, 09.11.2026), so a comma between columns ("comma", and "any" which
+# mixes it in) comes last: it wins only when it reads more rows, i.e. when the
+# whitespace readings would have taken data rows for a header.
 _CANDIDATES: tuple[tuple[str, str], ...] = (
     ("tab", "."),
     ("tab", ","),

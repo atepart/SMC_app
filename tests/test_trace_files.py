@@ -292,3 +292,35 @@ def test_quantity_labels_and_placement() -> None:
     assert Y_QUANTITIES["mA"].axis_label == "I, mA" and "логарифмическая" in Y_QUANTITIES["mA"].placement
     assert Y_QUANTITIES["µA log"].axis_label == "log₁₀(I / µA)" and "линейная" in Y_QUANTITIES["µA log"].placement
     assert Y_QUANTITIES["I/Ig log"].title == "I/I_g Log" and Y_QUANTITIES["I/Ig"].axis_label == "I/I_g"
+
+
+@pytest.mark.parametrize(
+    "text, separator, decimal, rows",
+    [
+        ("100,5\t-12,25\n110\t-9\n", "tab", ",", ((100.5, -12.25), (110.0, -9.0))),
+        ("100,5   -12,25\n110 -9\n", "space", ",", ((100.5, -12.25), (110.0, -9.0))),
+        ("100,5 \t -12,25\n", "tab", ",", ((100.5, -12.25),)),
+        ("100,5 \t -12,25\n110 -9\n", "space", ",", ((100.5, -12.25), (110.0, -9.0))),
+        ("100 -12\n110 -9\n", "space", ".", ((100.0, -12.0), (110.0, -9.0))),
+        ("100.5 -12.25\n", "space", ".", ((100.5, -12.25),)),
+        # A comma between columns only when nothing else gives two columns.
+        ("100.5,-12.25\n110,-9\n", "comma", ".", ((100.5, -12.25), (110.0, -9.0))),
+        ("100,5\n110,5\n", "comma", ".", ((100.0, 5.0), (110.0, 5.0))),
+    ],
+    ids=[
+        "tab-comma",
+        "spaces-comma",
+        "tab-and-spaces",
+        "tab-then-spaces",
+        "integers",
+        "spaces-point",
+        "csv",
+        "comma-only-fallback",
+    ],
+)
+def test_whitespace_columns_and_decimal_comma_come_first(tmp_path, text, separator, decimal, rows) -> None:
+    """Owner, 09.11.2026: columns are split by spaces or tabs; a comma is usually a decimal mark."""
+    path = tmp_path / "t.txt"
+    path.write_text(text, encoding="utf-8")
+    table = read_data_table(path)
+    assert (table.separator, table.decimal, table.rows) == (separator, decimal, rows)
