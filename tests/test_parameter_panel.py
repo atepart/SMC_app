@@ -85,6 +85,23 @@ def test_wheel_requires_click_and_groups_collapse(parameter_window: MainWindow) 
     assert not parameter_window.parameters_scroll.isAncestorOf(parameter_window.actions_box)
 
 
+def test_wheel_does_not_take_focus(parameter_window: MainWindow) -> None:
+    """Scrolling the form over the fields must not make each passed field active.
+
+    Qt gives focus on a real (spontaneous) wheel to widgets with ``WheelFocus``,
+    the default of spin boxes; a test cannot send a spontaneous wheel, so the
+    policy itself is checked on every field of the window.
+    """
+    spins = parameter_window.findChildren(SafeDoubleSpinBox)
+    assert len(spins) > 50
+    for spin in spins:
+        assert spin.focusPolicy() == QtCore.Qt.FocusPolicy.StrongFocus
+        assert spin.focusPolicy() & QtCore.Qt.FocusPolicy.WheelFocus != QtCore.Qt.FocusPolicy.WheelFocus
+    spin = parameter_window._config_inputs["l_slot_m"]
+    QTest.mouseClick(spin, QtCore.Qt.MouseButton.LeftButton, pos=spin.rect().center())
+    assert spin.hasFocus()  # a click still activates the field
+
+
 def _typed(value: float, decimals: int, cursor: int, keys: str, maximum: float = 1000.0) -> tuple[str, int]:
     spin = SafeDoubleSpinBox()
     spin.setDecimals(decimals)

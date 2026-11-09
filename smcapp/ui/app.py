@@ -527,7 +527,9 @@ class SafeDoubleSpinBox(QDoubleSpinBox):
 
     Merely moving the cursor over a long parameter form must keep scrolling the
     form.  A click arms wheel editing for this field until focus leaves it;
-    arrow buttons and keyboard input continue to work as normal.
+    arrow buttons and keyboard input continue to work as normal.  The wheel
+    does not even take focus: Qt's default ``WheelFocus`` of spin boxes would
+    make every field passed while scrolling the form the active one.
     """
 
     returnPressed = Signal()
@@ -539,6 +541,7 @@ class SafeDoubleSpinBox(QDoubleSpinBox):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._wheel_armed = False
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setLocale(QtCore.QLocale.c())
         self.setKeyboardTracking(False)
         # The inner line edit has the focus and would turn Meta+Tab into Tab.
