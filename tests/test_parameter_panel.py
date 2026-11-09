@@ -1025,10 +1025,10 @@ def test_same_material_checkbox_names_what_it_copies_and_leaves_thickness(parame
 
 
 def _unit_dialog(path: Path, kind: str = "HFSS"):
-    from smcapp.infrastructure.trace_files import read_trace_table
-    from smcapp.ui.frequency_unit_dialog import FrequencyUnitDialog
+    from smcapp.infrastructure.trace_files import read_data_table
+    from smcapp.ui.trace_import_dialog import TraceImportDialog
 
-    return FrequencyUnitDialog(kind, read_trace_table(path))
+    return TraceImportDialog(kind, read_data_table(path))
 
 
 def test_unit_dialog_preselects_header_unit_and_requires_a_choice_without_one(parameter_window, tmp_path) -> None:
@@ -1047,7 +1047,7 @@ def test_unit_dialog_preselects_header_unit_and_requires_a_choice_without_one(pa
     assert question.startswith("Не удалось однозначно определить единицу частоты")
     assert dialog.selected_unit() is None and not dialog.button_box.button(ok).isEnabled()
     details = dialog.findChild(QtWidgets.QLabel, "frequency_unit_details").text()
-    assert "HD35-H2.tab" in details and "Заголовок: нет" in details and "100 … 1095" in details
+    assert "HD35-H2.tab" in details and "Заголовок: нет" in details and "Строк с числами: 2" in details
     dialog.unit_buttons["GHz"].click()
     assert dialog.button_box.button(ok).isEnabled()
     assert dialog.result_label.text() == "100 … 1095 GHz → 100 … 1095 GHz"
@@ -1055,7 +1055,7 @@ def test_unit_dialog_preselects_header_unit_and_requires_a_choice_without_one(pa
 
 
 def test_import_menu_converts_with_the_chosen_unit_and_cancel_keeps_the_curve(parameter_window, tmp_path) -> None:
-    from smcapp.ui.frequency_unit_dialog import FrequencyUnitDialog
+    from smcapp.ui.trace_import_dialog import TraceImportDialog
 
     window = parameter_window
     path = tmp_path / "exp.csv"
@@ -1071,17 +1071,17 @@ def test_import_menu_converts_with_the_chosen_unit_and_cancel_keeps_the_curve(pa
         return exec_
 
     with patch.object(QtWidgets.QFileDialog, "getOpenFileName", return_value=(str(path), "")):
-        with patch.object(FrequencyUnitDialog, "exec", choose("MHz")):
+        with patch.object(TraceImportDialog, "exec", choose("MHz")):
             window._open_trace_dialog("Experiment")
         trace = window._comparison_traces["Experiment"]
         assert trace.frequencies == pytest.approx((100.0, 200.0)) and trace.unit == "MHz"
         assert "частота в MHz (выбрано при импорте) → 100…200 GHz" in window._s21_status.text()
 
-        with patch.object(FrequencyUnitDialog, "exec", choose(None)):
+        with patch.object(TraceImportDialog, "exec", choose(None)):
             window._open_trace_dialog("Experiment")  # Cancel
         assert window._comparison_traces["Experiment"] is trace
 
-        with patch.object(FrequencyUnitDialog, "exec", choose("GHz")):
+        with patch.object(TraceImportDialog, "exec", choose("GHz")):
             window._open_trace_dialog("HFSS")  # the same file through HFSS: no hidden THz any more
         assert window._comparison_traces["HFSS"].frequencies == pytest.approx((100000.0, 200000.0))
 

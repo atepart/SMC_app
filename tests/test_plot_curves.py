@@ -231,11 +231,11 @@ def _import_through_menu(window: MainWindow, kind: str, path: Path, monkeypatch)
 
     The unit dialog is accepted with what it preselected from the header, as OK would.
     """
-    from smcapp.ui.frequency_unit_dialog import FrequencyUnitDialog
+    from smcapp.ui.trace_import_dialog import TraceImportDialog
 
     action = next(action for action in window.open_files_menu.actions() if action.text() == kind)
     monkeypatch.setattr(QtWidgets.QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: (str(path), ""))
-    monkeypatch.setattr(FrequencyUnitDialog, "exec", lambda dialog: QtWidgets.QDialog.DialogCode.Accepted)
+    monkeypatch.setattr(TraceImportDialog, "exec", lambda dialog: QtWidgets.QDialog.DialogCode.Accepted)
     action.trigger()
     QtWidgets.QApplication.processEvents()
 
@@ -303,7 +303,7 @@ def test_bad_hfss_file_shows_dialog_and_keeps_previous_curve(window: MainWindow,
 
     _import_through_menu(window, "HFSS", broken, monkeypatch)
 
-    assert shown == [("Ошибка импорта HFSS", "Строка 3: частота и S21 должны быть числами: '0.2\\tabc'.")]
+    assert shown == [("Ошибка импорта HFSS", "Строка 3: значения должны быть числами: '0.2\\tabc'.")]
     assert window._comparison_traces["HFSS"].source == HFSS_EXAMPLE
     assert len(_curves(window)["HFSS"].xData) == 81
 
@@ -344,3 +344,155 @@ def test_auto_range_follows_new_data(window: MainWindow) -> None:
     x_range, y_range = view_box.viewRange()
     assert x_range[0] < 1000.0 < 1400.0 < x_range[1] and x_range[1] < 1600.0
     assert y_range[0] < -40.0 and y_range[1] < -20.0
+
+
+# WP-055: decimal commas, column and Y-quantity choice, current on the right axis.
+
+ORIGIN_TABLE = "Freq\tS21\tI\nGHz\tdB\tmA\n100,0\t-12,5\t0,01\n500,0\t-3,5\t0,1\n900,0\t-9,0\t1,0\n"
+
+
+def _origin_file(tmp_path) -> Path:
+    path = tmp_path / "origin.dat"
+    path.write_text(ORIGIN_TABLE, encoding="utf-8")
+    return path
+
+
+def _import_choosing(window: MainWindow, kind: str, path: Path, monkeypatch, y_column: int, quantity: str) -> None:
+    """The real menu action; the import dialog answers with the Y column and quantity given."""
+    from smcapp.ui.trace_import_dialog import TraceImportDialog
+
+    def exec_(dialog):
+        dialog.select_columns(0, y_column)
+        dialog.select_quantity(quantity)
+        return QtWidgets.QDialog.DialogCode.Accepted
+
+    action = next(action for action in window.open_files_menu.actions() if action.text() == kind)
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: (str(path), ""))
+    monkeypatch.setattr(TraceImportDialog, "exec", exec_)
+    action.trigger()
+    QtWidgets.QApplication.processEvents()
+
+
+def test_import_dialog_reads_decimal_commas_and_offers_columns_and_quantities(window: MainWindow, tmp_path) -> None:
+    from smcapp.infrastructure.trace_files import read_data_table
+    from smcapp.ui.trace_import_dialog import TraceImportDialog
+
+    ok = QtWidgets.QDialogButtonBox.StandardButton.Ok
+    dialog = TraceImportDialog("Experiment", read_data_table(_origin_file(tmp_path)), window)
+
+    assert dialog.separator_combo.currentText() == "Авто (Табуляция)"
+    assert dialog.decimal_combo.currentText() == "Авто (Запятая «,»)"
+    assert dialog.preview.columnCount() == 3 and dialog.preview.rowCount() == 3
+    assert dialog.preview.horizontalHeaderItem(2).text() == "3: I, mA"
+    assert dialog.preview.item(0, 2).text() == "0.01"
+    # X with "GHz" in its header, Y the dB column; both guessed from the header.
+    assert dialog.selected_columns() == (0, 1) and dialog.selected_unit() == "GHz"
+    assert dialog.selected_quantity() == "dB" and dialog.button_box.button(ok).isEnabled()
+    assert "левая ось" in dialog.y_result_label.text()
+
+    dialog.select_columns(0, 2)
+    assert dialog.selected_quantity() == "mA"
+    assert "правая ось, логарифмическая шкала" in dialog.y_result_label.text()
+    dialog.select_quantity("mA log")
+    assert "правая ось, линейная шкала" in dialog.y_result_label.text()
+    trace = dialog.comparison_trace()
+    assert trace.quantity == "mA log" and trace.coefficients == (0.01, 0.1, 1.0)
+
+    # A wrong separator: the error is shown and OK is off until it is set back.
+    dialog.select_format("space", ".")
+    assert "не тот разделитель" in dialog.error_label.text()
+    assert not dialog.button_box.button(ok).isEnabled()
+    dialog.select_format(None, None)
+    assert dialog.error_label.text() == "" and dialog.button_box.button(ok).isEnabled()
+
+    dialog.select_columns(1, 1)
+    assert "разными" in dialog.error_label.text() and not dialog.button_box.button(ok).isEnabled()
+
+
+def test_log_scale_needs_positive_values(window: MainWindow, tmp_path) -> None:
+    from smcapp.infrastructure.trace_files import read_data_table
+    from smcapp.ui.trace_import_dialog import TraceImportDialog
+
+    path = tmp_path / "negative.txt"
+    path.write_text("Freq [GHz] I [mA]\n100 -0.5\n200 -0.1\n", encoding="utf-8")
+    dialog = TraceImportDialog("Experiment", read_data_table(path), window)
+    assert dialog.selected_quantity() == "mA"
+    assert "Все значения ≤ 0" in dialog.y_result_label.text()
+    assert not dialog.button_box.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).isEnabled()
+    dialog.select_quantity("mA log")
+    assert dialog.button_box.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).isEnabled()
+
+
+def test_current_goes_to_a_right_log_axis_with_its_own_home(window: MainWindow, tmp_path, monkeypatch) -> None:
+    import math
+
+    window._update_s21_plot(FREQUENCIES, [-10.0, -4.0, -2.0, -5.0, -12.0])
+    home = window._plot_initial_range
+    plot_item = window._plot.getPlotItem()
+    assert not plot_item.getAxis("right").isVisible()
+    assert not window._plot_y2_inputs["y2_min"].isVisible()
+
+    _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "mA")
+
+    right = plot_item.getAxis("right")
+    assert right.isVisible() and right.logMode and right.labelText == "I, mA"
+    [exp] = window._right_curve_items
+    assert exp.getViewBox() is window._right_view and exp.name() == "exp"
+    assert exp.yData.tolist() == pytest.approx([-2.0, -1.0, 0.0])  # log10 of the mA values
+    assert [name for name, _ in _legend(window)] == ["SMC", "exp"]
+    assert "exp" not in _curves(window)  # not on the S21 axis
+    assert "I, mA: правая ось, логарифмическая шкала" in window._s21_status.text()
+    # Y2 fields appear, filled from the data; the S21 view stays on Home.
+    assert window._plot_y2_inputs["y2_min"].isVisible()
+    assert window._plot_y2_labels["y2_min"].text() == "Y2 min, mA"
+    low, high = window._right_view.viewRange()[1]
+    assert low < -2.0 and high > 0.0
+    assert window._plot_y2_inputs["y2_min"].value() == pytest.approx(10.0**low)
+    assert plot_item.vb.viewRange()[1] == pytest.approx([home[2], home[3]])
+    # The X range is shared.
+    assert window._right_view.viewRange()[0] == pytest.approx(plot_item.vb.viewRange()[0])
+
+    # Y2 min/max become part of Home.
+    window._plot_y2_inputs["y2_min"].setValue(0.001)
+    window._plot_y2_inputs["y2_max"].setValue(10.0)
+    window._apply_plot_scale()
+    assert window._right_view.viewRange()[1] == pytest.approx([-3.0, 1.0])
+    window._right_view.scaleBy((1, 0.5))
+    window._restore_plot_scale()
+    assert window._right_view.viewRange()[1] == pytest.approx([-3.0, 1.0])
+
+    # Zero is not on a log scale: refused, Home unchanged.
+    warnings: list[str] = []
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", lambda _parent, _title, text: warnings.append(text))
+    window._plot_y2_inputs["y2_min"].setValue(0.0)
+    window._apply_plot_scale()
+    assert warnings == ["На логарифмической шкале Y2 min должен быть больше нуля."]
+    assert window._plot_initial_y2 == pytest.approx((0.001, 10.0))
+
+    # Hover shows the current too.
+    window._plot.resize(900, 600)
+    QtWidgets.QApplication.processEvents()
+    center = plot_item.vb.sceneBoundingRect().center()
+    window._on_plot_mouse_moved(center)
+    expected = 10.0 ** window._right_view.mapSceneToView(center).y()
+    assert window._plot_hover_label.text().endswith(f"I = {expected:.3g} mA")
+    assert math.isfinite(expected)
+
+
+def test_log_values_use_a_linear_right_axis_and_db_goes_back_left(window: MainWindow, tmp_path, monkeypatch) -> None:
+    path = tmp_path / "log.txt"
+    path.write_text("Freq [GHz]; lg I [uA]\n100; -1,5\n500; 0,25\n", encoding="utf-8")
+    _import_choosing(window, "HFSS", path, monkeypatch, 1, "µA log")
+
+    right = window._plot.getPlotItem().getAxis("right")
+    assert right.isVisible() and not right.logMode and right.labelText == "log₁₀(I / µA)"
+    [hfss] = window._right_curve_items
+    assert hfss.yData.tolist() == pytest.approx([-1.5, 0.25])
+    assert window._plot_y2_labels["y2_max"].text() == "Y2 max, lg µA"
+    assert window._plot_y2_inputs["y2_min"].value() < -1.5
+
+    # The same file as dB: back on the S21 axis, the right axis and Y2 fields go away.
+    _import_choosing(window, "HFSS", path, monkeypatch, 1, "dB")
+    assert window._right_curve_items == [] and not right.isVisible()
+    assert _curves(window)["HFSS"].yData.tolist() == [-1.5, 0.25]
+    assert not window._plot_y2_inputs["y2_max"].isVisible()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import math
 import os
+import re
 import subprocess
 import sys
 import traceback
@@ -79,8 +80,15 @@ from smcapp.infrastructure.design_files import DesignFileService
 from smcapp.infrastructure.geometry import SIGNAL_INPUT
 from smcapp.infrastructure.hover import ElementHitMap, NumberMark
 from smcapp.infrastructure.settings import migrate_legacy_settings
-from smcapp.infrastructure.trace_files import ComparisonTrace, TraceTable, convert_trace, read_trace_table
-from smcapp.ui.frequency_unit_dialog import FrequencyUnitDialog
+from smcapp.infrastructure.trace_files import (
+    ComparisonTrace,
+    TraceTable,
+    YQuantity,
+    convert_trace,
+    read_data_table,
+    read_trace_table,
+    right_axis_values,
+)
 from smcapp.ui.plot_legend import CheckableItemSample, PlainItemSample
 from smcapp.ui.theme import (
     ACCENT,
@@ -93,6 +101,7 @@ from smcapp.ui.theme import (
     run_button_stylesheet,
     save_theme,
 )
+from smcapp.ui.trace_import_dialog import TraceImportDialog
 from smcapp.ui.update_dialogs import DownloadReleaseWorker, FetchReleasesWorker, ReleasePickerDialog
 
 CURRENT_DOCK_LAYOUT_VERSION = 1
@@ -153,6 +162,22 @@ def format_plot_coordinates(frequency_ghz: float, s21_db: float) -> str:
     frequency = round(frequency_ghz) + 0.0
     s21 = round(s21_db, 2) + 0.0
     return f"f = {frequency:.0f} GHz; S21 = {s21:.2f} dB"
+
+
+def format_right_axis_value(quantity: YQuantity, log_value: float) -> str:
+    """Cursor plate text for the right axis, which is drawn in log10 space (WP-055)."""
+    if quantity.logarithmic:
+        return f"{quantity.axis_label} = {log_value:.3f}"
+    value = 10.0**log_value
+    if quantity.family == "normalized":
+        return f"I/I_g = {value:.3g}"
+    return f"I = {value:.3g} {quantity.unit}"
+
+
+def right_axis_range_unit(quantity: YQuantity) -> str:
+    """Unit of the Y2 min/max fields: the current itself, or its log10 for "Log" data."""
+    unit = quantity.unit if quantity.family == "current" else "I/I_g"
+    return f"lg {unit}" if quantity.logarithmic else unit
 
 
 @dataclass(frozen=True)
@@ -667,6 +692,33 @@ class SafeDoubleSpinBox(QDoubleSpinBox):
             event.ignore()
 
 
+class ScaleSpinBox(SafeDoubleSpinBox):
+    """Y2 range field: currents of any magnitude, shown with six significant digits."""
+
+    _PARTIAL = re.compile(r"[+-]?\d*[.,]?\d*(?:[eE][+-]?\d*)?")
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setDecimals(15)
+
+    def textFromValue(self, value: float) -> str:  # noqa: N802 - Qt API
+        return f"{value:.6g}"
+
+    def valueFromText(self, text: str) -> float:  # noqa: N802 - Qt API
+        return float(text.replace(",", ".").strip())
+
+    def validate(self, text: str, pos: int):
+        candidate = text.replace(",", ".").strip()
+        try:
+            value = float(candidate)
+        except ValueError:
+            state = QValidator.State.Intermediate if self._PARTIAL.fullmatch(candidate) else QValidator.State.Invalid
+            return state, text, pos
+        if not math.isfinite(value) or not self.minimum() <= value <= self.maximum():
+            return QValidator.State.Intermediate, text, pos
+        return QValidator.State.Acceptable, text, pos
+
+
 class FrequencyAxisItem(pg.AxisItem):
     """Frequency axis that switches from GHz to THz instead of showing kGHz."""
 
@@ -819,6 +871,12 @@ class MainWindow(QMainWindow):
         self._design_files = DesignFileService()
         # HFSS .tab: header row and frequency in THz; experiment: plain GHz pairs.
         self._comparison_traces: dict[str, ComparisonTrace] = {}
+        # WP-055: current traces go to a right axis; its quantity follows the
+        # latest such import, its Home range (in displayed units) is Y2 min/max.
+        self._right_axis_quantity: YQuantity | None = None
+        self._right_axis_fit_pending = False
+        self._right_curve_items: list[pg.PlotDataItem] = []
+        self._plot_initial_y2: tuple[float, float] | None = None
         self._theory_trace: tuple[object, object] | None = None
         self._previous_theory_trace: tuple[object, object] | None = None
         # Parameters of the calculation running now and of the one shown as SMC.
@@ -1183,6 +1241,24 @@ class MainWindow(QMainWindow):
         export = QPushButton("Экспорт PNG", panel)
         export.clicked.connect(self._export_plot_dialog)
         controls.addWidget(export, 1, 5, 1, 3)
+        # WP-055: the right (current) axis, under Y min/Y max; shown with a curve on it.
+        self._plot_y2_inputs: dict[str, ScaleSpinBox] = {}
+        self._plot_y2_labels: dict[str, QLabel] = {}
+        for column, (name, value) in enumerate((("y2_min", 0.001), ("y2_max", 1.0)), start=2):
+            label = QLabel(panel)
+            label.setObjectName(f"plot_{name}_label")
+            spin = ScaleSpinBox(panel)
+            spin.setObjectName(f"plot_{name}")
+            spin.setRange(-1e12, 1e12)
+            spin.setValue(value)
+            spin.setFixedWidth(90)
+            spin.returnPressed.connect(self._apply_plot_scale)
+            self._plot_y2_labels[name] = label
+            self._plot_y2_inputs[name] = spin
+            controls.addWidget(label, 2, column * 2)
+            controls.addWidget(spin, 2, column * 2 + 1)
+            label.hide()
+            spin.hide()
         controls.setColumnStretch(8, 1)
         layout.addLayout(controls)
         return panel
@@ -1463,7 +1539,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Ошибка открытия параметров", str(exc))
 
     def _open_trace_dialog(self, kind: str) -> None:
-        """Select and add an HFSS or experiment comparison table."""
+        """Select a comparison table, choose its columns, units and Y quantity, and add it."""
         selected, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             f"Открыть {kind}",
@@ -1473,23 +1549,30 @@ class MainWindow(QMainWindow):
         if not selected:
             return
         try:
-            table = read_trace_table(selected)
+            table = read_data_table(selected)
         except (OSError, UnicodeError, ValueError) as exc:
             QMessageBox.critical(self, f"Ошибка импорта {kind}", str(exc))
             return
-        # BUG-024: the unit is always confirmed by the user; Cancel keeps the plot as it was.
-        dialog = FrequencyUnitDialog(kind, table, self)
+        # BUG-024, WP-055: columns, the unit and the Y quantity are always confirmed
+        # by the user; Cancel keeps the plot as it was.
+        dialog = TraceImportDialog(kind, table, self)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted or dialog.selected_unit() is None:
             return
-        self.load_comparison_trace(kind, table, dialog.selected_unit(), dialog.unit_source())
+        self.add_comparison_trace(kind, dialog.comparison_trace())
 
     def load_comparison_trace(
-        self, kind: str, source: str | Path | TraceTable, unit: str | None = None, unit_source: str = ""
+        self,
+        kind: str,
+        source: str | Path | TraceTable,
+        unit: str | None = None,
+        unit_source: str = "",
+        quantity: str = "dB",
     ) -> ComparisonTrace:
         """Add a plot-only trace with frequencies in *unit*; it never changes calculation parameters.
 
         Without *unit* the unit named in the header of the frequency column is
         used; a file without one is refused instead of being guessed (BUG-024).
+        A file is read as its first two columns; *quantity* says what Y is.
         """
         if kind not in COMPARISON_CURVE_NAMES:
             raise ValueError(f"Неизвестный тип сравнительного графика: {kind}.")
@@ -1498,16 +1581,30 @@ class MainWindow(QMainWindow):
             if table.header_unit is None:
                 raise ValueError(f"Единица частоты не определена: {table.unit_note}. Укажите её при импорте.")
             unit, unit_source = table.header_unit, table.unit_note
-        trace = convert_trace(table, unit, unit_source)
+        return self.add_comparison_trace(kind, convert_trace(table, unit, unit_source, quantity))
+
+    def add_comparison_trace(self, kind: str, trace: ComparisonTrace) -> ComparisonTrace:
+        """Show *trace* as the HFSS or exp curve: dB on the left axis, current on the right one (WP-055)."""
+        if kind not in COMPARISON_CURVE_NAMES:
+            raise ValueError(f"Неизвестный тип сравнительного графика: {kind}.")
+        quantity = trace.y_quantity
+        if quantity.axis == "right" and quantity != self._right_axis_quantity:
+            # The latest current decides the right axis' unit and scale; a new
+            # quantity there starts from its data range, the same one keeps the view.
+            self._right_axis_quantity = quantity
+            self._right_axis_fit_pending = True
         self._comparison_traces[kind] = trace
-        self._remember_file_directory(table.source)
+        self._remember_file_directory(trace.source)
         self._redraw_plot()
         if self._s21_status is not None:
             low, high = trace.frequencies[0], trace.frequencies[-1]
-            self._s21_status.setText(
+            text = (
                 f"{kind}: загружено {len(trace.frequencies)} точек из {trace.source}; "
-                f"частота в {unit} ({unit_source or 'указано'}) → {low:.6g}…{high:.6g} GHz"
+                f"частота в {trace.unit} ({trace.unit_source or 'указано'}) → {low:.6g}…{high:.6g} GHz"
             )
+            if quantity.axis == "right":
+                text += f"; {quantity.title}: {quantity.placement}"
+            self._s21_status.setText(text)
         return trace
 
     def save_design_to_path(self, path: str | Path) -> Path:
@@ -1868,6 +1965,20 @@ class MainWindow(QMainWindow):
         self._plot_threshold_line.setZValue(-1)
         self._plot.addItem(self._plot_threshold_line, ignoreBounds=True)
         self._plot.getPlotItem().setContentsMargins(12, 12, 12, 12)
+        # WP-055: current on a right axis with its own Y, the same X.  The view
+        # lies under the main one, so the mouse pans and zooms the main view (X
+        # follows); the right axis itself drags and wheels its own Y.
+        self._right_view = pg.ViewBox(enableMenu=False)
+        self._right_view.setZValue(-10)
+        self._right_view.enableAutoRange(x=False, y=False)
+        plot_item.scene().addItem(self._right_view)
+        right_axis = plot_item.getAxis("right")
+        right_axis.linkToView(self._right_view)
+        right_axis.enableAutoSIPrefix(False)
+        right_axis.setStyle(tickFont=tick_font)
+        self._right_view.setXLink(plot_item)
+        plot_item.vb.sigResized.connect(self._sync_right_view_geometry)
+        plot_item.hideAxis("right")
         self._apply_plot_theme()
         self._plot_initial_range = (100.0, 900.0, -20.0, 0.0)
         self._plot_hover_label = QLabel(self._plot)
@@ -1896,13 +2007,13 @@ class MainWindow(QMainWindow):
         self._plot.setBackground(colors.plot_background)
         self._set_plot_title(colors.plot_foreground)
         axis_pen = pg.mkPen(colors.plot_foreground, width=1)
-        for axis_name in ("left", "bottom"):
+        for axis_name in ("left", "bottom", "right"):
             axis = self._plot.getPlotItem().getAxis(axis_name)
             axis.setPen(axis_pen)
             axis.setTextPen(axis_pen)
         self._plot_legend.setLabelTextColor(colors.plot_foreground)
         self._plot_threshold_line.setPen(pg.mkPen(colors.threshold_line, width=1))
-        for item in self._plot.listDataItems():
+        for item in self._curve_items():
             style = self._curve_style(item.name())
             item.setPen(style["pen"])
             if "symbolBrush" in style:
@@ -1944,6 +2055,10 @@ class MainWindow(QMainWindow):
             return {"pen": pen}
         raise ValueError(f"Неизвестная кривая графика: {name}.")
 
+    def _curve_items(self) -> list[pg.PlotDataItem]:
+        """Curves on both axes: the main plot's and the right axis' (WP-055)."""
+        return [*self._plot.listDataItems(), *self._right_curve_items]
+
     def is_curve_visible(self, name: str) -> bool:
         """Whether the curve's legend check box is on (also for curves not plotted yet)."""
         return name not in self._hidden_curves
@@ -1954,7 +2069,7 @@ class MainWindow(QMainWindow):
             self._hidden_curves.discard(name)
         else:
             self._hidden_curves.add(name)
-        for item in self._plot.listDataItems():
+        for item in self._curve_items():
             if item.name() == name:
                 item.setVisible(visible)
         for sample, _label in self._plot_legend.items:
@@ -1973,14 +2088,46 @@ class MainWindow(QMainWindow):
         if x_min >= x_max or y_min >= y_max:
             QMessageBox.warning(self, "Некорректный масштаб", "Минимум должен быть меньше максимума.")
             return
+        y2_range = None
+        if self._right_axis_shown():
+            y2_min = self._plot_y2_inputs["y2_min"].value()
+            y2_max = self._plot_y2_inputs["y2_max"].value()
+            if y2_min >= y2_max:
+                QMessageBox.warning(self, "Некорректный масштаб", "Y2 min должен быть меньше Y2 max.")
+                return
+            if not self._right_axis_quantity.logarithmic and y2_min <= 0:
+                QMessageBox.warning(
+                    self, "Некорректный масштаб", "На логарифмической шкале Y2 min должен быть больше нуля."
+                )
+                return
+            y2_range = (y2_min, y2_max)
         self._plot_initial_range = (x_min, x_max, y_min, y_max)
+        if y2_range is not None:
+            self._plot_initial_y2 = y2_range
         self._restore_plot_scale()
 
     def _restore_plot_scale(self) -> None:
-        """Return the plot to the user-defined initial X/Y range."""
+        """Return the plot to the user-defined initial X/Y (and Y2) range."""
         x_min, x_max, y_min, y_max = self._plot_initial_range
         self._plot.setXRange(x_min, x_max, padding=0)
         self._plot.setYRange(y_min, y_max, padding=0)
+        if self._right_axis_shown() and self._plot_initial_y2 is not None:
+            self._right_view.setYRange(*self._right_view_range(self._plot_initial_y2), padding=0)
+
+    def _right_axis_shown(self) -> bool:
+        return bool(self._right_curve_items) and self._right_axis_quantity is not None
+
+    def _right_view_range(self, displayed: tuple[float, float]) -> tuple[float, float]:
+        """Y2 min/max as shown in the fields → the right view's log10 coordinates."""
+        low, high = displayed
+        if self._right_axis_quantity is not None and not self._right_axis_quantity.logarithmic:
+            return math.log10(low), math.log10(high)
+        return low, high
+
+    def _sync_right_view_geometry(self) -> None:
+        main_view = self._plot.getPlotItem().vb
+        self._right_view.setGeometry(main_view.sceneBoundingRect())
+        self._right_view.linkedViewChanged(main_view, self._right_view.XAxis)
 
     def _sync_frequency_axis_unit(self, *_args) -> None:
         """Keep the bottom-axis unit aligned with the visible GHz range."""
@@ -1999,7 +2146,11 @@ class MainWindow(QMainWindow):
             self._plot_hover_label.hide()
             return
         cursor_value = view_box.mapSceneToView(scene_position)
-        self._plot_hover_label.setText(format_plot_coordinates(cursor_value.x(), cursor_value.y()))
+        text = format_plot_coordinates(cursor_value.x(), cursor_value.y())
+        if self._right_axis_shown():
+            right_value = self._right_view.mapSceneToView(scene_position).y()
+            text += "; " + format_right_axis_value(self._right_axis_quantity, right_value)
+        self._plot_hover_label.setText(text)
         self._plot_hover_label.adjustSize()
         local = self._plot.mapFromScene(scene_position)
         self._plot_hover_label.move(local.x() + 12, local.y() + 12)
@@ -2318,30 +2469,90 @@ class MainWindow(QMainWindow):
         # With auto-range on (the "A" button) the view follows the new data.
         view_box = self._plot.getPlotItem().vb
         kept_range = None if any(view_box.state["autoRange"]) else view_box.viewRange()
+        for item in self._right_curve_items:
+            self._plot_legend.removeItem(item)
+            self._right_view.removeItem(item)
+        self._right_curve_items = []
         self._plot.clear()
         self._plot.addItem(self._plot_threshold_line, ignoreBounds=True)
-        curves: list[tuple[str, object, object]] = []
+        curves: list[tuple[str, object, object, bool]] = []
         if self._theory_trace is not None:
-            curves.append((SMC_CURVE, *self._theory_trace))
+            curves.append((SMC_CURVE, *self._theory_trace, False))
         if self._previous_theory_trace is not None:
-            curves.append((PREV_CURVE, *self._previous_theory_trace))
+            curves.append((PREV_CURVE, *self._previous_theory_trace, False))
         if self._buffer is not None and self._buffer.trace is not None:
-            curves.append((BUFF_CURVE, *self._buffer.trace))
+            curves.append((BUFF_CURVE, *self._buffer.trace, False))
+        right_traces = [trace for trace in self._comparison_traces.values() if trace.y_quantity.axis == "right"]
+        if not right_traces:
+            self._right_axis_quantity = None
+            self._plot_initial_y2 = None
+        elif self._right_axis_quantity is None:
+            self._right_axis_quantity = right_traces[-1].y_quantity
+            self._right_axis_fit_pending = True
         for kind, name in COMPARISON_CURVE_NAMES.items():
             trace = self._comparison_traces.get(kind)
-            if trace is not None:
-                curves.append((name, trace.frequencies, trace.coefficients))
+            if trace is None:
+                continue
+            if trace.y_quantity.axis == "right":
+                frequencies, values, _dropped = right_axis_values(trace, self._right_axis_quantity)
+                curves.append((name, frequencies, values, True))
+            else:
+                curves.append((name, trace.frequencies, trace.coefficients, False))
         # Legend in the GitHub #11 order; unchecked curves stay hidden.
         order = (SMC_CURVE, PREV_CURVE, BUFF_CURVE, HFSS_CURVE, EXP_CURVE)
-        for name, frequencies, values in sorted(curves, key=lambda curve: order.index(curve[0])):
-            item = self._plot.plot(frequencies, values, name=name, **self._curve_style(name))
+        for name, frequencies, values, right in sorted(curves, key=lambda curve: order.index(curve[0])):
+            if right:
+                item = pg.PlotDataItem(list(frequencies), list(values), name=name, **self._curve_style(name))
+                self._right_view.addItem(item)
+                self._plot_legend.addItem(item, name)
+                self._right_curve_items.append(item)
+            else:
+                item = self._plot.plot(frequencies, values, name=name, **self._curve_style(name))
             item.setZValue(_CURVE_Z_VALUES[name])
             item.setVisible(self.is_curve_visible(name))
         self._arrange_legend()
+        self._update_right_axis()
 
         if kept_range is not None:
             (x_min, x_max), (y_min, y_max) = kept_range
             view_box.setRange(xRange=(x_min, x_max), yRange=(y_min, y_max), padding=0)
+
+    def _update_right_axis(self) -> None:
+        """Show the right axis, its label, scale and Y2 fields while a current is plotted (WP-055)."""
+        plot_item = self._plot.getPlotItem()
+        shown = self._right_axis_shown()
+        for name in ("y2_min", "y2_max"):
+            self._plot_y2_labels[name].setVisible(shown)
+            self._plot_y2_inputs[name].setVisible(shown)
+        if not shown:
+            plot_item.hideAxis("right")
+            return
+        quantity = self._right_axis_quantity
+        axis = plot_item.getAxis("right")
+        plot_item.showAxis("right")
+        axis.setLabel(quantity.axis_label, **{"font-size": f"{scaled_point_size(PLOT_AXIS_LABEL_SCALE)}pt"})
+        # Plain current: log scale (ticks 10^y); "Log" data: y as it is.
+        axis.setLogMode(y=not quantity.logarithmic)
+        unit = right_axis_range_unit(quantity)
+        self._plot_y2_labels["y2_min"].setText(f"Y2 min, {unit}")
+        self._plot_y2_labels["y2_max"].setText(f"Y2 max, {unit}")
+        self._sync_right_view_geometry()
+        if self._right_axis_fit_pending:
+            self._right_axis_fit_pending = False
+            values = [value for item in self._right_curve_items if item.yData is not None for value in item.yData]
+            if not values:
+                return  # nothing positive to show on a log scale: keep the fields as they are
+            low, high = min(values), max(values)
+            pad = 0.05 * (high - low) if high > low else 0.5
+            low, high = low - pad, high + pad
+            displayed = (low, high) if quantity.logarithmic else (10.0**low, 10.0**high)
+            # Three significant digits: the narrow fields show the whole number.
+            displayed = tuple(float(f"{value:.3g}") for value in displayed)
+            low, high = self._right_view_range(displayed)
+            self._plot_initial_y2 = displayed
+            for name, value in zip(("y2_min", "y2_max"), displayed):
+                self._plot_y2_inputs[name].setValue(value)
+            self._right_view.setYRange(low, high, padding=0)
 
     def _arrange_legend(self) -> None:
         """Lay the legend out from its top row: one column, two for many curves.
