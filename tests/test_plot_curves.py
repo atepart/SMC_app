@@ -51,7 +51,7 @@ def _with_all_plotted_curves(window: MainWindow, tmp_path) -> None:
     window._update_s21_plot(FREQUENCIES, [-9.0, -3.0, -1.5, -4.0, -11.0])
     experiment = tmp_path / "experiment.txt"
     experiment.write_text("100 -11\n500 -2.5\n900 -13\n", encoding="utf-8")
-    window.load_comparison_trace("Experiment", experiment)
+    window.load_comparison_trace("Experiment", experiment, "GHz")
 
 
 def _curves(window: MainWindow) -> dict:
@@ -159,7 +159,7 @@ def test_check_box_hides_curve_and_survives_recalculation_import_and_theme(windo
     assert _curves(window)["SMC"].yData.tolist() == [-8.0, -2.0, -1.0, -3.0, -10.0]
     assert [name for name, _ in _legend(window)] == ["SMC", "prev", "exp"]
 
-    window.load_comparison_trace("Experiment", tmp_path / "experiment.txt")
+    window.load_comparison_trace("Experiment", tmp_path / "experiment.txt", "GHz")
     assert not _curves(window)["SMC"].isVisible()
 
     window.set_theme(Theme.DARK)
@@ -227,9 +227,15 @@ HFSS_EXAMPLE = Path(__file__).resolve().parent / "data" / "hfss_s21_example.tab"
 
 
 def _import_through_menu(window: MainWindow, kind: str, path: Path, monkeypatch) -> None:
-    """Trigger the real "Открыть файл" menu action; only the file dialog is answered."""
+    """Trigger the real "Открыть файл" menu action; the file dialog and the unit dialog are answered.
+
+    The unit dialog is accepted with what it preselected from the header, as OK would.
+    """
+    from smcapp.ui.frequency_unit_dialog import FrequencyUnitDialog
+
     action = next(action for action in window.open_files_menu.actions() if action.text() == kind)
     monkeypatch.setattr(QtWidgets.QFileDialog, "getOpenFileName", lambda *_args, **_kwargs: (str(path), ""))
+    monkeypatch.setattr(FrequencyUnitDialog, "exec", lambda dialog: QtWidgets.QDialog.DialogCode.Accepted)
     action.trigger()
     QtWidgets.QApplication.processEvents()
 
@@ -319,7 +325,7 @@ def test_zoom_and_pan_survive_recalculation_import_and_buffer(window: MainWindow
     window._update_s21_plot(FREQUENCIES, [-9.0, -3.0, -1.5, -4.0, -11.0])
     experiment = tmp_path / "experiment.txt"
     experiment.write_text("100 -11\n500 -2.5\n900 -13\n", encoding="utf-8")
-    window.load_comparison_trace("Experiment", experiment)
+    window.load_comparison_trace("Experiment", experiment, "GHz")
     window.load_comparison_trace("HFSS", HFSS_EXAMPLE)
     window.store_buffer()
     assert view_box.viewRange() == [pytest.approx(zoomed[0]), pytest.approx(zoomed[1])]

@@ -85,7 +85,8 @@ from smcapp.infrastructure.design_files import DesignFileService
 from smcapp.infrastructure.geometry import SIGNAL_INPUT
 from smcapp.infrastructure.hover import ElementHitMap, NumberMark
 from smcapp.infrastructure.settings import migrate_legacy_settings
-from smcapp.infrastructure.trace_files import ComparisonTrace, HfssTabReader, TraceFileReader
+from smcapp.infrastructure.trace_files import ComparisonTrace, TraceTable, convert_trace, read_trace_table
+from smcapp.ui.frequency_unit_dialog import FrequencyUnitDialog
 from smcapp.ui.plot_legend import CheckableItemSample, PlainItemSample
 from smcapp.ui.theme import (
     ACCENT,
@@ -114,8 +115,8 @@ EXP_CURVE = "exp"
 COMPARISON_CURVE_NAMES = {"HFSS": HFSS_CURVE, "Experiment": EXP_CURVE}
 # File dialog filter per kind: HFSS exports .tab tables with a header row.
 _COMPARISON_FILE_FILTERS = {
-    "HFSS": "HFSS (*.tab);;Все файлы (*)",
-    "Experiment": "Двухколоночный текст (*.txt *.dat *.tab);;Все файлы (*)",
+    "HFSS": "HFSS (*.tab *.txt *.csv);;Все файлы (*)",
+    "Experiment": "Двухколоночный текст (*.txt *.dat *.tab *.csv);;Все файлы (*)",
 }
 # Draw order: the thick grey buffer at the bottom, the current SMC on top.
 _CURVE_Z_VALUES = {BUFF_CURVE: -0.5, PREV_CURVE: 0.0, HFSS_CURVE: 0.25, EXP_CURVE: 0.5, SMC_CURVE: 1.0}
@@ -823,7 +824,6 @@ class MainWindow(QMainWindow):
         self._defaults = S21Config()
         self._design_files = DesignFileService()
         # HFSS .tab: header row and frequency in THz; experiment: plain GHz pairs.
-        self._trace_readers = {"HFSS": HfssTabReader(), "Experiment": TraceFileReader()}
         self._comparison_traces: dict[str, ComparisonTrace] = {}
         self._theory_trace: tuple[object, object] | None = None
         self._previous_theory_trace: tuple[object, object] | None = None
@@ -1064,14 +1064,22 @@ class MainWindow(QMainWindow):
                 )
             form = box.form_layout
 
+            checkbox = None
             if group_name == "EL2 Material":
-                checkbox = QCheckBox("Use the same material as EL1")
+                # The checkbox copies the material (Tc, α, σ) only.  The film
+                # thickness is geometry, so d EL2 stays editable above it and is
+                # not mistaken for a field the checkbox forgot (owner, 09.11.2026).
+                synced = set(self._material_sync_map.values())
+                group_fields = sorted(group_fields, key=lambda info: info.name in synced)
+                checkbox = QCheckBox("Use the same material as EL1 (Tc, α, σ)")
                 checkbox.setChecked(True)
                 checkbox.toggled.connect(self._on_same_materials_toggled)
                 self._same_materials_checkbox = checkbox
-                form.addRow("", checkbox)
 
             for field_info in group_fields:
+                if checkbox is not None and field_info.name in self._material_sync_map.values():
+                    form.addRow("", checkbox)
+                    checkbox = None
                 spin = self._create_spinbox(field_info.name, field_info)
                 prefix = f"{field_info.number} · " if field_info.number is not None else ""
                 label = QLabel(prefix + field_info.label)
@@ -1212,7 +1220,9 @@ class MainWindow(QMainWindow):
         design_action.setToolTip("Открыть .smcdesign/.json или старый .aocdesign/.aocapp с параметрами расчёта")
         design_action.triggered.connect(self._load_design_dialog)
         hfss_action = self.open_files_menu.addAction("HFSS")
-        hfss_action.setToolTip("Добавить на график расчёт HFSS (.tab, частота в THz, S21 в dB)")
+        hfss_action.setToolTip(
+            "Добавить на график расчёт HFSS (.tab, частота и S21 в dB); единицы частоты подтверждаются при импорте"
+        )
         hfss_action.triggered.connect(lambda: self._open_trace_dialog("HFSS"))
         experiment_action = self.open_files_menu.addAction("Experiment")
         experiment_action.triggered.connect(lambda: self._open_trace_dialog("Experiment"))
@@ -1466,20 +1476,41 @@ class MainWindow(QMainWindow):
         if not selected:
             return
         try:
-            self.load_comparison_trace(kind, selected)
+            table = read_trace_table(selected)
         except (OSError, UnicodeError, ValueError) as exc:
             QMessageBox.critical(self, f"Ошибка импорта {kind}", str(exc))
+            return
+        # BUG-024: the unit is always confirmed by the user; Cancel keeps the plot as it was.
+        dialog = FrequencyUnitDialog(kind, table, self)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted or dialog.selected_unit() is None:
+            return
+        self.load_comparison_trace(kind, table, dialog.selected_unit(), dialog.unit_source())
 
-    def load_comparison_trace(self, kind: str, path: str | Path) -> ComparisonTrace:
-        """Load a plot-only trace; it never changes calculation parameters."""
+    def load_comparison_trace(
+        self, kind: str, source: str | Path | TraceTable, unit: str | None = None, unit_source: str = ""
+    ) -> ComparisonTrace:
+        """Add a plot-only trace with frequencies in *unit*; it never changes calculation parameters.
+
+        Without *unit* the unit named in the header of the frequency column is
+        used; a file without one is refused instead of being guessed (BUG-024).
+        """
         if kind not in COMPARISON_CURVE_NAMES:
             raise ValueError(f"Неизвестный тип сравнительного графика: {kind}.")
-        trace = self._trace_readers[kind].load(path)
+        table = source if isinstance(source, TraceTable) else read_trace_table(source)
+        if unit is None:
+            if table.header_unit is None:
+                raise ValueError(f"Единица частоты не определена: {table.unit_note}. Укажите её при импорте.")
+            unit, unit_source = table.header_unit, table.unit_note
+        trace = convert_trace(table, unit, unit_source)
         self._comparison_traces[kind] = trace
-        self._remember_file_directory(path)
+        self._remember_file_directory(table.source)
         self._redraw_plot()
         if self._s21_status is not None:
-            self._s21_status.setText(f"{kind}: загружено {len(trace.frequencies)} точек из {trace.source}")
+            low, high = trace.frequencies[0], trace.frequencies[-1]
+            self._s21_status.setText(
+                f"{kind}: загружено {len(trace.frequencies)} точек из {trace.source}; "
+                f"частота в {unit} ({unit_source or 'указано'}) → {low:.6g}…{high:.6g} GHz"
+            )
         return trace
 
     def save_design_to_path(self, path: str | Path) -> Path:

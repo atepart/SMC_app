@@ -228,7 +228,7 @@ def _three_curves(window: MainWindow, tmp_path) -> None:
     window._update_s21_plot(FREQUENCIES, [-9.0, -3.0, -1.5, -4.0, -11.0])
     experiment = tmp_path / "experiment.txt"
     experiment.write_text("100 -11\n500 -2.5\n900 -13\n", encoding="utf-8")
-    window.load_comparison_trace("Experiment", experiment)
+    window.load_comparison_trace("Experiment", experiment, "GHz")
     QtWidgets.QApplication.processEvents()
 
 

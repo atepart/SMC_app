@@ -341,7 +341,7 @@ def test_open_file_menu_imports_hfss_and_experiment(parameter_window: MainWindow
     with pytest.raises(ValueError, match="Неизвестный тип"):
         parameter_window.load_comparison_trace("Touchstone", hfss)
     parameter_window.load_comparison_trace("HFSS", hfss)
-    parameter_window.load_comparison_trace("Experiment", experiment)
+    parameter_window.load_comparison_trace("Experiment", experiment, "GHz")
     parameter_window._update_s21_plot([100.0, 110.0], [-11.5, -9.5])
 
     assert set(parameter_window._comparison_traces) == {"HFSS", "Experiment"}
@@ -956,3 +956,95 @@ def test_invalid_design_dialog_preserves_parameters(parameter_window, tmp_path) 
         parameter_window._load_design_dialog()
     assert "некорректный JSON" in error.call_args.args[2]
     assert parameter_window._build_config() == original
+
+
+def test_same_material_checkbox_names_what_it_copies_and_leaves_thickness(parameter_window: MainWindow) -> None:
+    """Owner, 09.11.2026: d EL2 looked forgotten; thickness is geometry, so it sits above the checkbox."""
+    window = parameter_window
+    checkbox = window._same_materials_checkbox
+    assert checkbox.text() == "Use the same material as EL1 (Tc, α, σ)"
+    form = window._parameter_groups["EL2 Material"].form_layout
+    rows = []
+    for row in range(form.rowCount()):
+        item = form.itemAt(row, QtWidgets.QFormLayout.ItemRole.FieldRole)
+        widget = item.widget() if item is not None else None
+        spin = next(
+            (
+                n
+                for n, s in window._config_inputs.items()
+                if widget is not None and s in (widget, *widget.findChildren(SafeDoubleSpinBox))
+            ),
+            None,
+        )
+        rows.append("checkbox" if widget is checkbox else spin)
+    assert rows == ["d_bot_m", "checkbox", "tc_bot_k", "alpha_bot", "sigma0_bot"]
+    assert checkbox.isChecked()
+    assert window._config_inputs["d_bot_m"].isEnabled()
+    assert not any(window._config_inputs[name].isEnabled() for name in ("tc_bot_k", "alpha_bot", "sigma0_bot"))
+    window._config_inputs["d_bot_m"].setValue(450)
+    assert window._build_config().d_bot_m == pytest.approx(450e-9)  # its own value, not d EL1
+
+
+def _unit_dialog(path: Path, kind: str = "HFSS"):
+    from smcapp.infrastructure.trace_files import read_trace_table
+    from smcapp.ui.frequency_unit_dialog import FrequencyUnitDialog
+
+    return FrequencyUnitDialog(kind, read_trace_table(path))
+
+
+def test_unit_dialog_preselects_header_unit_and_requires_a_choice_without_one(parameter_window, tmp_path) -> None:
+    ok = QtWidgets.QDialogButtonBox.StandardButton.Ok
+    hfss = tmp_path / "hfss.tab"
+    hfss.write_text('"Freq [THz]"\t"dB(S(2,1)) []"\n0.1\t-12\n0.11\t-9\n', encoding="utf-8")
+    dialog = _unit_dialog(hfss)
+    assert dialog.selected_unit() == "THz" and dialog.button_box.button(ok).isEnabled()
+    assert dialog.result_label.text() == "0.1 … 0.11 THz → 100 … 110 GHz"
+    assert "из заголовка «Freq [THz]»" in dialog.findChild(QtWidgets.QLabel, "frequency_unit_question").text()
+
+    bare = tmp_path / "HD35-H2.tab"
+    bare.write_text("100\t-30\n1095\t-12\n", encoding="utf-8")
+    dialog = _unit_dialog(bare)
+    question = dialog.findChild(QtWidgets.QLabel, "frequency_unit_question").text()
+    assert question.startswith("Не удалось однозначно определить единицу частоты")
+    assert dialog.selected_unit() is None and not dialog.button_box.button(ok).isEnabled()
+    details = dialog.findChild(QtWidgets.QLabel, "frequency_unit_details").text()
+    assert "HD35-H2.tab" in details and "Заголовок: нет" in details and "100 … 1095" in details
+    dialog.unit_buttons["GHz"].click()
+    assert dialog.button_box.button(ok).isEnabled()
+    assert dialog.result_label.text() == "100 … 1095 GHz → 100 … 1095 GHz"
+    assert dialog.unit_source() == "выбрано при импорте"
+
+
+def test_import_menu_converts_with_the_chosen_unit_and_cancel_keeps_the_curve(parameter_window, tmp_path) -> None:
+    from smcapp.ui.frequency_unit_dialog import FrequencyUnitDialog
+
+    window = parameter_window
+    path = tmp_path / "exp.csv"
+    path.write_text("Frequency,S21\n100000,-12\n200000,-9\n", encoding="utf-8")
+
+    def choose(unit):
+        def exec_(dialog):
+            if unit is None:
+                return QtWidgets.QDialog.DialogCode.Rejected
+            dialog.unit_buttons[unit].click()
+            return QtWidgets.QDialog.DialogCode.Accepted
+
+        return exec_
+
+    with patch.object(QtWidgets.QFileDialog, "getOpenFileName", return_value=(str(path), "")):
+        with patch.object(FrequencyUnitDialog, "exec", choose("MHz")):
+            window._open_trace_dialog("Experiment")
+        trace = window._comparison_traces["Experiment"]
+        assert trace.frequencies == pytest.approx((100.0, 200.0)) and trace.unit == "MHz"
+        assert "частота в MHz (выбрано при импорте) → 100…200 GHz" in window._s21_status.text()
+
+        with patch.object(FrequencyUnitDialog, "exec", choose(None)):
+            window._open_trace_dialog("Experiment")  # Cancel
+        assert window._comparison_traces["Experiment"] is trace
+
+        with patch.object(FrequencyUnitDialog, "exec", choose("GHz")):
+            window._open_trace_dialog("HFSS")  # the same file through HFSS: no hidden THz any more
+        assert window._comparison_traces["HFSS"].frequencies == pytest.approx((100000.0, 200000.0))
+
+    with pytest.raises(ValueError, match="Единица частоты не определена"):
+        window.load_comparison_trace("HFSS", path)
