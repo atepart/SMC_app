@@ -479,7 +479,9 @@ def test_current_goes_to_a_right_log_axis_with_its_own_home(window: MainWindow, 
     home = window._plot_initial_range
     plot_item = window._plot.getPlotItem()
     assert not plot_item.getAxis("right").isVisible()
-    assert not window._plot_y2_inputs["y2_min"].isVisible()
+    # WP-060: greyed out and empty without a current (their place: the Y2 row test below).
+    assert not window._plot_y2_inputs["y2_min"].isEnabled()
+    assert window._plot_y2_inputs["y2_min"].text() == "" and window._plot_y2_labels["y2_min"].text() == "Y2 min"
 
     _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "mA")
 
@@ -492,7 +494,7 @@ def test_current_goes_to_a_right_log_axis_with_its_own_home(window: MainWindow, 
     assert "exp" not in _curves(window)  # not on the S21 axis
     assert "I, mA: правая ось, логарифмическая шкала" in window._s21_status.text()
     # Y2 fields appear, filled from the data; the S21 view stays on Home.
-    assert window._plot_y2_inputs["y2_min"].isVisible()
+    assert window._plot_y2_inputs["y2_min"].isEnabled() and window._plot_y2_inputs["y2_min"].text() != ""
     assert window._plot_y2_labels["y2_min"].text() == "Y2 min, mA"
     low, high = window._right_view.viewRange()[1]
     assert low < -2.0 and high > 0.0
@@ -528,6 +530,60 @@ def test_current_goes_to_a_right_log_axis_with_its_own_home(window: MainWindow, 
     assert math.isfinite(expected)
 
 
+def _grid_position(window: MainWindow, widget) -> tuple[int, int]:
+    row, column, _rows, _columns = window._plot_controls.getItemPosition(window._plot_controls.indexOf(widget))
+    return row, column
+
+
+def test_y2_fields_sit_after_y_max_and_wrap_under_it_when_narrow(window: MainWindow, tmp_path, monkeypatch) -> None:
+    """WP-060 (GitHub #12): Y2 min/max in the first row after Y max, as on the owner's screenshot."""
+    # Wide enough for one row whatever the platform font (macOS 13 pt needs more than Windows 9 pt).
+    window.resize(1900, 920)
+    QtWidgets.QApplication.processEvents()
+    y_max_row, y_max_column = _grid_position(window, window._plot_scale_inputs["y_max"])
+    controls = window._plot_controls_widget
+    assert controls.width() >= window._plot_controls_row_width(with_y2=True)
+    assert _grid_position(window, window._plot_y2_labels["y2_min"]) == (y_max_row, y_max_column + 1)
+    assert _grid_position(window, window._plot_y2_inputs["y2_min"]) == (y_max_row, y_max_column + 2)
+    assert _grid_position(window, window._plot_y2_inputs["y2_max"]) == (y_max_row, y_max_column + 4)
+    for name in ("y2_min", "y2_max"):
+        assert window._plot_y2_inputs[name].isVisible() and not window._plot_y2_inputs[name].isEnabled()
+        assert not window._plot_y2_labels[name].isEnabled()
+
+    # A current on the right axis enables them in place, with its unit.
+    _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "mA")
+    assert window._plot_y2_inputs["y2_max"].isEnabled() and window._plot_y2_labels["y2_max"].isEnabled()
+    assert window._plot_y2_labels["y2_max"].text() == "Y2 max, mA"
+    # The label width is reserved for the longest unit: the row does not move.
+    assert _grid_position(window, window._plot_y2_inputs["y2_min"]) == (y_max_row, y_max_column + 2)
+
+    # Too narrow for one row: under Y min/Y max, the first row is not clipped.
+    window.resize(900, 920)
+    QtWidgets.QApplication.processEvents()
+    assert window._plot_y2_inputs["y2_max"].isVisible()
+    assert controls.width() < window._plot_controls_row_width(with_y2=True)
+    y_min_row, y_min_column = _grid_position(window, window._plot_scale_inputs["y_min"])
+    assert _grid_position(window, window._plot_y2_labels["y2_min"]) == (y_min_row + 2, y_min_column - 1)
+    assert _grid_position(window, window._plot_y2_inputs["y2_max"]) == (y_min_row + 2, y_max_column)
+    assert controls.width() >= window._plot_controls_row_width(with_y2=False)
+    for widget in (window._plot_scale_inputs["y_max"], window._plot_y2_inputs["y2_max"]):
+        assert widget.geometry().right() <= controls.width()
+
+    # Wide again: back in the first row.
+    window.resize(1900, 920)
+    QtWidgets.QApplication.processEvents()
+    assert _grid_position(window, window._plot_y2_inputs["y2_min"]) == (y_max_row, y_max_column + 2)
+
+    # Without a current a narrow panel keeps two rows: no third row of greyed-out fields.
+    _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "dB")
+    window.resize(900, 920)
+    QtWidgets.QApplication.processEvents()
+    assert not window._plot_y2_inputs["y2_min"].isEnabled() and not window._plot_y2_inputs["y2_min"].isVisible()
+    window.resize(1900, 920)
+    QtWidgets.QApplication.processEvents()
+    assert window._plot_y2_inputs["y2_min"].isVisible() and not window._plot_y2_inputs["y2_min"].isEnabled()
+
+
 def test_log_values_use_a_linear_right_axis_and_db_goes_back_left(window: MainWindow, tmp_path, monkeypatch) -> None:
     path = tmp_path / "log.txt"
     path.write_text("Freq [GHz]; lg I [uA]\n100; -1,5\n500; 0,25\n", encoding="utf-8")
@@ -540,11 +596,12 @@ def test_log_values_use_a_linear_right_axis_and_db_goes_back_left(window: MainWi
     assert window._plot_y2_labels["y2_max"].text() == "Y2 max, lg µA"
     assert window._plot_y2_inputs["y2_min"].value() < -1.5
 
-    # The same file as dB: back on the S21 axis, the right axis and Y2 fields go away.
+    # The same file as dB: back on the S21 axis, the right axis goes away and the Y2 fields grey out.
     _import_choosing(window, "HFSS", path, monkeypatch, 1, "dB")
     assert window._right_curve_items == [] and not right.isVisible()
     assert _curves(window)["HFSS"].yData.tolist() == [-1.5, 0.25]
-    assert not window._plot_y2_inputs["y2_max"].isVisible()
+    assert not window._plot_y2_inputs["y2_max"].isEnabled() and window._plot_y2_inputs["y2_max"].text() == ""
+    assert window._plot_y2_labels["y2_max"].text() == "Y2 max"
 
 
 @pytest.mark.parametrize("first, second", [(Theme.DARK, Theme.LIGHT), (Theme.LIGHT, Theme.DARK)])

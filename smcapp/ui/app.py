@@ -694,16 +694,24 @@ class SafeDoubleSpinBox(QDoubleSpinBox):
 
 
 class ScaleSpinBox(SafeDoubleSpinBox):
-    """Y2 range field: currents of any magnitude, shown with six significant digits."""
+    """Y2 range field: currents of any magnitude, shown with six significant digits.
+
+    A blank field (no curve on the right axis, WP-060) keeps its value but shows no text.
+    """
 
     _PARTIAL = re.compile(r"[+-]?\d*[.,]?\d*(?:[eE][+-]?\d*)?")
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setDecimals(15)
+        self._blank = False
+
+    def set_blank(self, blank: bool) -> None:
+        self._blank = blank
+        self.lineEdit().setText(self.textFromValue(self.value()))
 
     def textFromValue(self, value: float) -> str:  # noqa: N802 - Qt API
-        return f"{value:.6g}"
+        return "" if getattr(self, "_blank", False) else f"{value:.6g}"
 
     def valueFromText(self, text: str) -> float:  # noqa: N802 - Qt API
         return float(text.replace(",", ".").strip())
@@ -1216,6 +1224,7 @@ class MainWindow(QMainWindow):
 
         controls = QtWidgets.QGridLayout()
         self._plot_scale_inputs: dict[str, QDoubleSpinBox] = {}
+        self._plot_scale_labels: dict[str, QLabel] = {}
         for column, (name, label, value) in enumerate(
             (
                 ("x_min", "X min, GHz", 100.0),
@@ -1224,7 +1233,8 @@ class MainWindow(QMainWindow):
                 ("y_max", "Y max, dB", 0.0),
             )
         ):
-            controls.addWidget(QLabel(label), 0, column * 2)
+            self._plot_scale_labels[name] = QLabel(label, panel)
+            controls.addWidget(self._plot_scale_labels[name], 0, column * 2)
             spin = SafeDoubleSpinBox(panel)
             spin.setRange(-1_000_000.0, 1_000_000.0)
             spin.setDecimals(0 if name.startswith("x_") else 2)  # frequencies: 1 GHz
@@ -1254,12 +1264,16 @@ class MainWindow(QMainWindow):
         export = QPushButton("Экспорт PNG", panel)
         export.clicked.connect(self._export_plot_dialog)
         controls.addWidget(export, 1, 5, 1, 3)
-        # WP-055: the right (current) axis, under Y min/Y max; shown with a curve on it.
+        # WP-055/WP-060: the right (current) axis, in the first row after Y max as on
+        # the owner's screenshot (GitHub #12); always there, disabled and empty
+        # without a curve on that axis, so the row does not jump.
         self._plot_y2_inputs: dict[str, ScaleSpinBox] = {}
         self._plot_y2_labels: dict[str, QLabel] = {}
-        for column, (name, value) in enumerate((("y2_min", 0.001), ("y2_max", 1.0)), start=2):
+        for name, value in (("y2_min", 0.001), ("y2_max", 1.0)):
             label = QLabel(panel)
             label.setObjectName(f"plot_{name}_label")
+            # Room for the longest unit, so a current arriving does not move the row.
+            label.setMinimumWidth(label.fontMetrics().horizontalAdvance("Y2 max, lg µA") + 2)
             spin = ScaleSpinBox(panel)
             spin.setObjectName(f"plot_{name}")
             spin.setRange(-1e12, 1e12)
@@ -1268,13 +1282,96 @@ class MainWindow(QMainWindow):
             spin.returnPressed.connect(self._apply_plot_scale)
             self._plot_y2_labels[name] = label
             self._plot_y2_inputs[name] = spin
-            controls.addWidget(label, 2, column * 2)
-            controls.addWidget(spin, 2, column * 2 + 1)
-            label.hide()
-            spin.hide()
-        controls.setColumnStretch(8, 1)
-        layout.addLayout(controls)
+        self._plot_controls = controls
+        self._plot_y2_wide: bool | None = None
+        self._place_plot_y2_fields(wide=True)
+        self._set_plot_y2_fields_enabled(False)
+        controls_widget = QWidget(panel)
+        controls_widget.setObjectName("plot_controls")
+        controls_widget.setLayout(controls)
+        # The first row with Y2 must not dictate the dock's minimum width: the
+        # widget takes what it is given (never less than the row without Y2)
+        # and moves Y2 under Y min/Y max when that is not enough.
+        controls_widget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
+        self._plot_controls_widget = controls_widget
+        controls_widget.setMinimumWidth(self._plot_controls_row_width(with_y2=False))
+        controls_widget.installEventFilter(self)
+        layout.addWidget(controls_widget)
         return panel
+
+    # Columns 12+ of the first row stay free for the dB span of the Y2 range (WP-064).
+    _PLOT_Y2_STRETCH_COLUMN = 13
+
+    def _place_plot_y2_fields(self, wide: bool) -> None:
+        """Y2 min/max after Y max in the first row; under Y min/Y max when the panel is narrow."""
+        if wide == self._plot_y2_wide:
+            return
+        self._plot_y2_wide = wide
+        controls = self._plot_controls
+        for column, name in enumerate(("y2_min", "y2_max")):
+            label, spin = self._plot_y2_labels[name], self._plot_y2_inputs[name]
+            controls.removeWidget(label)
+            controls.removeWidget(spin)
+            row, first = (0, 8) if wide else (2, 4)
+            controls.addWidget(label, row, first + column * 2)
+            controls.addWidget(spin, row, first + column * 2 + 1)
+        for column in range(self._PLOT_Y2_STRETCH_COLUMN + 1):
+            controls.setColumnStretch(column, 0)
+        controls.setColumnStretch(self._PLOT_Y2_STRETCH_COLUMN if wide else 8, 1)
+        self._update_plot_y2_visibility()
+
+    def _update_plot_y2_visibility(self) -> None:
+        """In the first row the Y2 fields are always there; a third row only with a current.
+
+        A third row of greyed-out fields would take height from the plot (the
+        1440×920 legend check) for nothing.
+        """
+        for name in ("y2_min", "y2_max"):
+            spin = self._plot_y2_inputs[name]
+            visible = bool(self._plot_y2_wide) or spin.isEnabled()
+            spin.setVisible(visible)
+            self._plot_y2_labels[name].setVisible(visible)
+
+    def _plot_controls_row_width(self, with_y2: bool) -> int:
+        """Minimum width of the controls with the Y2 fields in the first row or under it."""
+        current = self._plot_y2_wide
+        self._place_plot_y2_fields(wide=with_y2)
+        self._plot_controls.invalidate()
+        width = self._plot_controls.minimumSize().width()
+        if current is not None:
+            self._place_plot_y2_fields(wide=current)
+        return width
+
+    def _relayout_plot_controls(self, width: int) -> None:
+        # The trial placements below resize the widget (rows appear and go): no re-entry.
+        if getattr(self, "_plot_relayout_busy", False):
+            return
+        self._plot_relayout_busy = True
+        try:
+            narrow = self._plot_controls_row_width(with_y2=False)
+            wide = width >= self._plot_controls_row_width(with_y2=True)
+            self._place_plot_y2_fields(wide=wide)
+            if self._plot_controls_widget.minimumWidth() != narrow:
+                self._plot_controls_widget.setMinimumWidth(narrow)
+        finally:
+            self._plot_relayout_busy = False
+
+    def _set_plot_y2_fields_enabled(self, enabled: bool, unit: str | None = None) -> None:
+        """Enable the Y2 fields with right-axis units, or grey them out with no value."""
+        for name, text in (("y2_min", "Y2 min"), ("y2_max", "Y2 max")):
+            label, spin = self._plot_y2_labels[name], self._plot_y2_inputs[name]
+            label.setText(f"{text}, {unit}" if unit else text)
+            label.setEnabled(enabled)
+            spin.setEnabled(enabled)
+            spin.set_blank(not enabled)
+            spin.setToolTip("" if enabled else "Шкала правой оси: появится с кривой тока на графике")
+            label.setToolTip(spin.toolTip())
+        if self._plot_y2_wide is not None:
+            self._update_plot_y2_visibility()
+        # Longer labels ("Y2 min, lg µA") may no longer fit the first row.
+        controls_widget = getattr(self, "_plot_controls_widget", None)
+        if controls_widget is not None:
+            self._relayout_plot_controls(controls_widget.width())
 
     def _build_log_panel(self) -> QWidget:
         """Create the calculation log as an independent dock panel."""
@@ -2023,6 +2120,12 @@ class MainWindow(QMainWindow):
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API
         if event.type() == QtCore.QEvent.Type.Leave and watched == self._plot.viewport():
             self._plot_hover_label.hide()
+        if (
+            event.type() == QtCore.QEvent.Type.Resize
+            and watched.objectName() == "plot_controls"
+            and event.size().width() != event.oldSize().width()
+        ):
+            self._relayout_plot_controls(watched.width())
         return super().eventFilter(watched, event)
 
     def _apply_plot_theme(self) -> None:
@@ -2578,10 +2681,8 @@ class MainWindow(QMainWindow):
         """Show the right axis, its label, scale and Y2 fields while a current is plotted (WP-055)."""
         plot_item = self._plot.getPlotItem()
         shown = self._right_axis_shown()
-        for name in ("y2_min", "y2_max"):
-            self._plot_y2_labels[name].setVisible(shown)
-            self._plot_y2_inputs[name].setVisible(shown)
         if not shown:
+            self._set_plot_y2_fields_enabled(False)
             plot_item.hideAxis("right")
             return
         quantity = self._right_axis_quantity
@@ -2592,9 +2693,7 @@ class MainWindow(QMainWindow):
         axis.setLabel(quantity.axis_label, **label_style)
         # Plain current: log scale (ticks 10^y); "Log" data: y as it is.
         axis.setLogMode(y=not quantity.logarithmic)
-        unit = right_axis_range_unit(quantity)
-        self._plot_y2_labels["y2_min"].setText(f"Y2 min, {unit}")
-        self._plot_y2_labels["y2_max"].setText(f"Y2 max, {unit}")
+        self._set_plot_y2_fields_enabled(True, right_axis_range_unit(quantity))
         self._sync_right_view_geometry()
         if self._right_axis_fit_pending:
             self._right_axis_fit_pending = False
