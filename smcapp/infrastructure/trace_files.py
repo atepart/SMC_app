@@ -111,7 +111,12 @@ Y_QUANTITIES: dict[str, YQuantity] = {
 
 @dataclass(frozen=True)
 class DataTable:
-    """Every column of a text table exactly as written; empty cells are ``None``."""
+    """Every column of a text table as written.
+
+    Cells without a number — empty, ``--``, ``n/a``, ``NaN`` — are ``None``;
+    ``cells`` keeps the text of every data row and ``line_numbers`` its line
+    in the file.
+    """
 
     source: Path
     columns: tuple[str, ...]
@@ -121,6 +126,8 @@ class DataTable:
     decimal: str
     # Header text of each column (all header rows joined), ``None`` if unknown.
     column_headers: tuple[str | None, ...] = ()
+    line_numbers: tuple[int, ...] = ()
+    cells: tuple[tuple[str, ...], ...] = ()
 
     @property
     def header(self) -> str | None:
@@ -128,6 +135,13 @@ class DataTable:
 
     def column_header(self, index: int) -> str | None:
         return self.column_headers[index] if index < len(self.column_headers) else None
+
+    def cell_text(self, row: int, column: int) -> str:
+        """The cell as written in the file ("--" for a skipped value)."""
+        if row < len(self.cells) and column < len(self.cells[row]):
+            return self.cells[row][column]
+        value = self.rows[row][column]
+        return "" if value is None else f"{value:g}"
 
 
 @dataclass(frozen=True)
@@ -147,6 +161,13 @@ class TraceTable:
     x_name: str = "Столбец 1"
     y_name: str = "Столбец 2"
     skipped_rows: int = 0
+    # File line numbers of the rows skipped for a missing X or Y number.
+    skipped_lines: tuple[int, ...] = ()
+
+    @property
+    def skipped_summary(self) -> str:
+        """``"строки 201–209"``, ``"строка 7"`` or ``"строки 3, 7, 10–12"``; empty without line numbers."""
+        return describe_lines(self.skipped_lines)
 
 
 @dataclass(frozen=True)
@@ -276,15 +297,27 @@ def _split_data(line: str, separator: str) -> list[str]:
     return _split(line, separator)
 
 
-def _value(cell: str, decimal: str) -> float | None | str:
-    """A number, ``None`` for an empty cell, or the marker ``"nan"``; raises for text."""
+_EMPTY, _NUMBER, _SKIP, _TEXT = "empty", "number", "skip", "text"
+_LETTER = re.compile(r"[^\W\d_]")
+
+
+def _value(cell: str, decimal: str) -> tuple[str, float | None]:
+    """Classify one cell: an empty cell, a finite number, a skip mark or text.
+
+    A data cell holding anything but a number written with digits, a sign and
+    the decimal mark (``--``, ``-``, ``n/a``, ``NaN``, ``inf``) has no value:
+    its point is skipped (owner, 11.11.2026).  Exponents (``1.2e-3``) stay
+    numbers, as HFSS writes them.  Before the first data row, a cell with a
+    letter marks a header row; a lone mark such as ``--`` does not.
+    """
     if not cell:
-        return None
-    if _SPECIAL_NUMBER.fullmatch(cell):
-        return "nan"
-    if not _NUMBERS[decimal].fullmatch(cell):
-        raise ValueError(cell)
-    return float(cell.replace(",", ".")) if decimal == "," else float(cell)
+        return _EMPTY, None
+    if _NUMBERS[decimal].fullmatch(cell):
+        value = float(cell.replace(",", ".")) if decimal == "," else float(cell)
+        return (_NUMBER, value) if math.isfinite(value) else (_SKIP, None)
+    if _SPECIAL_NUMBER.fullmatch(cell) or not _LETTER.search(cell):
+        return _SKIP, None
+    return _TEXT, None
 
 
 _SEPARATOR_HINT = " Возможно, выбран не тот разделитель столбцов или десятичный разделитель."
@@ -298,18 +331,22 @@ class _Attempt:
     header_lines: list[tuple[int, str]]
     error: str | None = None
     empty_cells: int = 0
+    line_numbers: list[int] | None = None
+    cells: list[tuple[str, ...]] | None = None
+    # Rows with at least two numbers (a possible X/Y point) and rows with numbers only.
+    points: int = 0
+    clean_rows: int = 0
 
 
 def _attempt(lines: list[tuple[int, str]], separator: str, decimal: str) -> _Attempt:
-    attempt = _Attempt(separator, decimal, [], [])
+    attempt = _Attempt(separator, decimal, [], [], line_numbers=[], cells=[])
+    assert attempt.line_numbers is not None and attempt.cells is not None
     width = 0
     for line_number, line in lines:
         cells = _split_data(line, separator)
-        try:
-            values = [_value(cell, decimal) for cell in cells]
-        except ValueError:
-            values = None
-        if not attempt.rows and (values is None or all(value is None for value in values)):
+        kinds, values = zip(*(_value(cell, decimal) for cell in cells)) if cells else ((), ())
+        numbers = kinds.count(_NUMBER)
+        if not attempt.rows and (numbers == 0 or _TEXT in kinds):
             attempt.header_lines.append((line_number, line))
             continue
         if not attempt.rows:
@@ -320,18 +357,20 @@ def _attempt(lines: list[tuple[int, str]], separator: str, decimal: str) -> _Att
         if len(cells) > width or (len(cells) < width and separator in ("space", "any")):
             attempt.error = f"Строка {line_number}: ожидалось {width} столбца, найдено {len(cells)}."
             return attempt
-        if values is None:
-            attempt.error = f"Строка {line_number}: значения должны быть числами: {line!r}."
-            return attempt
-        if "nan" in values:
-            attempt.error = f"Строка {line_number}: NaN и бесконечность не поддерживаются."
-            return attempt
-        if any(value is not None and not math.isfinite(value) for value in values):
-            attempt.error = f"Строка {line_number}: NaN и бесконечность не поддерживаются."
-            return attempt
-        values += [None] * (width - len(values))
-        attempt.empty_cells += sum(value is None for value in values)
-        attempt.rows.append(tuple(values))  # type: ignore[arg-type]
+        padding = width - len(cells)
+        attempt.empty_cells += sum(kind != _NUMBER for kind in kinds) + padding
+        attempt.points += numbers >= 2
+        attempt.clean_rows += numbers == width
+        attempt.rows.append(tuple(values) + (None,) * padding)
+        attempt.line_numbers.append(line_number)
+        attempt.cells.append(tuple(cells) + ("",) * padding)
+    if attempt.rows and not attempt.points:
+        first, last = attempt.line_numbers[0], attempt.line_numbers[-1]
+        lines_text = f"строка {first}" if first == last else f"строки {first}–{last}"
+        attempt.error = (
+            f"Нет ни одной строки хотя бы с двумя числами ({lines_text}): значения пропущены или это не числа."
+            + _SEPARATOR_HINT
+        )
     if not attempt.rows:
         if attempt.header_lines:
             attempt.error = (
@@ -363,8 +402,10 @@ def read_data_table(path: str | Path, separator: str | None = None, decimal: str
 
     Empty lines and ``#`` comments are skipped; text rows before the first
     numeric row are the header (Origin writes names, units and comments).  The
-    column separator and decimal mark are found automatically unless given;
-    any malformed row after the header is reported with its line number.
+    column separator and decimal mark are found automatically unless given.
+    After the header a cell without a number (``--``, ``n/a``, ``NaN``) is
+    ``None`` and its point is skipped later; rows with more columns than the
+    first data row are reported with their line number.
     """
     if separator is not None and separator not in SEPARATORS:
         raise ValueError(f"Неизвестный разделитель столбцов: {separator}.")
@@ -388,7 +429,12 @@ def read_data_table(path: str | Path, separator: str | None = None, decimal: str
     if not good:
         furthest = max(attempts, key=lambda attempt: (len(attempt.rows), -attempts.index(attempt)))
         raise ValueError(furthest.error)
-    best = max(good, key=lambda attempt: (len(attempt.rows), -attempt.empty_cells, -good.index(attempt)))
+    # Readable points first, so a wrong separator that turns cells into skips
+    # cannot win; then rows of numbers only, fewer cells without a number, order.
+    best = max(
+        good,
+        key=lambda attempt: (attempt.points, attempt.clean_rows, -attempt.empty_cells, -good.index(attempt)),
+    )
     width = len(best.rows[0])
     header_lines = [line for _number, line in best.header_lines]
     headers = _column_headers(header_lines, best.separator, width)
@@ -400,19 +446,41 @@ def read_data_table(path: str | Path, separator: str | None = None, decimal: str
         separator=best.separator,
         decimal=best.decimal,
         column_headers=headers,
+        line_numbers=tuple(best.line_numbers or ()),
+        cells=tuple(best.cells or ()),
     )
 
 
+def describe_lines(numbers: tuple[int, ...] | list[int], limit: int = 4) -> str:
+    """File lines as ranges: ``"строки 201–209"``, ``"строка 7"``, ``"строки 3, 7, 10–12 и ещё 2"``."""
+    if not numbers:
+        return ""
+    ranges: list[list[int]] = []
+    for number in sorted(numbers):
+        if ranges and number == ranges[-1][1] + 1:
+            ranges[-1][1] = number
+        else:
+            ranges.append([number, number])
+    parts = [str(first) if first == last else f"{first}–{last}" for first, last in ranges[:limit]]
+    rest = len(ranges) - limit
+    text = ", ".join(parts) + (f" и ещё {rest}" if rest > 0 else "")
+    return f"строка {text}" if len(numbers) == 1 else f"строки {text}"
+
+
 def select_trace(table: DataTable, x_column: int = 0, y_column: int = 1) -> TraceTable:
-    """Take X (frequency) and Y columns, skip rows with an empty cell in them, sort by X."""
+    """Take X (frequency) and Y columns, skip rows without a number in them, sort by X."""
     width = len(table.columns)
     if not (0 <= x_column < width and 0 <= y_column < width):
         raise ValueError(f"В таблице {width} столбцов: нет столбца {max(x_column, y_column) + 1}.")
     if x_column == y_column:
         raise ValueError("Столбцы X и Y должны быть разными.")
-    pairs = [
-        (row[x_column], row[y_column]) for row in table.rows if row[x_column] is not None and row[y_column] is not None
-    ]
+    pairs = []
+    skipped_lines = []
+    for index, row in enumerate(table.rows):
+        if row[x_column] is not None and row[y_column] is not None:
+            pairs.append((row[x_column], row[y_column]))
+        elif index < len(table.line_numbers):
+            skipped_lines.append(table.line_numbers[index])
     if not pairs:
         raise ValueError("В выбранных столбцах X и Y нет ни одной пары чисел.")
     pairs.sort(key=lambda pair: pair[0])  # type: ignore[arg-type,return-value]
@@ -433,6 +501,7 @@ def select_trace(table: DataTable, x_column: int = 0, y_column: int = 1) -> Trac
         x_name=table.columns[x_column],
         y_name=table.columns[y_column],
         skipped_rows=len(table.rows) - len(pairs),
+        skipped_lines=tuple(skipped_lines),
     )
 
 

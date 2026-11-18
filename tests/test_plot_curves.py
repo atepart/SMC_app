@@ -297,13 +297,14 @@ def test_hfss_reimport_replaces_curve_and_keeps_check_box(window: MainWindow, tm
 def test_bad_hfss_file_shows_dialog_and_keeps_previous_curve(window: MainWindow, tmp_path, monkeypatch) -> None:
     _import_through_menu(window, "HFSS", HFSS_EXAMPLE, monkeypatch)
     broken = tmp_path / "broken.tab"
-    broken.write_text('"Freq [THz]"\t"dB(S(2,1)) []"\n0.1\t-3\n0.2\tabc\n', encoding="utf-8")
+    # A value that is not a number only skips its point (WP-063); a row wider than the table is an error.
+    broken.write_text('"Freq [THz]"\t"dB(S(2,1)) []"\n0.1\t-3\n0.2\t-4\t5\n', encoding="utf-8")
     shown: list[tuple[str, str]] = []
     monkeypatch.setattr(QtWidgets.QMessageBox, "critical", lambda _parent, title, text: shown.append((title, text)))
 
     _import_through_menu(window, "HFSS", broken, monkeypatch)
 
-    assert shown == [("Ошибка импорта HFSS", "Строка 3: значения должны быть числами: '0.2\\tabc'.")]
+    assert shown == [("Ошибка импорта HFSS", "Строка 3: ожидалось 2 столбца, найдено 3.")]
     assert window._comparison_traces["HFSS"].source == HFSS_EXAMPLE
     assert len(_curves(window)["HFSS"].xData) == 81
 
@@ -421,6 +422,54 @@ def test_log_scale_needs_positive_values(window: MainWindow, tmp_path) -> None:
     assert not dialog.button_box.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).isEnabled()
     dialog.select_quantity("mA log")
     assert dialog.button_box.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).isEnabled()
+
+
+DASHES_EXAMPLE = Path(__file__).resolve().parent / "data" / "exp_hd34_11_12_dashes.tab"
+
+
+def test_import_dialog_reports_rows_skipped_for_dashes(window: MainWindow, tmp_path) -> None:
+    """WP-063 / BUG-029: the owner's file with "--" opens; the skipped lines are named."""
+    from smcapp.infrastructure.trace_files import read_data_table
+    from smcapp.ui.trace_import_dialog import TraceImportDialog
+
+    ok = QtWidgets.QDialogButtonBox.StandardButton.Ok
+    dialog = TraceImportDialog("Experiment", read_data_table(DASHES_EXAMPLE), window)
+    assert dialog.error_label.text() == ""
+    assert "Строк с числами: 210" in dialog.details_label.text()
+    assert "(200 точек)" in dialog.y_result_label.text()
+    assert "Пропущено строк без чисел в X/Y: 10 (строки 201–210)." in dialog.y_result_label.text()
+    dialog.unit_buttons["GHz"].click()
+    assert dialog.button_box.button(ok).isEnabled()
+    trace = dialog.comparison_trace()
+    assert len(trace.frequencies) == 200 and trace.frequencies[-1] == pytest.approx(796.56702)
+
+    # Skipped cells are previewed as written; a Y column of dashes only leaves nothing to import.
+    path = tmp_path / "dashes.txt"
+    path.write_text("Freq [GHz]\tS21 [dB]\tI [mA]\n100\t--\t0,5\n110\tn/a\t0,7\n", encoding="utf-8")
+    dialog = TraceImportDialog("Experiment", read_data_table(path), window)
+    assert dialog.preview.item(0, 1).text() == "--" and dialog.preview.item(1, 1).text() == "n/a"
+    dialog.select_columns(0, 1)
+    assert "нет ни одной пары чисел" in dialog.error_label.text()
+    assert not dialog.button_box.button(ok).isEnabled()
+    dialog.select_columns(0, 2)
+    assert dialog.error_label.text() == "" and dialog.button_box.button(ok).isEnabled()
+
+
+def test_dash_file_imports_through_the_menu(window: MainWindow, monkeypatch) -> None:
+    from smcapp.ui.trace_import_dialog import TraceImportDialog
+
+    def exec_(dialog):
+        dialog.unit_buttons["GHz"].click()
+        return QtWidgets.QDialog.DialogCode.Accepted
+
+    action = next(action for action in window.open_files_menu.actions() if action.text() == "Experiment")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getOpenFileName", lambda *_a, **_k: (str(DASHES_EXAMPLE), ""))
+    monkeypatch.setattr(TraceImportDialog, "exec", exec_)
+    action.trigger()
+    QtWidgets.QApplication.processEvents()
+
+    exp = _curves(window)["exp"]
+    assert len(exp.xData) == 200 and exp.xData[-1] == pytest.approx(796.56702)
 
 
 def test_current_goes_to_a_right_log_axis_with_its_own_home(window: MainWindow, tmp_path, monkeypatch) -> None:

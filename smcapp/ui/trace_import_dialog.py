@@ -239,7 +239,9 @@ class TraceImportDialog(QDialog):
         self.preview.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
             for column, value in enumerate(row):
-                self.preview.setItem(row_index, column, QTableWidgetItem(_cell(value)))
+                # A cell without a number is shown as written ("--"), not blank.
+                text = _cell(value) if value is not None else table.cell_text(row_index, column)
+                self.preview.setItem(row_index, column, QTableWidgetItem(text))
         self.preview.resizeColumnsToContents()
 
         for combo in (self.x_column_combo, self.y_column_combo):
@@ -268,17 +270,23 @@ class TraceImportDialog(QDialog):
 
     def _x_column_changed(self) -> None:
         self._select()
-        unit = self._selection.header_unit if self._selection is not None else None
+        self._check_unit(self._selection.header_unit if self._selection is not None else None)
+        self._refresh()
+
+    def _check_unit(self, unit: str | None) -> None:
         self._unit_group.setExclusive(False)
         for name, button in self.unit_buttons.items():
             blocked = button.blockSignals(True)
             button.setChecked(name == unit)
             button.blockSignals(blocked)
         self._unit_group.setExclusive(True)
-        self._refresh()
 
     def _y_column_changed(self) -> None:
         self._select()
+        # A Y column without numbers left no selection and so no unit; offer the
+        # X header's unit again once a Y column with numbers is chosen.
+        if self._selection is not None and self.selected_unit() is None:
+            self._check_unit(self._selection.header_unit)
         if self._table is not None:
             guessed = detect_y_quantity(self._table.column_header(self.y_column_combo.currentIndex()))
             if guessed is not None:
@@ -337,7 +345,8 @@ class TraceImportDialog(QDialog):
             f"{_number(min(values))} … {_number(max(values))} ({len(values)} точек) — {quantity.placement}.",
         ]
         if selection.skipped_rows:
-            lines.append(f"Строк с пустой ячейкой в X или Y пропущено: {selection.skipped_rows}.")
+            where = f" ({selection.skipped_summary})" if selection.skipped_summary else ""
+            lines.append(f"Пропущено строк без чисел в X/Y: {selection.skipped_rows}{where}.")
         usable = True
         if quantity.axis == "right" and not quantity.logarithmic:
             non_positive = sum(value <= 0 for value in values)

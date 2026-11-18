@@ -132,13 +132,14 @@ def test_every_unit_converts_to_ghz(tmp_path, unit) -> None:
         ("\n  \n\t\n", "пуст"),
         ("Frequency S21\n", "только заголовок"),
         ('"Freq [THz]"\t"dB(S(2,1)) []"\n\n', "только заголовок"),
-        ('"Freq [THz]"\t"dB(S(2,1)) []"\n0.1\t-3\n0.2\tabc\n', "Строка 3: значения должны быть числами"),
         ('"Freq [THz]"\t"dB(S(2,1)) []"\n0.1\t-3\n\n0.3\t-4\t5\n', "Строка 4: ожидалось 2 столбца, найдено 3"),
         ('"Freq [THz]"\t"dB(S(2,1)) []"\n0.1\n', "Строка 2: нужно минимум два столбца"),
-        ("100 -10\n110 NaN\n", "Строка 2: NaN"),
         ("100 -10\n110 -9 extra\n", "Строка 2: ожидалось 2 столбца, найдено 3"),
+        # WP-063: values that are all skipped leave no point at all.
+        ("Freq [GHz]\tI\n100\t--\n110\t--\n120\tn/a\n", "Нет ни одной строки хотя бы с двумя числами \\(строки 2–4\\)"),
+        ("100\tNaN\n", "Нет ни одной строки хотя бы с двумя числами \\(строка 1\\)"),
     ],
-    ids=["empty", "blank", "header-only", "header-blank", "text-value", "three-columns", "one-column", "nan", "extra"],
+    ids=["empty", "blank", "header-only", "header-blank", "three-columns", "one-column", "extra", "all-dashes", "nan"],
 )
 def test_errors_with_line_numbers(tmp_path, text, message) -> None:
     path = tmp_path / "broken.tab"
@@ -324,3 +325,89 @@ def test_whitespace_columns_and_decimal_comma_come_first(tmp_path, text, separat
     path.write_text(text, encoding="utf-8")
     table = read_data_table(path)
     assert (table.separator, table.decimal, table.rows) == (separator, decimal, rows)
+
+
+# WP-063 / BUG-029: a point whose X or Y is not a number ("--", "n/a", NaN) is skipped.
+
+
+def test_owner_file_with_dashes_skips_the_points_without_data() -> None:
+    """Owner's experiment (11.11.2026): tab, decimal comma, CRLF; lines 201–210 are "800,56262\t--"."""
+    table = read_data_table(DATA / "exp_hd34_11_12_dashes.tab")
+    assert (table.separator, table.decimal, len(table.columns)) == ("tab", ",", 2)
+    assert table.cell_text(200, 1) == "--" and table.rows[200] == (800.56262, None)
+
+    trace = select_trace(table, 0, 1)
+
+    assert len(trace.frequencies) == 200 and trace.skipped_rows == 10
+    assert trace.frequencies[0] == 1.44354 and trace.coefficients[0] == -0.14139
+    assert trace.frequencies[-1] == 796.56702 and trace.coefficients[-1] == -0.08148
+    assert trace.skipped_lines == tuple(range(201, 211)) and trace.skipped_summary == "строки 201–210"
+
+
+@pytest.mark.parametrize(
+    "mark",
+    ["--", "-", "+", "—", "n/a", "N/A", "NaN", "nan", "inf", "-Infinity", "***", "?", "1e999", "abc", "12,5,1"],
+)
+def test_any_value_that_is_not_a_number_skips_its_point(tmp_path, mark) -> None:
+    path = tmp_path / "t.txt"
+    path.write_text(f"Freq [GHz]\tS21 [dB]\n100\t-10\n110\t{mark}\n120\t-12\n130,0\t-13\n", encoding="utf-8")
+    trace = select_trace(read_data_table(path, "tab", "."), 0, 1)
+    assert trace.frequencies == (100.0, 120.0) and trace.coefficients == (-10.0, -12.0)
+    assert trace.skipped_rows == 2 and trace.skipped_lines == (3, 5)
+    assert trace.skipped_summary == "строки 3, 5"
+
+
+def test_dashes_at_the_start_of_data_and_in_x(tmp_path) -> None:
+    path = tmp_path / "t.txt"
+    path.write_text("f, GHz\tI, mA\n100\t--\n--\t2\n120\t3\n130\t4\n", encoding="utf-8")
+    table = read_data_table(path)
+    # The dash rows are data, not header: the header keeps its names only.
+    assert table.header_lines == ("f, GHz\tI, mA",) and table.columns == ("f, GHz", "I, mA")
+    assert table.rows == ((100.0, None), (None, 2.0), (120.0, 3.0), (130.0, 4.0))
+    trace = select_trace(table, 0, 1)
+    assert trace.frequencies == (120.0, 130.0) and trace.skipped_summary == "строки 2–3"
+
+
+def test_dash_in_an_unselected_column_keeps_the_point(tmp_path) -> None:
+    path = tmp_path / "t.txt"
+    path.write_text("Freq\tS21\tI\n100,0\t-12,5\t--\n110,0\t-9,5\t0,02\n120,0\t--\t0,03\n", encoding="utf-8")
+    table = read_data_table(path)
+    s21 = select_trace(table, 0, 1)
+    assert s21.frequencies == (100.0, 110.0) and s21.skipped_lines == (4,)
+    current = select_trace(table, 0, 2)
+    assert current.frequencies == (110.0, 120.0) and current.skipped_summary == "строка 2"
+
+
+def test_exponents_stay_numbers(tmp_path) -> None:
+    """HFSS writes 1.2e-3; the owner's rule (digits, sign, mark) must not drop such points."""
+    path = tmp_path / "hfss.csv"
+    path.write_text('"Freq [GHz]","dB(S(2,1)) []"\n1.0E+02,-1.25e+01\n1.1e2,--\n120,-9.5E0\n', encoding="utf-8")
+    table = read_data_table(path)
+    assert (table.separator, table.decimal) == ("comma", ".")
+    trace = select_trace(table, 0, 1)
+    assert trace.frequencies == (100.0, 120.0) and trace.coefficients == (-12.5, -9.5)
+
+
+def test_empty_cells_and_dashes_are_counted_together(tmp_path) -> None:
+    path = tmp_path / "t.txt"
+    path.write_text("100\t-10\n110\t\n120\t--\n130\t-13\n", encoding="utf-8")
+    trace = select_trace(read_data_table(path), 0, 1)
+    assert trace.frequencies == (100.0, 130.0) and trace.skipped_rows == 2 and trace.skipped_summary == "строки 2–3"
+
+
+def test_wrong_separator_cannot_win_by_skipping_everything(tmp_path) -> None:
+    """With the comma as a column separator every row would read "1", "44354\t-0", "14139" — one skip each."""
+    path = tmp_path / "t.txt"
+    path.write_text("1,44354\t-0,14139\n5,43913\t0,25892\n800,56262\t--\n", encoding="utf-8")
+    table = read_data_table(path)
+    assert (table.separator, table.decimal) == ("tab", ",")
+    assert table.rows == ((1.44354, -0.14139), (5.43913, 0.25892), (800.56262, None))
+
+
+def test_line_ranges_are_compressed() -> None:
+    from smcapp.infrastructure.trace_files import describe_lines
+
+    assert describe_lines(()) == ""
+    assert describe_lines((7,)) == "строка 7"
+    assert describe_lines((12, 10, 11, 3, 7)) == "строки 3, 7, 10–12"
+    assert describe_lines(tuple(range(1, 20, 2))) == "строки 1, 3, 5, 7 и ещё 6"
