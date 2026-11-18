@@ -73,8 +73,9 @@ from smcapp.domain.circuit import (
     remove_element,
     with_element,
 )
+from smcapp.domain.dielectrics import dielectric_stack
 from smcapp.domain.models import Point, SvgColorScheme
-from smcapp.domain.s21_models import S21Config, split_element_field
+from smcapp.domain.s21_models import DIELECTRIC_LAYER_FIELDS, S21Config, split_element_field
 from smcapp.domain.transformers import DL_MAX_UM, DL_MIN_UM, derive_transformer_steps, transformer_slice_count
 from smcapp.infrastructure.design_files import DesignFileService
 from smcapp.infrastructure.geometry import SIGNAL_INPUT
@@ -849,6 +850,9 @@ class MainWindow(QMainWindow):
         # the exact loaded value instead of its rounded display (GitHub #10).
         self._loaded_ui_values: dict[str, float] = {}
         self._transformer_status: dict[str, QLabel] = {}
+        # H1/E1/H12/E12 computed from the insulator layers (WP-057, BUG-023 D1).
+        self._dielectric_hint: QLabel | None = None
+        self._load_notes_box: QMessageBox | None = None
         self._s21_output: QLineEdit | None = None
         self._s21_output_directory: QLineEdit | None = None
         self._active_s21_output_path: str | None = None
@@ -1151,6 +1155,15 @@ class MainWindow(QMainWindow):
                 )
                 hint.setWordWrap(True)
                 form.addRow(hint)
+
+            if group_name == "Dielectrics":
+                hint = QLabel()
+                hint.setObjectName("dielectric_stack_hint")
+                hint.setWordWrap(True)
+                self._dielectric_hint = hint
+                form.addRow(hint)
+                for info in group_fields:
+                    self._config_inputs[info.name].valueChanged.connect(self._refresh_dielectric_hint)
 
             element = split_element_field(group_fields[0].name)
             if element is not None and isinstance(self._defaults.element(element[0]), TransformerSection):
@@ -1619,7 +1632,7 @@ class MainWindow(QMainWindow):
 
     def load_design_from_path(self, path: str | Path) -> S21Config:
         """Load SI values, convert them to presentation units and refresh SVG."""
-        config = self._design_files.load(path)
+        config, notes = self._design_files.load_with_notes(path)
         config.validate()
 
         same_material = all(
@@ -1630,7 +1643,19 @@ class MainWindow(QMainWindow):
         self._remember_file_directory(path)
         if self._s21_status is not None:
             self._s21_status.setText(f"Параметры загружены: {Path(path).expanduser()}")
+        if notes:
+            self._show_load_notes(notes)
         return config
+
+    def _show_load_notes(self, notes: tuple[str, ...]) -> None:
+        """Report values a format migration changed, without blocking (tests, scripts)."""
+        for note in notes:
+            self._append_log_message(note)
+        box = QMessageBox(QMessageBox.Icon.Information, "Параметры пересчитаны", "\n".join(notes), parent=self)
+        box.setObjectName("design_load_notes")
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.open()
+        self._load_notes_box = box
 
     def _apply_config(self, config: S21Config, same_material: bool) -> None:
         """Fill every editor from a validated configuration and redraw the schematic.
@@ -1699,6 +1724,7 @@ class MainWindow(QMainWindow):
         ):
             registry.clear()
         self._same_materials_checkbox = None
+        self._dielectric_hint = None
         self._defaults = config
         self._populate_parameter_groups()
         keys = self._group_keys(config)
@@ -2311,6 +2337,37 @@ class MainWindow(QMainWindow):
             except ValueError as error:
                 status.setText(str(error))
                 status.setStyleSheet(f"color: {colors.error_text};")
+        # Every caller (fill, rebuild, theme) also refreshes the dielectric hint.
+        self._refresh_dielectric_hint()
+
+    def _dielectric_layers(self) -> tuple[float, ...]:
+        """Insulator layers in SI units as ``_build_config`` would take them."""
+        values = []
+        for name in DIELECTRIC_LAYER_FIELDS:
+            spin = self._config_inputs[name]
+            if spin.value() == self._loaded_ui_values.get(name):
+                values.append(getattr(self._defaults, name))
+            else:
+                values.append(spin.value() / S21Config.field_scale(name))
+        return tuple(values)
+
+    def _refresh_dielectric_hint(self) -> None:
+        """Show H1/E1/H12/E12 of the current layers, or why they cannot be built."""
+        hint = self._dielectric_hint
+        if hint is None or not all(name in self._config_inputs for name in DIELECTRIC_LAYER_FIELDS):
+            return
+        colors = THEME_COLORS[self._theme]
+        try:
+            stack = dielectric_stack(*self._dielectric_layers())
+        except ValueError as error:
+            hint.setText(str(error))
+            hint.setStyleSheet(f"color: {colors.error_text};")
+            return
+        hint.setText(
+            f"H1 = h1 + Ha = {stack.h1_m * 1e9:.4f} nm; ε₁ = {stack.e1:.5f}\n"
+            f"H12 = h1 + h2 + Ha = {stack.h12_m * 1e9:.4f} nm; ε₁₂ = {stack.e12:.5f}"
+        )
+        hint.setStyleSheet(f"color: {colors.muted_text};")
 
     def _apply_material_sync(self) -> None:
         if self._same_materials_checkbox is None or not self._same_materials_checkbox.isChecked():

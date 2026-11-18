@@ -7,15 +7,31 @@ from dataclasses import fields, replace
 from pathlib import Path
 
 from smcapp.domain.circuit import CORNERS, SECTION_TITLES, SECTIONS, LineSection, TransformerSection
+from smcapp.domain.dielectrics import (
+    LEGACY_ANOD_VOLTAGE_V,
+    LEGACY_EPS_ANOD,
+    LEGACY_EPS_INS,
+    dielectric_stack,
+    layers_from_legacy_stack,
+)
 from smcapp.domain.s21_models import S21Config
 
 DESIGN_FORMAT = "SMCapp Design"
 LEGACY_DESIGN_FORMAT = "AOCapp Design"
 # Version 2 (WP-044): Mex01/Mex02/Mex03 are lists of elements, the corner
 # transformers separate objects. Version 1 (fixed transf_*/msl_* fields) is
-# still read; saving always writes version 2.
-DESIGN_VERSION = 2
+# still read.  Version 3 (WP-057, BUG-023 D1): the insulator stack is stored as
+# the layers h1, h2, V_anod, ε_i, ε_Al instead of H12/E12/H1/E1; versions 1
+# and 2 are converted on load.  Saving always writes version 3.
+DESIGN_VERSION = 3
+LIST_DESIGN_VERSION = 2
 LEGACY_DESIGN_VERSION = 1
+SUPPORTED_VERSIONS = (LEGACY_DESIGN_VERSION, LIST_DESIGN_VERSION, DESIGN_VERSION)
+# H12/E12/H1/E1 as stored by versions 1 and 2, with the defaults those versions
+# used when a file omitted them (h1 = 0.15 µm, h2 = 0.30 µm at 10 V).
+DIRECT_DIELECTRIC_DEFAULTS = {"h12_m": 0.465729e-6, "e12": 4.28265, "h1_m": 1.65729e-7, "e1": 4.44084}
+# A stored permittivity farther than this from the one rebuilt from the layers is reported.
+PERMITTIVITY_TOLERANCE = 1e-4
 # Parameters that older files may still contain but that no longer influence
 # the calculation.  They are accepted on load and dropped; saving never writes
 # them again.  ``f0_ghz``: Mex04 now uses the sweep frequency (WP-046, BUG-023 D2).
@@ -125,6 +141,41 @@ def from_v2_parameters(parameters: dict) -> dict:
     return result
 
 
+def from_direct_dielectrics(parameters: dict) -> tuple[dict, list[str]]:
+    """Rebuild the insulator layers of a version-1/2 file from its H12/E12/H1/E1.
+
+    ``h1 = H1 − Ha`` and ``h2 = H12 − H1`` at the anodization of those files
+    (10 V, ε_i = 4.2, ε_Al = 9.8), so the thicknesses are kept exactly.  The
+    permittivities are then rebuilt by the worksheet formula; when a stored one
+    differs by more than :data:`PERMITTIVITY_TOLERANCE` the returned notes say
+    which values change.
+    """
+    result = {name: value for name, value in parameters.items() if name not in DIRECT_DIELECTRIC_DEFAULTS}
+    stored = {name: parameters.get(name, default) for name, default in DIRECT_DIELECTRIC_DEFAULTS.items()}
+    h1, h2 = layers_from_legacy_stack(stored["h1_m"], stored["h12_m"])
+    if h1 <= 0 or h2 <= 0:
+        raise ValueError(
+            f"h1 = {stored['h1_m'] * 1e9:g} nm и h12 = {stored['h12_m'] * 1e9:g} nm из файла старого формата"
+            " не раскладываются на слои h1, h2 > 0 при анодировании 10 V."
+        )
+    result.update(
+        ins_h1_m=h1, ins_h2_m=h2, anod_voltage_v=LEGACY_ANOD_VOLTAGE_V, eps_ins=LEGACY_EPS_INS, eps_anod=LEGACY_EPS_ANOD
+    )
+    stack = dielectric_stack(h1, h2, LEGACY_ANOD_VOLTAGE_V, LEGACY_EPS_INS, LEGACY_EPS_ANOD)
+    notes = []
+    for name, label, rebuilt in (("e12", "ε₁₂", stack.e12), ("e1", "ε₁", stack.e1)):
+        if abs(stored[name] - rebuilt) > PERMITTIVITY_TOLERANCE:
+            notes.append(f"{label}: в файле {stored[name]:.5f}, по слоям {rebuilt:.5f}")
+    if notes:
+        notes.insert(
+            0,
+            "Файл старого формата хранил H12/ε₁₂/H1/ε₁ напрямую; теперь они считаются из слоёв, как в листе Mathcad: "
+            f"h1 = {h1 * 1e9:.4g} nm, h2 = {h2 * 1e9:.4g} nm, V anod = {LEGACY_ANOD_VOLTAGE_V:g} V, "
+            f"ε i = {LEGACY_EPS_INS:g}, ε Al = {LEGACY_EPS_ANOD:g}. Изменились проницаемости:",
+        )
+    return result, notes
+
+
 class DesignFileService:
     """Serialize a complete :class:`S21Config` without UI-specific state.
 
@@ -158,6 +209,10 @@ class DesignFileService:
         A malformed document is reported as ``ValueError`` with a concise
         message suitable for a GUI dialog; filesystem failures stay ``OSError``.
         """
+        return self.load_with_notes(path)[0]
+
+    def load_with_notes(self, path: str | Path) -> tuple[S21Config, tuple[str, ...]]:
+        """Like :meth:`load`, plus messages about values changed by a format migration."""
         source = Path(path).expanduser()
         try:
             payload = json.loads(source.read_text(encoding="utf-8"))
@@ -167,7 +222,7 @@ class DesignFileService:
         if not isinstance(payload, dict) or payload.get("format") not in (DESIGN_FORMAT, LEGACY_DESIGN_FORMAT):
             raise ValueError("Выбранный файл не является дизайном smcapp.")
         version = payload.get("version")
-        if isinstance(version, bool) or version not in (LEGACY_DESIGN_VERSION, DESIGN_VERSION):
+        if isinstance(version, bool) or version not in SUPPORTED_VERSIONS:
             raise ValueError(f"Версия дизайна не поддерживается: {version!r}.")
 
         parameters = payload.get("parameters")
@@ -178,6 +233,10 @@ class DesignFileService:
         plain = {item.name for item in fields(S21Config) if item.name not in SECTIONS and item.name not in CORNERS}
         structured = set(SECTIONS) | set(CORNERS)
         expected = plain | (legacy_field_names() if version == LEGACY_DESIGN_VERSION else structured)
+        if version < DESIGN_VERSION:
+            # Older files carry H12/E12/H1/E1 instead of the insulator layers.
+            layers = {"ins_h1_m", "ins_h2_m", "anod_voltage_v", "eps_ins", "eps_anod"}
+            expected = (expected - layers) | set(DIRECT_DIELECTRIC_DEFAULTS)
         unknown = set(parameters) - expected
         if unknown:
             raise ValueError(f"Неизвестные параметры дизайна: {', '.join(sorted(unknown))}.")
@@ -190,13 +249,16 @@ class DesignFileService:
         ]
         if invalid_types:
             raise ValueError(f"Параметры должны быть числами: {', '.join(sorted(invalid_types))}.")
+        notes: list[str] = []
         try:
+            if version < DESIGN_VERSION:
+                parameters, notes = from_direct_dielectrics(parameters)
             if version == LEGACY_DESIGN_VERSION:
                 parameters = from_legacy_parameters(parameters)
             else:
                 parameters = from_v2_parameters(parameters)
             config = S21Config(**parameters)
             config.validate()
-            return config
+            return config, tuple(notes)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Параметры дизайна некорректны: {exc}") from exc

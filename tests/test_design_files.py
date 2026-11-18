@@ -32,6 +32,16 @@ def _variant() -> S21Config:
     )
 
 
+def _legacy_variant() -> S21Config:
+    """``_variant`` as rebuilt from the H12/E12/H1/E1 stored in ``LEGACY_FILE`` (WP-057).
+
+    The file has H1 = 165.729 nm and H12 = 465.729 nm, the defaults of that
+    time: at 10 V (Ha = 15.729 nm) the layers are h1 = 150 nm and h2 = 300 nm.
+    The file also keeps its own σ grid step of 20 GHz.
+    """
+    return replace(_variant(), ins_h1_m=0.15e-6, ins_h2_m=0.30e-6, film_freq_step_ghz=20.0)
+
+
 def test_design_file_round_trip_keeps_backend_units(tmp_path) -> None:
     service = DesignFileService()
     original = S21Config(block_center_length_um=42.5, d_top_m=0.725e-6, tc_bot_k=8.7)
@@ -43,7 +53,7 @@ def test_design_file_round_trip_keeps_backend_units(tmp_path) -> None:
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["format"] == DESIGN_FORMAT
     assert payload["format"] == "SMCapp Design"
-    assert payload["version"] == DESIGN_VERSION == 2
+    assert payload["version"] == DESIGN_VERSION == 3
     assert payload["parameters"]["d_top_m"] == pytest.approx(0.725e-6)
 
 
@@ -78,12 +88,12 @@ def test_version_1_file_of_the_former_layout_is_read(tmp_path) -> None:
 
     loaded = service.load(LEGACY_FILE)
 
-    assert loaded == _variant()
+    assert loaded == _legacy_variant()
     assert loaded.mex01[2] == TransformerSection(20e-6, 18e-6, 3.0, 1.2e-6)  # former T6, Wend = W1
     assert loaded.mex03[1] == TransformerSection(4e-6, 19e-6, 2.0, 0.9e-6)  # former T2, Wstart = W2
     assert loaded.mex02[0] == LineSection(9e-6, 24e-6)  # former MSL7
     saved = json.loads(service.save(tmp_path / "converted.smcdesign", loaded).read_text())
-    assert saved["format"] == "SMCapp Design" and saved["version"] == 2
+    assert saved["format"] == "SMCapp Design" and saved["version"] == 3
     assert "f0_ghz" not in saved["parameters"]
     assert not any(name.startswith(("transf_", "msl_")) for name in saved["parameters"])
     assert service.load(tmp_path / "converted.smcdesign") == loaded
@@ -98,14 +108,14 @@ def test_legacy_design_loads_with_any_extension_and_marker(tmp_path, suffix) -> 
     source = tmp_path / f"legacy{suffix}"
     source.write_text(json.dumps(payload), encoding="utf-8")
     loaded = DesignFileService().load(source)
-    assert loaded == _variant()
+    assert loaded == _legacy_variant()
     assert json.loads(source.read_text()) == payload
 
 
 @pytest.mark.parametrize("format_name", ["SMCapp Design", "AOCapp Design"])
 def test_both_formats_reject_unsupported_version_and_unknown_parameters(tmp_path, format_name) -> None:
     source = tmp_path / "invalid.json"
-    source.write_text(json.dumps({"format": format_name, "version": 3, "parameters": {}}))
+    source.write_text(json.dumps({"format": format_name, "version": 4, "parameters": {}}))
     with pytest.raises(ValueError, match="не поддерживается"):
         DesignFileService().load(source)
     source.write_text(json.dumps({"format": format_name, "version": 1, "parameters": {"unknown": 2}}))

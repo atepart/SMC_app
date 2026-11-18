@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field, fields as dataclass_fields, replace
 
@@ -21,7 +22,16 @@ from smcapp.domain.circuit import (
     validate_sections,
     with_element,
 )
+from smcapp.domain.dielectrics import DielectricStack, dielectric_errors, dielectric_stack
 from smcapp.domain.transformers import DL_MAX_UM, DL_MIN_UM
+
+
+def _last_grid_point(start: float, stop: float, step: float) -> float | None:
+    """Last value of ``arange(start, stop, step)``, or ``None`` for an empty grid."""
+    count = math.ceil((stop - start) / step)
+    if count <= 0:
+        return None
+    return start + (count - 1) * step
 
 
 @dataclass(frozen=True)
@@ -59,6 +69,8 @@ def _transformer_width_description(slot: ElementSlot, label: str) -> str:
 TRANSFORMER_UI_FIELDS = ("w1_m", "w2_m", "length_m")
 LINE_UI_FIELDS = ("width_m", "length_m")
 ELEMENT_FIELD_SCALE = 1e6
+# Insulator layers the Dielectrics group edits (WP-057, BUG-023 D1).
+DIELECTRIC_LAYER_FIELDS = ("ins_h1_m", "ins_h2_m", "anod_voltage_v", "eps_ins", "eps_anod")
 FIXED_GROUPS = ("General", "Backend Grid", "EL1 Material", "EL2 Material", "Dielectrics", "Block 1 / Block 2")
 
 
@@ -135,7 +147,7 @@ class S21Config:
         metadata={
             "label": "Tc EL1",
             "group": "EL1 Material",
-            "description": "Critical temperature Tc of electrode EL1.",
+            "description": "Critical temperature Tc of electrode EL1. EL1 — верхний электрод (в листах Mathcad HD35 это «электрод 2», d = 0.5 µm).",
             "suffix": " K",
             "minimum": 0.1,
             "maximum": 30.0,
@@ -148,7 +160,7 @@ class S21Config:
         metadata={
             "label": "Tc EL2",
             "group": "EL2 Material",
-            "description": "Critical temperature Tc of electrode EL2.",
+            "description": "Critical temperature Tc of electrode EL2. EL2 — нижний электрод (в листах Mathcad HD35 это «электрод 1», d = 0.2 µm).",
             "suffix": " K",
             "minimum": 0.1,
             "maximum": 30.0,
@@ -161,7 +173,7 @@ class S21Config:
         metadata={
             "label": "α EL1",
             "group": "EL1 Material",
-            "description": "Strong-coupling coefficient alpha_1 from the relation 2*Delta = alpha*kB*Tc for electrode EL1.",
+            "description": "Coefficient alpha_1 of the zero-temperature gap 2*Delta0 = alpha*kB*Tc for electrode EL1; Delta(T) = Delta0*tanh(1.74*sqrt(Tc/T - 1)) as in the Mathcad sheets. EL1 — верхний электрод (в листах Mathcad HD35 это «электрод 2», d = 0.5 µm).",
             "suffix": "",
             "minimum": 0.1,
             "maximum": 10.0,
@@ -174,7 +186,7 @@ class S21Config:
         metadata={
             "label": "α EL2",
             "group": "EL2 Material",
-            "description": "Strong-coupling coefficient alpha_2 from the relation 2*Delta = alpha*kB*Tc for electrode EL2.",
+            "description": "Coefficient alpha_2 of the zero-temperature gap 2*Delta0 = alpha*kB*Tc for electrode EL2; Delta(T) = Delta0*tanh(1.74*sqrt(Tc/T - 1)) as in the Mathcad sheets. EL2 — нижний электрод (в листах Mathcad HD35 это «электрод 1», d = 0.2 µm).",
             "suffix": "",
             "minimum": 0.1,
             "maximum": 10.0,
@@ -215,7 +227,7 @@ class S21Config:
         metadata={
             "label": "σ EL1",
             "group": "EL1 Material",
-            "description": "Normal-state conductivity sigma_1 of electrode EL1.",
+            "description": "Normal-state conductivity sigma_1 of electrode EL1. EL1 — верхний электрод (в листах Mathcad HD35 это «электрод 2», d = 0.5 µm).",
             "suffix": " 1/(Ohm*m)",
             "minimum": 0.000001,
             "maximum": 1000.0,
@@ -229,7 +241,7 @@ class S21Config:
         metadata={
             "label": "σ EL2",
             "group": "EL2 Material",
-            "description": "Normal-state conductivity sigma_2 of electrode EL2.",
+            "description": "Normal-state conductivity sigma_2 of electrode EL2. EL2 — нижний электрод (в листах Mathcad HD35 это «электрод 1», d = 0.2 µm).",
             "suffix": " 1/(Ohm*m)",
             "minimum": 0.000001,
             "maximum": 1000.0,
@@ -244,7 +256,7 @@ class S21Config:
         metadata={
             "label": "d EL1",
             "group": "EL1 Material",
-            "description": "Thickness of the top superconducting electrode film.",
+            "description": "Thickness of the top superconducting electrode film. EL1 — верхний электрод (в листах Mathcad HD35 это «электрод 2», d = 0.5 µm).",
             "suffix": " nm",
             "minimum": 1.0,
             "maximum": 100000.0,
@@ -258,7 +270,7 @@ class S21Config:
         metadata={
             "label": "d EL2",
             "group": "EL2 Material",
-            "description": "Thickness of the bottom superconducting electrode film.",
+            "description": "Thickness of the bottom superconducting electrode film. EL2 — нижний электрод (в листах Mathcad HD35 это «электрод 1», d = 0.2 µm).",
             "suffix": " nm",
             "minimum": 1.0,
             "maximum": 100000.0,
@@ -268,58 +280,73 @@ class S21Config:
         },
     )
 
-    h12_m: float = field(
-        default=0.465729e-6,
-        metadata={
-            "label": "h12",
-            "group": "Dielectrics",
-            "description": "Thickness of the inter-electrode dielectric between EL1 and EL2.",
-            "suffix": " nm",
-            "minimum": 1.0,
-            "maximum": 100000.0,
-            "step": 10.0,
-            "decimals": 0,
-            "scale": 1e9,
-        },
-    )
-    e12: float = field(
-        default=4.28265,
-        metadata={
-            "label": "ε₁₂",
-            "group": "Dielectrics",
-            "description": "Relative permittivity of the inter-electrode dielectric.",
-            "suffix": "",
-            "minimum": 1.0,
-            "maximum": 50.0,
-            "step": 0.01,
-            "decimals": 5,
-        },
-    )
-    h1_m: float = field(
-        default=1.65729e-7,
+    # BUG-023 D1 (WP-057): the insulator layers of the Mathcad HD35 sheets;
+    # H12/E12/H1/E1 are derived from them (see the properties below).
+    ins_h1_m: float = field(
+        default=0.15e-6,
         metadata={
             "label": "h1",
             "group": "Dielectrics",
-            "description": "Thickness of the dielectric used in the wide 50 Ohm SIS-side section.",
+            "description": "Толщина первого слоя изолятора h1 (h1i листа Mathcad). Стек линии «50 Ом» у SIS: H1 = h1 + Ha.",
             "suffix": " nm",
-            "minimum": 1.0,
+            "minimum": 0.0,
             "maximum": 100000.0,
             "step": 10.0,
             "decimals": 0,
             "scale": 1e9,
         },
     )
-    e1: float = field(
-        default=4.44084,
+    ins_h2_m: float = field(
+        default=0.25e-6,
         metadata={
-            "label": "ε₁",
+            "label": "h2",
             "group": "Dielectrics",
-            "description": "Relative permittivity of the dielectric in the SIS-side matching section.",
+            "description": "Толщина второго слоя изолятора h2 (h2i листа Mathcad). Межэлектродный стек: H12 = h1 + h2 + Ha.",
+            "suffix": " nm",
+            "minimum": 0.0,
+            "maximum": 100000.0,
+            "step": 10.0,
+            "decimals": 0,
+            "scale": 1e9,
+        },
+    )
+    anod_voltage_v: float = field(
+        default=10.0,
+        metadata={
+            "label": "V anod",
+            "group": "Dielectrics",
+            "description": "Напряжение анодирования Al (Vanod). Толщина анодного окисла Ha = 1.47·1.07 nm/V · V anod.",
+            "suffix": " V",
+            "minimum": 0.0,
+            "maximum": 1000.0,
+            "step": 1.0,
+            "decimals": 1,
+        },
+    )
+    eps_ins: float = field(
+        default=4.2,
+        metadata={
+            "label": "ε i",
+            "group": "Dielectrics",
+            "description": "Диэлектрическая проницаемость изолятора h1, h2 (Ei листа Mathcad).",
             "suffix": "",
-            "minimum": 1.0,
+            "minimum": 0.0,
             "maximum": 50.0,
-            "step": 0.01,
-            "decimals": 5,
+            "step": 0.1,
+            "decimals": 3,
+        },
+    )
+    eps_anod: float = field(
+        default=9.8,
+        metadata={
+            "label": "ε Al",
+            "group": "Dielectrics",
+            "description": "Диэлектрическая проницаемость анодного окисла Al₂O₃ (EAl листа Mathcad).",
+            "suffix": "",
+            "minimum": 0.0,
+            "maximum": 50.0,
+            "step": 0.1,
+            "decimals": 3,
         },
     )
     e_sub: float = field(
@@ -845,7 +872,7 @@ class S21Config:
         },
     )
     film_freq_step_ghz: float = field(
-        default=20.0,
+        default=5.0,
         metadata={
             "label": "Film grid step",
             "group": "Backend Grid",
@@ -881,8 +908,49 @@ class S21Config:
             errors.append("w_slot_m must be > dw_m so the corrected DC-block slot stays positive")
         if self.dc_gap_m <= 0:
             errors.append("dc_gap_m must be > 0: the two DC-block stubs are isolated")
+        if self.film_freq_step_ghz > 0 and self.s21_freq_step_ghz > 0:
+            # Both grids are half-open aranges; σ is interpolated, never extrapolated.
+            last_sweep = _last_grid_point(self.s21_freq_start_ghz, self.s21_freq_stop_ghz, self.s21_freq_step_ghz)
+            last_film = _last_grid_point(self.film_freq_start_ghz, self.film_freq_stop_ghz, self.film_freq_step_ghz)
+            if last_sweep is not None and last_film is not None and last_sweep > last_film + 1e-9:
+                errors.append(
+                    f"Сетка σ (Backend Grid) кончается на {last_film:g} GHz, а sweep доходит до {last_sweep:g} GHz:"
+                    " увеличьте Film grid stop."
+                )
+        for electrode, tc in (("EL1", self.tc_top_k), ("EL2", self.tc_bot_k)):
+            if self.temperature_k > 0 and self.temperature_k >= tc:
+                # Δ(T) = Δ0·tanh(1.74·√(Tc/T − 1)) vanishes at Tc: the film is not superconducting.
+                errors.append(
+                    f"T env = {self.temperature_k:g} K не ниже Tc {electrode} = {tc:g} K:"
+                    f" {electrode} не сверхпроводит, щель Δ(T) равна нулю."
+                )
+        errors.extend(dielectric_errors(self.ins_h1_m, self.ins_h2_m, self.anod_voltage_v, self.eps_ins, self.eps_anod))
         if errors:
             raise ValueError("; ".join(errors))
+
+    def dielectric_stack(self) -> DielectricStack:
+        """H1/E1/H12/E12 of the worksheet built from the insulator layers (D1)."""
+        return dielectric_stack(self.ins_h1_m, self.ins_h2_m, self.anod_voltage_v, self.eps_ins, self.eps_anod)
+
+    @property
+    def h12_m(self) -> float:
+        """Inter-electrode insulator thickness ``H12 = h1 + h2 + Ha`` in metres."""
+        return self.dielectric_stack().h12_m
+
+    @property
+    def e12(self) -> float:
+        """Effective permittivity ``E12 = E(h1 + h2)`` of the inter-electrode stack."""
+        return self.dielectric_stack().e12
+
+    @property
+    def h1_m(self) -> float:
+        """Insulator thickness ``H1 = h1 + Ha`` of the Mex01 stack in metres."""
+        return self.dielectric_stack().h1_m
+
+    @property
+    def e1(self) -> float:
+        """Effective permittivity ``E1 = E(h1)`` of the Mex01 stack."""
+        return self.dielectric_stack().e1
 
     def element_slots(self) -> tuple[ElementSlot, ...]:
         """Numbered elements of this configuration in drawing order."""

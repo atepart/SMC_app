@@ -15,8 +15,8 @@ def Z_film(f, film_args, d):
     Z == -1 means bulk case"""
 
     (freq_arr, sigma1, sigma2) = film_args
-    s1 = interp1d(freq_arr, sigma1)  # interpolation of 'sigma1' data points
-    s2 = interp1d(freq_arr, sigma2)  # interpolation of 'sigma2' data points
+    s1 = interp1d(freq_arr, sigma1, kind="linear", assume_sorted=True)  # interpolation of 'sigma1' data points
+    s2 = interp1d(freq_arr, sigma2, kind="linear", assume_sorted=True)  # interpolation of 'sigma2' data points
 
     sigma = lambda f: (s1(f) - 1j * s2(f))
 

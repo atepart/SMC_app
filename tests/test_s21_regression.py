@@ -4,17 +4,25 @@
 with fixed ``transf_1..7``/``msl_4..8`` fields (commit ccad0c9) before the
 sections became lists. Values are stored as ``float.hex`` so the comparison is
 exact.
+
+WP-057 changed the physics of the default calculation (Δ(T) tanh instead of the
+strong-coupling iteration, σ grid step 5 GHz, H12/E12/H1/E1 from the insulator
+layers).  The reference keeps checking the list model, so the run reproduces
+the physics of that commit: strong-coupling gaps, σ grid step 20 GHz and the
+H12/E12/H1/E1 values stored then.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 
 import pytest
 
+from smcapp.api import SuperconductingGapCalculator
 from smcapp.domain.circuit import LineSection, TransformerSection
+from smcapp.domain.dielectrics import DielectricStack
 from smcapp.domain.s21_models import S21Config
 from smcapp.infrastructure.s21_calculator import build_default_s21_calculator
 
@@ -40,10 +48,31 @@ def _variant() -> S21Config:
     )
 
 
+class _StrongCouplingGap(SuperconductingGapCalculator):
+    """The Δ(T) used before WP-057."""
+
+    def delta_bcs_approx(self, temperature_k, critical_temperature_k, delta0=-1.0):
+        return self.delta_strong_coupling(temperature_k, critical_temperature_k, delta0)
+
+
+@dataclass(frozen=True)
+class _StoredStackConfig(S21Config):
+    """H12/E12/H1/E1 exactly as the reference commit stored them (not rebuilt from layers)."""
+
+    def dielectric_stack(self) -> DielectricStack:
+        return DielectricStack(h1_m=1.65729e-7, e1=4.44084, h12_m=0.465729e-6, e12=4.28265)
+
+
+def _as_reference_commit(config: S21Config) -> S21Config:
+    values = {item.name: getattr(config, item.name) for item in fields(config)}
+    return _StoredStackConfig(**{**values, "film_freq_step_ghz": 20.0})
+
+
 @pytest.mark.parametrize(("name", "config_factory"), [("default", S21Config), ("variant", _variant)])
 def test_s21_matches_fixed_field_calculator_bit_for_bit(name, config_factory):
     reference = REFERENCE[name]
-    result = build_default_s21_calculator().calculate(config_factory())
+    calculator = replace(build_default_s21_calculator(), gap_calc=_StrongCouplingGap())
+    result = calculator.calculate(_as_reference_commit(config_factory()))
 
     assert [float(f) for f in result.frequencies_ghz] == reference["frequencies_ghz"]
     assert [float(value).hex() for value in result.s21_db] == reference["s21_db"]

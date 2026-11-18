@@ -6,10 +6,9 @@ def writer(filename, data_array):
     data_array should b a tuple of two arrays"""
 
     file1 = open(filename, "w")
-    k = 0
-    for data0 in data_array[0]:
+
+    for k in range(len(data_array[0])):
         file1.write(str(data_array[0][k]) + "\t" + str(data_array[1][k]) + "\n")
-        k += 1
     file1.close()
 
 

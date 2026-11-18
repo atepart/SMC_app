@@ -97,7 +97,7 @@ M_RAD = lambda f: array([[1.0, 0.0], [1.0 / Zrad4(f), 1.0]])
 
 # Modelling of the whole structure
 Mex4 = lambda f: M_RAD(f).dot(
-    MSL.M_MSL(f0, 3.0 * 1e-6, 6.0 * 1e-6 + DW, E12, H12, top_s12_args, bot_s12_args, d_top, d_bot)
+    MSL.M_MSL(f, 3.0 * 1e-6, 6.0 * 1e-6 + DW, E12, H12, top_s12_args, bot_s12_args, d_top, d_bot)
 )
 
 

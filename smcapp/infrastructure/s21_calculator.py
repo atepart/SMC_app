@@ -59,14 +59,14 @@ class S21CalculatorImpl(S21Calculator):
 
         ``alpha_top`` and ``alpha_bot`` supply the correction from the
         2026-07-07 Mathcad correspondence through
-        ``2*Delta0 = alpha*kB*Tc``.  The resulting gaps feed Mattis–Bardeen
+        ``2*Delta0 = alpha*kB*Tc``; the temperature dependence is the
+        worksheet's ``Delta0*tanh(1.74*sqrt(Tc/T - 1))``.  The resulting gaps feed Mattis–Bardeen
         conductivity tables, which in turn provide the complex surface
         impedances used by every microstrip, transformer, DC-block and SIS
         element.
 
-        The proposed ``t_prox`` anodization capacitance is intentionally not
-        present: it is a separate future parallel branch and no authoritative
-        Mathcad expression/value was supplied with issue #4.
+        The ``t_prox`` anodization capacitance is intentionally not present:
+        the HD35-M/HD35-L worksheets set ``t_prox = 0`` (BL-007).
         """
         config.validate()
         log_messages: list[str] = []
@@ -84,13 +84,15 @@ class S21CalculatorImpl(S21Calculator):
             delta0_top = self._delta0_from_alpha_tc(config.alpha_top, config.tc_top_k)
             delta0_bot = self._delta0_from_alpha_tc(config.alpha_bot, config.tc_bot_k)
 
-            log("Mirroring backend/main.py configuration.")
-            log("Using strong-coupling approximation for superconducting gaps.")
+            log("Mirroring the Mathcad HD35 worksheets (backend/main.py network).")
+            log("Superconducting gaps: Delta(T) = Delta0*tanh(1.74*sqrt(Tc/T - 1)) as in the worksheets.")
             log(f"EL1 gap inferred from alpha={config.alpha_top:.3f} and Tc={config.tc_top_k:.3f} K.")
             log(f"EL2 gap inferred from alpha={config.alpha_bot:.3f} and Tc={config.tc_bot_k:.3f} K.")
 
-            delta_top = self.gap_calc.delta_strong_coupling(config.temperature_k, config.tc_top_k, delta0_top)
-            delta_bot = self.gap_calc.delta_strong_coupling(config.temperature_k, config.tc_bot_k, delta0_bot)
+            # BUG-023 D4 (WP-057): the worksheet's BCS tanh approximation, which
+            # replaced the earlier strong-coupling iteration (up to 1.6 dB apart).
+            delta_top = self.gap_calc.delta_bcs_approx(config.temperature_k, config.tc_top_k, delta0_top)
+            delta_bot = self.gap_calc.delta_bcs_approx(config.temperature_k, config.tc_bot_k, delta0_bot)
             log(f"Delta_top = {delta_top:.9e} eV")
             log(f"Delta_bot = {delta_bot:.9e} eV")
 
@@ -103,10 +105,13 @@ class S21CalculatorImpl(S21Calculator):
             top_film = self._build_film(freq_arr, config.sigma0_top, config.temperature_k, delta_top, log, "EL1")
             bot_film = self._build_film(freq_arr, config.sigma0_bot, config.temperature_k, delta_bot, log, "EL2")
 
-            h12 = config.h12_m
-            e12 = config.e12
-            h1 = config.h1_m
-            e1 = config.e1
+            # BUG-023 D1 (WP-057): H12/E12/H1/E1 from the insulator layers and anodization.
+            stack = config.dielectric_stack()
+            h12, e12, h1, e1 = stack.h12_m, stack.e12, stack.h1_m, stack.e1
+            log(
+                f"Dielectric stack: H1 = {h1 * 1e6:.6f} um, E1 = {e1:.7f}; "
+                f"H12 = {h12 * 1e6:.6f} um, E12 = {e12:.7f}."
+            )
             dw = config.dw_m
 
             # Fabrication correction applies with opposite sign to the etched

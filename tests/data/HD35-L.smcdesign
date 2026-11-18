@@ -1,0 +1,138 @@
+{
+  "format": "SMCapp Design",
+  "version": 3,
+  "parameters": {
+    "temperature_k": 4.4,
+    "tc_top_k": 13.0,
+    "tc_bot_k": 9.5,
+    "alpha_top": 3.67,
+    "alpha_bot": 3.63,
+    "delta0_top_ev": 0.00145,
+    "delta0_bot_ev": 0.00145,
+    "sigma0_top": 975000.0,
+    "sigma0_bot": 18000000.0,
+    "d_top_m": 5e-07,
+    "d_bot_m": 2e-07,
+    "ins_h1_m": 1.5e-07,
+    "ins_h2_m": 2.5e-07,
+    "anod_voltage_v": 10.0,
+    "eps_ins": 4.2,
+    "eps_anod": 9.8,
+    "e_sub": 11.7,
+    "h_sub_m": 0.00035,
+    "block_left_taper_um": 12.0,
+    "block_center_length_um": 30.0,
+    "block_right_taper_um": 14.0,
+    "block_body_height_um": 60.0,
+    "block_neck_height_um": 20.0,
+    "block_arm_length_um": 53.0,
+    "dw_m": 5e-07,
+    "w_slot_m": 4e-06,
+    "l_slot_m": 4e-05,
+    "lso_m": 4e-06,
+    "w_ms_m": 1.2e-05,
+    "l_ms_m": 2.4e-05,
+    "dc_gap_m": 4e-06,
+    "zrad0_ohm": 50.0,
+    "zrad1_len_m": 7e-05,
+    "zrad1_width_m": 4e-06,
+    "radial_r_min_m": 4e-06,
+    "radial_r_max_m": 4.2e-05,
+    "radial_angle_deg": 112.0,
+    "zrad3_len_m": 6e-06,
+    "zrad3_width_m": 4e-06,
+    "zrad4_len_m": 3e-06,
+    "zrad4_width_m": 6e-06,
+    "mex4_len_m": 3e-06,
+    "mex4_width_m": 6e-06,
+    "mex01": [
+      {
+        "type": "transformer",
+        "w1_m": 1.4e-05,
+        "w2_m": 4.9999999999999996e-05,
+        "n_um": 4.0,
+        "dl_m": 1e-06
+      },
+      {
+        "type": "line",
+        "width_m": 4.9999999999999996e-05,
+        "length_m": 1.8999999999999998e-05
+      },
+      {
+        "type": "transformer",
+        "w1_m": 4.9999999999999996e-05,
+        "w2_m": 1.8e-05,
+        "n_um": 4.0,
+        "dl_m": 1e-06
+      }
+    ],
+    "mex02": [
+      {
+        "type": "line",
+        "width_m": 1.8e-05,
+        "length_m": 3.6e-05
+      },
+      {
+        "type": "transformer",
+        "w1_m": 1.8e-05,
+        "w2_m": 8e-06,
+        "n_um": 2.0,
+        "dl_m": 5e-07
+      },
+      {
+        "type": "line",
+        "width_m": 8e-06,
+        "length_m": 4.2e-05
+      }
+    ],
+    "corner_left": {
+      "w1_m": 8e-06,
+      "w2_m": 9.999999999999999e-06,
+      "n_um": 1.0,
+      "dl_m": 4e-06
+    },
+    "corner_right": {
+      "w1_m": 8e-06,
+      "w2_m": 6e-06,
+      "n_um": 1.0,
+      "dl_m": 4e-06
+    },
+    "mex03": [
+      {
+        "type": "line",
+        "width_m": 6e-06,
+        "length_m": 4.4e-05
+      },
+      {
+        "type": "transformer",
+        "w1_m": 6e-06,
+        "w2_m": 1.8e-05,
+        "n_um": 2.0,
+        "dl_m": 2e-06
+      },
+      {
+        "type": "line",
+        "width_m": 1.8e-05,
+        "length_m": 3.9999999999999996e-05
+      },
+      {
+        "type": "transformer",
+        "w1_m": 1.8e-05,
+        "w2_m": 6e-06,
+        "n_um": 2.0,
+        "dl_m": 1e-06
+      }
+    ],
+    "s21_freq_start_ghz": 100.0,
+    "s21_freq_stop_ghz": 930.0,
+    "s21_freq_step_ghz": 5.0,
+    "z_ffo_ohm": 0.25,
+    "sis_area_um2": 1.2,
+    "sis_rn_area_ohm_um2": 30.0,
+    "sis_cap_f_per_um2": 8.5e-14,
+    "sis_width_um": 4.0,
+    "film_freq_start_ghz": 20.0,
+    "film_freq_stop_ghz": 1110.0,
+    "film_freq_step_ghz": 5.0
+  }
+}

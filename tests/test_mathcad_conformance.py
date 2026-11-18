@@ -19,24 +19,15 @@ from smcapp.api import (
     MicrostripLineCalculator,
     RadialStubCalculator,
     ResultsCalculator,
-    SuperconductingGapCalculator,
 )
 from smcapp.api.radial_stub import RADIAL_STEP_M, radial_slice_count
 from smcapp.domain.s21_models import S21Config
 from smcapp.infrastructure.design_files import DesignFileService
 from smcapp.infrastructure.s21_calculator import S21CalculatorImpl, build_default_s21_calculator
 
-_HA_M = 1.47 * 1.07e-9 * 10  # anodic Al2O3 thickness of the worksheet
-
-
-def _series_permittivity(insulator_m: float, e_ins: float = 4.2, e_anod: float = 9.8) -> float:
-    return e_ins * e_anod * (insulator_m + _HA_M) / (e_ins * _HA_M + e_anod * insulator_m)
-
-
-# HD35-H2 inputs of the radial-stub branch and Mex04.  D1 (H12/E12 of the sheet,
-# h2i = 0.25 µm) and D3 (Mathcad electrode 2 is the upper one) are still open
-# owner decisions, so they are applied here as inputs: the worksheet H12/E12 and
-# the Mathcad electrode 2 in EL1.
+# HD35-H2 inputs of the radial-stub branch and Mex04.  The insulator layers of
+# the sheet (h1i = 0.15 µm, h2i = 0.25 µm, 10 V) give H12/E12 (D1, WP-057), and
+# the Mathcad electrode 2 is the upper one, EL1 (D3).
 HD35_H2 = dict(
     temperature_k=4.4,
     tc_top_k=13.0,
@@ -47,8 +38,11 @@ HD35_H2 = dict(
     alpha_bot=3.63,
     sigma0_bot=18e6,
     d_bot_m=0.2e-6,
-    h12_m=0.40e-6 + _HA_M,
-    e12=_series_permittivity(0.40e-6),
+    ins_h1_m=0.15e-6,
+    ins_h2_m=0.25e-6,
+    anod_voltage_v=10.0,
+    eps_ins=4.2,
+    eps_anod=9.8,
     dw_m=0.5e-6,
     zrad0_ohm=50.0,
     zrad1_len_m=70e-6,
@@ -63,13 +57,6 @@ HD35_H2 = dict(
     mex4_len_m=3e-6,
     mex4_width_m=6e-6,
 )
-
-
-class _WorksheetGap(SuperconductingGapCalculator):
-    """Δ(T) of the worksheet; D4 (gap model) is still an open owner decision."""
-
-    def delta_strong_coupling(self, temperature_k, critical_temperature_k, delta0=-1.0):
-        return self.delta_bcs_approx(temperature_k, critical_temperature_k, delta0)
 
 
 @dataclass
@@ -107,7 +94,7 @@ def hd35_at_820ghz():
     calculator = build_default_s21_calculator()
     radial = _RadialSpy(microstrip=calculator.microstrip, admittances={})
     results = _GroupSpy()
-    calculator = replace(calculator, gap_calc=_WorksheetGap(), radial_stub=radial, results=results)
+    calculator = replace(calculator, radial_stub=radial, results=results)
     config = replace(
         S21Config(),
         **HD35_H2,
@@ -203,7 +190,8 @@ def test_d5_radial_stub_slices_from_outer_edge_to_neck(radius_um, count) -> None
 
 
 def test_retired_f0_parameter_is_accepted_and_not_saved_again(tmp_path) -> None:
-    original = S21Config(temperature_k=4.4, radial_r_max_m=36e-6)
+    # A version-1 file without H12/E12/H1/E1 had their old defaults: h2 = 0.30 µm (WP-057).
+    original = S21Config(temperature_k=4.4, radial_r_max_m=36e-6, ins_h2_m=0.30e-6)
     parameters = {"temperature_k": 4.4, "radial_r_max_m": 36e-6, "f0_ghz": 650.0}
     source = tmp_path / "HD35-old.aocdesign"
     source.write_text(json.dumps({"format": "AOCapp Design", "version": 1, "parameters": parameters}))

@@ -153,7 +153,7 @@ def test_pushed_out_value_is_applied_and_undoable(parameter_window: MainWindow) 
 
 def test_greek_labels_fixed_orders_and_design_round_trip(parameter_window: MainWindow, tmp_path) -> None:
     labels = {label.text() for label in parameter_window.findChildren(QtWidgets.QLabel)}
-    assert {"α EL1", "σ EL1", "ε₁₂"} <= labels
+    assert {"α EL1", "σ EL1", "ε i", "ε Al"} <= labels
 
     order = parameter_window._engineering_orders["d_top_m"]
     assert isinstance(order, QtWidgets.QLabel)
@@ -202,8 +202,10 @@ def test_issue_10_field_precision_and_general_block(parameter_window: MainWindow
     assert shown["temperature_k"] == "4.2" and shown["tc_top_k"] == "9.5"
     assert shown["alpha_top"] == "3.54"
     assert shown["sigma0_top"] == "18.000"
-    assert shown["h12_m"] == "466" and shown["h1_m"] == "166" and shown["d_top_m"] == "350"
-    assert window._parameter_units["h12_m"].text() == "×10^-9 m"
+    assert shown["ins_h1_m"] == "150" and shown["ins_h2_m"] == "250" and shown["d_top_m"] == "350"
+    assert shown["anod_voltage_v"] == "10.0" and shown["eps_ins"] == "4.200" and shown["eps_anod"] == "9.800"
+    assert "h12_m" not in shown and "e1" not in shown  # WP-057: derived from the layers
+    assert window._parameter_units["ins_h1_m"].text() == "×10^-9 m"
     assert shown["h_sub_m"] == "350"
     assert shown["sis_area_um2"] == "0.80" and shown["sis_rn_area_ohm_um2"] == "32.0"
     assert shown["sis_cap_f_per_um2"] == "0.083"
@@ -234,9 +236,9 @@ def test_issue_10_field_precision_and_general_block(parameter_window: MainWindow
 
     # Rounded display, exact calculation: untouched editors keep the loaded value.
     config = window._build_config()
-    assert config.h12_m == 0.465729e-6 and config.h1_m == 1.65729e-7
-    _enter_value(window, "h12_m", 470)
-    assert window._build_config().h12_m == pytest.approx(470e-9)
+    assert config.ins_h2_m == 0.25e-6 and config.h1_m == pytest.approx(1.65729e-7, rel=1e-12)
+    _enter_value(window, "ins_h2_m", 300)
+    assert window._build_config().h12_m == pytest.approx(465.729e-9, rel=1e-12)
     _enter_value(window, "mex02_3_width_m", 4.26)  # a digit beyond 0.1 µm is not accepted
     assert inputs["mex02_3_width_m"].text() == "4.2"
     assert window._build_config().mex02[2].width_m == pytest.approx(4.2e-6)
@@ -965,7 +967,7 @@ def test_save_dialog_uses_new_format_and_selected_extension(
     assert "*.aocdesign" not in dialog.call_args.args[3]
     payload = json.loads(target.with_suffix(suffix).read_text())
     assert payload["format"] == "SMCapp Design"
-    assert payload["version"] == 2
+    assert payload["version"] == 3  # WP-057: insulator layers
     assert DesignFileService().load(target.with_suffix(suffix)) == parameter_window._build_config()
     assert parameter_window.windowTitle().startswith("smcapp ")
 
@@ -1087,3 +1089,42 @@ def test_import_menu_converts_with_the_chosen_unit_and_cancel_keeps_the_curve(pa
 
     with pytest.raises(ValueError, match="Единица частоты не определена"):
         window.load_comparison_trace("HFSS", path)
+
+
+def test_dielectric_group_shows_the_stack_built_from_the_layers(parameter_window: MainWindow) -> None:
+    """WP-057 (BUG-023 D1): h1, h2, V anod, ε i, ε Al in, H1/ε₁/H12/ε₁₂ shown below."""
+    window = parameter_window
+    hint = window._dielectric_hint
+    assert hint is not None and window._parameter_groups["Dielectrics"].isAncestorOf(hint)
+    assert hint.text() == ("H1 = h1 + Ha = 165.7290 nm; ε₁ = 4.44084\nH12 = h1 + h2 + Ha = 415.7290 nm; ε₁₂ = 4.29281")
+    window._config_inputs["ins_h2_m"].setValue(300)
+    assert "H12 = h1 + h2 + Ha = 465.7290 nm; ε₁₂ = 4.28265" in hint.text()
+    window._config_inputs["anod_voltage_v"].setValue(0)
+    assert hint.text() == "H1 = h1 + Ha = 150.0000 nm; ε₁ = 4.20000\nH12 = h1 + h2 + Ha = 450.0000 nm; ε₁₂ = 4.20000"
+    window._config_inputs["ins_h2_m"].setValue(0)
+    assert hint.text() == "Диэлектрики: толщина h2 должна быть больше 0."
+    assert THEME_COLORS[window._theme].error_text in hint.styleSheet()
+    with pytest.raises(ValueError, match="толщина h2 должна быть больше 0"):
+        window._build_config().validate()
+
+
+def test_old_design_file_reports_rebuilt_permittivity_without_blocking(parameter_window: MainWindow, tmp_path) -> None:
+    window = parameter_window
+    path = DesignFileService().save(tmp_path / "current.smcdesign", S21Config())
+    payload = json.loads(path.read_text())
+    payload["version"] = 2
+    for name in ("ins_h1_m", "ins_h2_m", "anod_voltage_v", "eps_ins", "eps_anod"):
+        del payload["parameters"][name]
+    payload["parameters"].update(h12_m=0.415729e-6, e12=4.5, h1_m=1.65729e-7, e1=4.44084)
+    old = tmp_path / "old.smcdesign"
+    old.write_text(json.dumps(payload))
+
+    config = window.load_design_from_path(old)  # returns: the note box is not modal
+
+    assert config.ins_h2_m == pytest.approx(0.25e-6)
+    assert window._config_inputs["ins_h2_m"].text() == "250"
+    box = window._load_notes_box
+    assert box is not None and box.isVisible()
+    assert "ε₁₂: в файле 4.50000, по слоям 4.29281" in box.text()
+    assert "ε₁₂: в файле 4.50000, по слоям 4.29281" in window._log_view.toPlainText()
+    box.close()
