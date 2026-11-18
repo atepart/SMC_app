@@ -80,6 +80,7 @@ from smcapp.domain.transformers import DL_MAX_UM, DL_MIN_UM, derive_transformer_
 from smcapp.infrastructure.design_files import DesignFileService
 from smcapp.infrastructure.geometry import SIGNAL_INPUT
 from smcapp.infrastructure.hover import ElementHitMap, NumberMark
+from smcapp.infrastructure.parameter_export import hfss_parameters_text, write_hfss_parameters
 from smcapp.infrastructure.settings import migrate_legacy_settings
 from smcapp.infrastructure.trace_files import (
     ComparisonTrace,
@@ -1460,6 +1461,22 @@ class MainWindow(QMainWindow):
         buffer_button.setMenu(self.buffer_menu)
         toolbar.addWidget(buffer_button)
 
+        # «Экспорт» right of «Буфер» (GitHub #12, WP-058): for now only the
+        # readable parameter list for HFSS.
+        self.export_menu = QtWidgets.QMenu("Экспорт", self)
+        self.export_hfss_action = self.export_menu.addAction("Параметры HFSS…")
+        self.export_hfss_action.setToolTip("Сохранить все параметры структуры в читаемый .txt по группам панели")
+        self.export_hfss_action.triggered.connect(self._export_hfss_parameters_dialog)
+        self.export_menu.setToolTipsVisible(True)
+
+        export_button = QtWidgets.QToolButton(self)
+        export_button.setObjectName("export_button")
+        export_button.setText("Экспорт")
+        export_button.setToolTip("Выгрузить параметры в файл")
+        export_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        export_button.setMenu(self.export_menu)
+        toolbar.addWidget(export_button)
+
     def _refresh_dock_widgets_menu(self) -> None:
         """Rebuild the panel checklist from the actual QtAds state."""
         self.dock_widgets_menu.clear()
@@ -1614,6 +1631,38 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _remember_file_directory(path: str | Path) -> None:
         QSettings().setValue("Files/last_directory", str(Path(path).expanduser().parent))
+
+    def export_hfss_parameters_to_path(self, path: str | Path) -> Path:
+        """Write the parameters Run S21 would use as readable text (WP-058)."""
+        config = self._build_config()
+        config.validate()
+        same_material = None if self._same_materials_checkbox is None else self._same_materials_checkbox.isChecked()
+        text = hfss_parameters_text(config, same_material=same_material, version=__version__)
+        destination = write_hfss_parameters(path, text)
+        self._remember_file_directory(destination)
+        if self._s21_status is not None:
+            self._s21_status.setText(f"Параметры HFSS сохранены: {destination}")
+        return destination
+
+    def _export_hfss_parameters_dialog(self) -> None:
+        """«Экспорт → Параметры HFSS…»: ask for a .txt target and write the parameter list."""
+        try:
+            self._build_config().validate()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Invalid input", str(exc))
+            return
+        selected, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Экспорт параметров HFSS",
+            str(Path(self._last_files_directory()) / "parameters_HFSS.txt"),
+            "Текст (*.txt)",
+        )
+        if not selected:
+            return
+        try:
+            self.export_hfss_parameters_to_path(selected)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, "Ошибка экспорта параметров", str(exc))
 
     def _save_design_dialog(self) -> None:
         """Ask for a friendly target and save the current backend parameters."""
