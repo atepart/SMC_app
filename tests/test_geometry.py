@@ -652,7 +652,7 @@ def test_corner_line_end_face_is_centred_on_its_line(line_um, w1_um, length_um) 
     """GitHub #10: the face of 7 (and 9) protrudes equally above and below line 6 (10)."""
     from smcapp.domain.transformers import derive_transformer_steps
 
-    steps = derive_transformer_steps(w1_um * 1e-6, 10e-6, length_um * 1e-6, max_dl_um=3.0)
+    steps = derive_transformer_steps(w1_um * 1e-6, 10e-6, length_um * 1e-6)
     config = _corner_config(
         mex02_3_width_m=line_um * 1e-6,
         mex03_1_width_m=line_um * 1e-6,
