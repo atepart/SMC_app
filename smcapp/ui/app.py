@@ -89,6 +89,7 @@ from smcapp.infrastructure.trace_files import (
     convert_trace,
     read_data_table,
     read_trace_table,
+    right_axis_span_db,
     right_axis_values,
 )
 from smcapp.ui.plot_legend import CheckableItemSample, PlainItemSample
@@ -167,19 +168,28 @@ def format_plot_coordinates(frequency_ghz: float, s21_db: float) -> str:
 
 
 def format_right_axis_value(quantity: YQuantity, log_value: float) -> str:
-    """Cursor plate text for the right axis, which is drawn in log10 space (WP-055)."""
-    if quantity.logarithmic:
-        return f"{quantity.axis_label} = {log_value:.3f}"
-    value = 10.0**log_value
+    """Cursor plate text for the right axis, drawn in lg I² space (WP-064): I² and I itself."""
+    squared = 10.0**log_value
+    current = math.sqrt(squared)
     if quantity.family == "normalized":
-        return f"I/I_g = {value:.3g}"
-    return f"I = {value:.3g} {quantity.unit}"
+        original = f"I/I_g = {current:.3g}"
+        squared_text = f"(I/I_g)² = {squared:.3g}"
+    else:
+        original = f"I = {current:.3g} {quantity.unit}"
+        squared_text = f"I² = {squared:.3g} {quantity.squared_unit}"
+    if quantity.logarithmic:
+        squared_text = f"{quantity.axis_label} = {log_value:.3f}"
+    return f"{squared_text}; {original}"
 
 
 def right_axis_range_unit(quantity: YQuantity) -> str:
-    """Unit of the Y2 min/max fields: the current itself, or its log10 for "Log" data."""
-    unit = quantity.unit if quantity.family == "current" else "I/I_g"
-    return f"lg {unit}" if quantity.logarithmic else unit
+    """Unit of the Y2 min/max fields: I², or lg I² for "Log" data (WP-064)."""
+    return f"lg {quantity.squared_unit}" if quantity.logarithmic else quantity.squared_unit
+
+
+def format_right_axis_span(span_db: float) -> str:
+    """Span of the Y2 range next to its fields: ``ΔY2 = -10.0 dB`` (WP-064)."""
+    return f"ΔY2 = {round(span_db, 1) + 0.0:.1f} dB"
 
 
 @dataclass(frozen=True)
@@ -1000,8 +1010,18 @@ class MainWindow(QMainWindow):
         vbox = QVBoxLayout(inner)
 
         title = QLabel("Параметры структуры")
+        title.setWordWrap(True)
         self._heading_labels.append(title)
-        vbox.addWidget(title)
+        title_row = QHBoxLayout()
+        title_row.addWidget(title, stretch=1)
+        # △/▽ collapse/expand every group at once (#12 п. 5, WP-059).
+        self.collapse_all_button = self._group_toggle_button("△", "Свернуть все группы", "collapse_all_groups")
+        self.collapse_all_button.clicked.connect(lambda: self._set_all_groups_expanded(False))
+        self.expand_all_button = self._group_toggle_button("▽", "Развернуть все группы", "expand_all_groups")
+        self.expand_all_button.clicked.connect(lambda: self._set_all_groups_expanded(True))
+        title_row.addWidget(self.collapse_all_button, alignment=Qt.AlignmentFlag.AlignTop)
+        title_row.addWidget(self.expand_all_button, alignment=Qt.AlignmentFlag.AlignTop)
+        vbox.addLayout(title_row)
 
         subtitle = QLabel(
             "Номера элементов идут слева направо от ФФО. W1 — ширина слева, W2 — справа; L — общая длина. "
@@ -1111,6 +1131,28 @@ class MainWindow(QMainWindow):
         # calculation and design persistence are always reachable.
         outer.addWidget(controls_box, stretch=0)
         return panel
+
+    def _group_toggle_button(self, symbol: str, tooltip: str, name: str) -> QtWidgets.QToolButton:
+        """A square outlined button sized from the heading font, so it follows the UI scale."""
+        button = QtWidgets.QToolButton(self)
+        button.setObjectName(name)
+        button.setText(symbol)
+        button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # Tab and Ctrl+↓ stay on the fields
+        font = scaled_font(PARAMETER_TITLE_SCALE, bold=True)
+        button.setFont(font)
+        side = round(QFontMetrics(font).height() * 1.6)
+        button.setFixedSize(side, side)
+        return button
+
+    def _set_all_groups_expanded(self, expanded: bool) -> None:
+        """Open or close every parameter group; typed values are applied first, as Ctrl+↓ does."""
+        self._redraw_if_edited()
+        for box in self._parameter_groups.values():
+            box.setChecked(expanded)
+        if not expanded:
+            self.parameters_scroll.verticalScrollBar().setValue(0)
 
     def _populate_parameter_groups(self) -> None:
         """Create every parameter group of ``self._defaults`` in drawing order."""
@@ -1274,15 +1316,23 @@ class MainWindow(QMainWindow):
             label = QLabel(panel)
             label.setObjectName(f"plot_{name}_label")
             # Room for the longest unit, so a current arriving does not move the row.
-            label.setMinimumWidth(label.fontMetrics().horizontalAdvance("Y2 max, lg µA") + 2)
+            label.setMinimumWidth(label.fontMetrics().horizontalAdvance("Y2 max, lg (I/I_g)²") + 2)
             spin = ScaleSpinBox(panel)
             spin.setObjectName(f"plot_{name}")
             spin.setRange(-1e12, 1e12)
             spin.setValue(value)
             spin.setFixedWidth(90)
             spin.returnPressed.connect(self._apply_plot_scale)
+            spin.valueChanged.connect(self._update_right_axis_span_from_fields)
             self._plot_y2_labels[name] = label
             self._plot_y2_inputs[name] = spin
+        # WP-064: the span of the Y2 range in dB, next to the fields.
+        self._plot_y2_span_label = QLabel(panel)
+        self._plot_y2_span_label.setObjectName("plot_y2_span")
+        self._plot_y2_span_label.setToolTip("Размах правой оси: 10·lg(Y2 min / Y2 max) для I² — декада I² = 10 dB")
+        self._plot_y2_span_label.setMinimumWidth(
+            self._plot_y2_span_label.fontMetrics().horizontalAdvance("ΔY2 = -100.0 dB") + 2
+        )
         self._plot_controls = controls
         self._plot_y2_wide: bool | None = None
         self._place_plot_y2_fields(wide=True)
@@ -1300,7 +1350,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(controls_widget)
         return panel
 
-    # Columns 12+ of the first row stay free for the dB span of the Y2 range (WP-064).
+    # Column 12 of the first row: the dB span of the Y2 range (WP-064).
     _PLOT_Y2_STRETCH_COLUMN = 13
 
     def _place_plot_y2_fields(self, wide: bool) -> None:
@@ -1316,9 +1366,11 @@ class MainWindow(QMainWindow):
             row, first = (0, 8) if wide else (2, 4)
             controls.addWidget(label, row, first + column * 2)
             controls.addWidget(spin, row, first + column * 2 + 1)
+        controls.removeWidget(self._plot_y2_span_label)
+        controls.addWidget(self._plot_y2_span_label, *((0, 12) if wide else (2, 8)))
         for column in range(self._PLOT_Y2_STRETCH_COLUMN + 1):
             controls.setColumnStretch(column, 0)
-        controls.setColumnStretch(self._PLOT_Y2_STRETCH_COLUMN if wide else 8, 1)
+        controls.setColumnStretch(self._PLOT_Y2_STRETCH_COLUMN if wide else 9, 1)
         self._update_plot_y2_visibility()
 
     def _update_plot_y2_visibility(self) -> None:
@@ -1332,6 +1384,7 @@ class MainWindow(QMainWindow):
             visible = bool(self._plot_y2_wide) or spin.isEnabled()
             spin.setVisible(visible)
             self._plot_y2_labels[name].setVisible(visible)
+        self._plot_y2_span_label.setVisible(bool(self._plot_y2_wide) or self._plot_y2_inputs["y2_min"].isEnabled())
 
     def _plot_controls_row_width(self, with_y2: bool) -> int:
         """Minimum width of the controls with the Y2 fields in the first row or under it."""
@@ -1367,6 +1420,9 @@ class MainWindow(QMainWindow):
             spin.set_blank(not enabled)
             spin.setToolTip("" if enabled else "Шкала правой оси: появится с кривой тока на графике")
             label.setToolTip(spin.toolTip())
+        self._plot_y2_span_label.setEnabled(enabled)
+        if not enabled:
+            self._plot_y2_span_label.setText("ΔY2, dB")
         if self._plot_y2_wide is not None:
             self._update_plot_y2_visibility()
         # Longer labels ("Y2 min, lg µA") may no longer fit the first row.
@@ -2148,7 +2204,11 @@ class MainWindow(QMainWindow):
         right_axis.linkToView(self._right_view)
         right_axis.enableAutoSIPrefix(False)
         right_axis.setStyle(tickFont=tick_font)
-        self._right_view.setXLink(plot_item)
+        # X follows the main view exactly.  setXLink maps through the device
+        # rectangles of both views and was off by a pixel (0.1 % of X) at
+        # fractional view widths, e.g. with the I² tick labels (WP-064).
+        plot_item.vb.sigXRangeChanged.connect(self._sync_right_view_x)
+        self._right_view.sigYRangeChanged.connect(self._update_right_axis_span_from_view)
         plot_item.vb.sigResized.connect(self._sync_right_view_geometry)
         plot_item.hideAxis("right")
         self._apply_plot_theme()
@@ -2302,10 +2362,32 @@ class MainWindow(QMainWindow):
             return math.log10(low), math.log10(high)
         return low, high
 
+    def _show_right_axis_span(self, low: float, high: float) -> None:
+        """``ΔY2 = -10.0 dB`` for a right-axis range given in lg I² (WP-064)."""
+        if self._right_axis_shown() and math.isfinite(low) and math.isfinite(high):
+            self._plot_y2_span_label.setText(format_right_axis_span(right_axis_span_db(low, high)))
+
+    def _update_right_axis_span_from_view(self, *_args) -> None:
+        """Wheel zoom, pan, Home and Enter all move the right view: its range is the span."""
+        low, high = self._right_view.viewRange()[1]
+        self._show_right_axis_span(low, high)
+
+    def _update_right_axis_span_from_fields(self, *_args) -> None:
+        """While Y2 min/max are typed, the span of the typed range (before Enter)."""
+        if not self._right_axis_shown():
+            return
+        displayed = (self._plot_y2_inputs["y2_min"].value(), self._plot_y2_inputs["y2_max"].value())
+        if not self._right_axis_quantity.logarithmic and min(displayed) <= 0:
+            return
+        self._show_right_axis_span(*self._right_view_range(displayed))
+
     def _sync_right_view_geometry(self) -> None:
         main_view = self._plot.getPlotItem().vb
         self._right_view.setGeometry(main_view.sceneBoundingRect())
-        self._right_view.linkedViewChanged(main_view, self._right_view.XAxis)
+        self._sync_right_view_x()
+
+    def _sync_right_view_x(self, *_args) -> None:
+        self._right_view.setXRange(*self._plot.getPlotItem().vb.viewRange()[0], padding=0)
 
     def _sync_frequency_axis_unit(self, *_args) -> None:
         """Keep the bottom-axis unit aligned with the visible GHz range."""
@@ -2727,7 +2809,7 @@ class MainWindow(QMainWindow):
             view_box.setRange(xRange=(x_min, x_max), yRange=(y_min, y_max), padding=0)
 
     def _update_right_axis(self) -> None:
-        """Show the right axis, its label, scale and Y2 fields while a current is plotted (WP-055)."""
+        """Show the right axis (I², WP-064), its label, scale, Y2 fields and span while a current is plotted."""
         plot_item = self._plot.getPlotItem()
         shown = self._right_axis_shown()
         if not shown:
@@ -2740,7 +2822,7 @@ class MainWindow(QMainWindow):
         # setLabel replaces the whole label style: keep the theme colour from setTextPen (BUG-028).
         label_style = {**axis.labelStyle, "font-size": f"{scaled_point_size(PLOT_AXIS_LABEL_SCALE)}pt"}
         axis.setLabel(quantity.axis_label, **label_style)
-        # Plain current: log scale (ticks 10^y); "Log" data: y as it is.
+        # Plain current: I² on a log scale (ticks 10^y); "Log" data: y = lg I² as it is.
         axis.setLogMode(y=not quantity.logarithmic)
         self._set_plot_y2_fields_enabled(True, right_axis_range_unit(quantity))
         self._sync_right_view_geometry()
@@ -2760,6 +2842,7 @@ class MainWindow(QMainWindow):
             for name, value in zip(("y2_min", "y2_max"), displayed):
                 self._plot_y2_inputs[name].setValue(value)
             self._right_view.setYRange(low, high, padding=0)
+        self._update_right_axis_span_from_view()
 
     def _arrange_legend(self) -> None:
         """Lay the legend out from its top row: one column, two for many curves.

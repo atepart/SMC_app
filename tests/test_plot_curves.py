@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import math
 from pathlib import Path
 from typing import cast
 from unittest.mock import Mock
@@ -393,9 +394,9 @@ def test_import_dialog_reads_decimal_commas_and_offers_columns_and_quantities(wi
 
     dialog.select_columns(0, 2)
     assert dialog.selected_quantity() == "mA"
-    assert "правая ось, логарифмическая шкала" in dialog.y_result_label.text()
+    assert "правая ось, квадрат I² в логарифмической шкале" in dialog.y_result_label.text()
     dialog.select_quantity("mA log")
-    assert "правая ось, линейная шкала" in dialog.y_result_label.text()
+    assert "правая ось, линейная шкала: 2·lg I = lg I²" in dialog.y_result_label.text()
     trace = dialog.comparison_trace()
     assert trace.quantity == "mA log" and trace.coefficients == (0.01, 0.1, 1.0)
 
@@ -486,18 +487,18 @@ def test_current_goes_to_a_right_log_axis_with_its_own_home(window: MainWindow, 
     _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "mA")
 
     right = plot_item.getAxis("right")
-    assert right.isVisible() and right.logMode and right.labelText == "I, mA"
+    assert right.isVisible() and right.logMode and right.labelText == "I², mA²"
     [exp] = window._right_curve_items
     assert exp.getViewBox() is window._right_view and exp.name() == "exp"
-    assert exp.yData.tolist() == pytest.approx([-2.0, -1.0, 0.0])  # log10 of the mA values
+    assert exp.yData.tolist() == pytest.approx([-4.0, -2.0, 0.0])  # WP-064: lg I² of the mA values
     assert [name for name, _ in _legend(window)] == ["SMC", "exp"]
     assert "exp" not in _curves(window)  # not on the S21 axis
-    assert "I, mA: правая ось, логарифмическая шкала" in window._s21_status.text()
+    assert "I, mA: правая ось, квадрат I² в логарифмической шкале" in window._s21_status.text()
     # Y2 fields appear, filled from the data; the S21 view stays on Home.
     assert window._plot_y2_inputs["y2_min"].isEnabled() and window._plot_y2_inputs["y2_min"].text() != ""
-    assert window._plot_y2_labels["y2_min"].text() == "Y2 min, mA"
+    assert window._plot_y2_labels["y2_min"].text() == "Y2 min, mA²"
     low, high = window._right_view.viewRange()[1]
-    assert low < -2.0 and high > 0.0
+    assert low < -4.0 and high > 0.0
     assert window._plot_y2_inputs["y2_min"].value() == pytest.approx(10.0**low)
     assert plot_item.vb.viewRange()[1] == pytest.approx([home[2], home[3]])
     # The X range is shared.
@@ -508,9 +509,12 @@ def test_current_goes_to_a_right_log_axis_with_its_own_home(window: MainWindow, 
     window._plot_y2_inputs["y2_max"].setValue(10.0)
     window._apply_plot_scale()
     assert window._right_view.viewRange()[1] == pytest.approx([-3.0, 1.0])
+    assert window._plot_y2_span_label.text() == "ΔY2 = -40.0 dB"  # 10·lg(0.001 / 10)
     window._right_view.scaleBy((1, 0.5))
+    assert window._plot_y2_span_label.text() == "ΔY2 = -20.0 dB"  # the wheel zoom changes the span
     window._restore_plot_scale()
     assert window._right_view.viewRange()[1] == pytest.approx([-3.0, 1.0])
+    assert window._plot_y2_span_label.text() == "ΔY2 = -40.0 dB"
 
     # Zero is not on a log scale: refused, Home unchanged.
     warnings: list[str] = []
@@ -526,7 +530,7 @@ def test_current_goes_to_a_right_log_axis_with_its_own_home(window: MainWindow, 
     center = plot_item.vb.sceneBoundingRect().center()
     window._on_plot_mouse_moved(center)
     expected = 10.0 ** window._right_view.mapSceneToView(center).y()
-    assert window._plot_hover_label.text().endswith(f"I = {expected:.3g} mA")
+    assert window._plot_hover_label.text().endswith(f"I² = {expected:.3g} mA²; I = {math.sqrt(expected):.3g} mA")
     assert math.isfinite(expected)
 
 
@@ -553,7 +557,7 @@ def test_y2_fields_sit_after_y_max_and_wrap_under_it_when_narrow(window: MainWin
     # A current on the right axis enables them in place, with its unit.
     _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "mA")
     assert window._plot_y2_inputs["y2_max"].isEnabled() and window._plot_y2_labels["y2_max"].isEnabled()
-    assert window._plot_y2_labels["y2_max"].text() == "Y2 max, mA"
+    assert window._plot_y2_labels["y2_max"].text() == "Y2 max, mA²"
     # The label width is reserved for the longest unit: the row does not move.
     assert _grid_position(window, window._plot_y2_inputs["y2_min"]) == (y_max_row, y_max_column + 2)
 
@@ -584,17 +588,70 @@ def test_y2_fields_sit_after_y_max_and_wrap_under_it_when_narrow(window: MainWin
     assert window._plot_y2_inputs["y2_min"].isVisible() and not window._plot_y2_inputs["y2_min"].isEnabled()
 
 
+def test_y2_span_in_db_follows_fields_zoom_and_pan(window: MainWindow, tmp_path, monkeypatch) -> None:
+    """WP-064: next to Y2 min/max, 10·lg(Y2 min / Y2 max) of I² — 1500…15000 → −10 dB (owner's example)."""
+    window.resize(1900, 920)
+    QtWidgets.QApplication.processEvents()
+    span = window._plot_y2_span_label
+    assert span.isVisible() and not span.isEnabled() and span.text() == "ΔY2, dB"
+    assert _grid_position(window, span) == _grid_position(window, window._plot_y2_inputs["y2_max"])[:1] + (12,)
+
+    _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "µA")
+    assert span.isEnabled() and span.text().startswith("ΔY2 = -") and span.text().endswith(" dB")
+    y2_min, y2_max = window._plot_y2_inputs["y2_min"], window._plot_y2_inputs["y2_max"]
+    assert window._plot_y2_labels["y2_min"].text() == "Y2 min, µA²"
+    # Typing shows the span of the typed range, Enter makes it the view and Home.
+    y2_min.setValue(1500.0)
+    y2_max.setValue(15000.0)
+    assert span.text() == "ΔY2 = -10.0 dB"
+    y2_min.setValue(150.0)
+    assert span.text() == "ΔY2 = -20.0 dB"
+    window._apply_plot_scale()
+    assert window._right_view.viewRange()[1] == pytest.approx([math.log10(150.0), math.log10(15000.0)])
+    assert span.text() == "ΔY2 = -20.0 dB"
+    # Wheel zoom on the right axis changes the span; panning keeps it.
+    window._right_view.scaleBy((1, 0.5))
+    assert span.text() == "ΔY2 = -10.0 dB"
+    window._right_view.translateBy(y=0.3)
+    assert span.text() == "ΔY2 = -10.0 dB"
+    window._restore_plot_scale()
+    assert span.text() == "ΔY2 = -20.0 dB"
+    # Y2 min ≤ 0 typed on the log scale: no span from the fields, the view's stays.
+    y2_min.setValue(0.0)
+    assert span.text() == "ΔY2 = -20.0 dB"
+
+    # Narrow panel: the span follows the fields under Y min/Y max.
+    window.resize(900, 920)
+    QtWidgets.QApplication.processEvents()
+    assert span.isVisible() and _grid_position(window, span) == (_grid_position(window, y2_max)[0], 8)
+
+
+def test_right_axis_hover_shows_the_square_and_the_current(window: MainWindow, tmp_path, monkeypatch) -> None:
+    from smcapp.infrastructure.trace_files import Y_QUANTITIES
+    from smcapp.ui.app import format_right_axis_span, format_right_axis_value
+
+    assert format_right_axis_value(Y_QUANTITIES["µA"], math.log10(1500.0)) == "I² = 1.5e+03 µA²; I = 38.7 µA"
+    assert format_right_axis_value(Y_QUANTITIES["I/Ig"], 2.0) == "(I/I_g)² = 100; I/I_g = 10"
+    assert format_right_axis_value(Y_QUANTITIES["µA log"], 3.2) == "lg(I² / µA²) = 3.200; I = 39.8 µA"
+    assert format_right_axis_span(-9.99999) == "ΔY2 = -10.0 dB" and format_right_axis_span(-0.01) == "ΔY2 = 0.0 dB"
+
+
 def test_log_values_use_a_linear_right_axis_and_db_goes_back_left(window: MainWindow, tmp_path, monkeypatch) -> None:
     path = tmp_path / "log.txt"
     path.write_text("Freq [GHz]; lg I [uA]\n100; -1,5\n500; 0,25\n", encoding="utf-8")
     _import_choosing(window, "HFSS", path, monkeypatch, 1, "µA log")
 
     right = window._plot.getPlotItem().getAxis("right")
-    assert right.isVisible() and not right.logMode and right.labelText == "log₁₀(I / µA)"
+    assert right.isVisible() and not right.logMode and right.labelText == "lg(I² / µA²)"
     [hfss] = window._right_curve_items
-    assert hfss.yData.tolist() == pytest.approx([-1.5, 0.25])
-    assert window._plot_y2_labels["y2_max"].text() == "Y2 max, lg µA"
-    assert window._plot_y2_inputs["y2_min"].value() < -1.5
+    assert hfss.yData.tolist() == pytest.approx([-3.0, 0.5])  # WP-064: 2·lg I (open owner question b)
+    assert window._plot_y2_labels["y2_max"].text() == "Y2 max, lg µA²"
+    assert window._plot_y2_inputs["y2_min"].value() < -3.0
+    # Linear lg I² axis: the span is 10·(Y2 min − Y2 max).
+    window._plot_y2_inputs["y2_min"].setValue(3.2)
+    window._plot_y2_inputs["y2_max"].setValue(4.2)
+    window._apply_plot_scale()
+    assert window._plot_y2_span_label.text() == "ΔY2 = -10.0 dB"
 
     # The same file as dB: back on the S21 axis, the right axis goes away and the Y2 fields grey out.
     _import_choosing(window, "HFSS", path, monkeypatch, 1, "dB")
@@ -602,6 +659,7 @@ def test_log_values_use_a_linear_right_axis_and_db_goes_back_left(window: MainWi
     assert _curves(window)["HFSS"].yData.tolist() == [-1.5, 0.25]
     assert not window._plot_y2_inputs["y2_max"].isEnabled() and window._plot_y2_inputs["y2_max"].text() == ""
     assert window._plot_y2_labels["y2_max"].text() == "Y2 max"
+    assert not window._plot_y2_span_label.isEnabled() and window._plot_y2_span_label.text() == "ΔY2, dB"
 
 
 @pytest.mark.parametrize("first, second", [(Theme.DARK, Theme.LIGHT), (Theme.LIGHT, Theme.DARK)])
@@ -615,7 +673,7 @@ def test_right_axis_label_follows_the_theme(window: MainWindow, tmp_path, monkey
     def colour(axis) -> str:
         return QtGui.QColor(axis.labelStyle["color"]).name()
 
-    assert right.isVisible() and right.labelText == "log₁₀(I / A)"
+    assert right.isVisible() and right.labelText == "lg(I² / A²)"
     assert colour(right) == colour(left) == QtGui.QColor(THEME_COLORS[first].plot_foreground).name()
     assert right.labelStyle["color"] in right.label.toHtml()  # the drawn text, not only the style
     font_size = right.labelStyle["font-size"]

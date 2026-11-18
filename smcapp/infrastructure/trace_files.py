@@ -54,8 +54,10 @@ class YQuantity:
     """What the Y column holds and where it is drawn.
 
     ``axis`` is ``"left"`` (S21 in dB, with the calculation) or ``"right"``
-    (current).  ``logarithmic`` values are already log10 of the quantity and
-    are drawn on a linear right axis; plain current goes on a log-scale one.
+    (current).  The right axis shows the *square* of the current (WP-064,
+    owner 18.11.2026): a decade of I² is 10 dB, like S21.  Plain current is
+    drawn as I² on a log-scale axis; ``logarithmic`` values are already
+    log10 of the current and are drawn as 2·lg I = lg I² on a linear axis.
     """
 
     key: str
@@ -67,20 +69,26 @@ class YQuantity:
     logarithmic: bool = False
 
     @property
+    def squared_unit(self) -> str:
+        """Unit of I² on the right axis: ``µA²``, or ``(I/I_g)²`` for the ratio."""
+        return f"{self.unit}²" if self.family == "current" else "(I/I_g)²"
+
+    @property
     def axis_label(self) -> str:
         if self.family == "s21":
             return "S21, dB"
         if self.family == "normalized":
-            return "log₁₀(I/I_g)" if self.logarithmic else "I/I_g"
-        return f"log₁₀(I / {self.unit})" if self.logarithmic else f"I, {self.unit}"
+            return "lg (I/I_g)²" if self.logarithmic else "(I/I_g)²"
+        return f"lg(I² / {self.squared_unit})" if self.logarithmic else f"I², {self.squared_unit}"
 
     @property
     def placement(self) -> str:
         if self.axis == "left":
             return "левая ось, вместе с остальными кривыми"
         if self.logarithmic:
-            return "правая ось, линейная шкала (значения уже логарифм)"
-        return "правая ось, логарифмическая шкала"
+            # Awaits owner confirmation (WP-064 open question b): "Log" data as 2·lg I.
+            return "правая ось, линейная шкала: 2·lg I = lg I² (значения уже логарифм)"
+        return "правая ось, квадрат I² в логарифмической шкале"
 
 
 def _current(key: str, unit: str, factor: float, logarithmic: bool) -> YQuantity:
@@ -527,30 +535,61 @@ def convert_trace(table: TraceTable, unit: str, unit_source: str, quantity: str 
     )
 
 
-def right_axis_values(trace: ComparisonTrace, axis: YQuantity) -> tuple[list[float], list[float], int]:
-    """Frequencies and log10 of Y in the right axis' unit; non-positive currents are dropped.
+# The right axis shows I² (WP-064): its coordinate is lg(I² / unit²) = 2·lg(I / unit).
+RIGHT_AXIS_POWER = 2
 
-    The right axis is drawn in log10 space in both of its modes: with plain
-    current its ticks read 10^y (log scale), with "Log" data they read y.
-    Currents in A/mA/µA are moved into the axis' unit; I/I_g is never mixed
-    with a current, it keeps its own values.  Returns the dropped count.
+
+def _log_data_on_right_axis(lg_current: float) -> float:
+    """Data marked «Log» (the file holds lg I) → lg I² = 2·lg I, drawn linearly.
+
+    Awaits owner confirmation (WP-064 open question b); the alternative is
+    to keep lg I as it is (``return lg_current``) — change it only here.
+    """
+    return RIGHT_AXIS_POWER * lg_current
+
+
+def _current_on_right_axis(current: float) -> float | None:
+    """Plain current → lg I²; ``None`` drops the point.
+
+    I ≤ 0 is not shown: squaring would lose the sign and lg 0 does not exist.
+    Awaits owner confirmation (WP-064 open question a); the alternative is
+    |I|² — change it only here (and the ≤ 0 note of the import dialog).
+    """
+    if current <= 0:
+        return None
+    return RIGHT_AXIS_POWER * math.log10(current)
+
+
+def right_axis_values(trace: ComparisonTrace, axis: YQuantity) -> tuple[list[float], list[float], int]:
+    """Frequencies and lg I² of Y in the right axis' unit; returns the dropped count too.
+
+    The right axis is drawn in lg(I² / unit²) space in both of its modes:
+    with plain current its ticks read 10^y = I² (log scale), with "Log" data
+    they read y = lg I² (linear).  Currents in A/mA/µA are moved into the
+    axis' unit (mA² → µA² is ×10⁶); I/I_g is never mixed with a current.
     """
     quantity = trace.y_quantity
     if quantity.axis != "right":
         raise ValueError(f"Величина {quantity.title} рисуется на левой оси.")
     shift = 0.0
     if quantity.family == axis.family == "current":
-        shift = math.log10(quantity.factor / axis.factor)
+        shift = RIGHT_AXIS_POWER * math.log10(quantity.factor / axis.factor)
     frequencies: list[float] = []
     values: list[float] = []
     dropped = 0
     for frequency, value in zip(trace.frequencies, trace.coefficients):
-        if quantity.logarithmic:
-            values.append(value + shift)
-        elif value > 0:
-            values.append(math.log10(value) + shift)
-        else:
+        point = _log_data_on_right_axis(value) if quantity.logarithmic else _current_on_right_axis(value)
+        if point is None:
             dropped += 1
             continue
+        values.append(point + shift)
         frequencies.append(frequency)
     return frequencies, values, dropped
+
+
+def right_axis_span_db(low: float, high: float) -> float:
+    """Span of a right-axis range in dB: 10·lg(I²min / I²max), e.g. 1500…15000 µA² → −10 dB.
+
+    *low*/*high* are right-axis coordinates, lg I², in either mode.
+    """
+    return 10.0 * (low - high)

@@ -349,11 +349,14 @@ class TraceImportDialog(QDialog):
             lines.append(f"Пропущено строк без чисел в X/Y: {selection.skipped_rows}{where}.")
         usable = True
         if quantity.axis == "right" and not quantity.logarithmic:
+            # I ≤ 0 is not drawn as I² (WP-064, awaits owner confirmation: see _current_on_right_axis).
             non_positive = sum(value <= 0 for value in values)
             if non_positive == len(values):
-                lines.append("Все значения ≤ 0: на логарифмической шкале показать нечего. Выберите «Log» или dB.")
+                lines.append("Все значения ≤ 0: на логарифмической шкале I² показать нечего. Выберите «Log» или dB.")
                 usable = False
             elif non_positive:
-                lines.append(f"Значений ≤ 0 не будет на логарифмической шкале: {non_positive}.")
+                lines.append(
+                    f"Значений ≤ 0 не будет на шкале I² (знак при возведении в квадрат теряется): {non_positive}."
+                )
         self.y_result_label.setText("\n".join(lines))
         ok_button.setEnabled(unit is not None and usable)

@@ -1128,3 +1128,55 @@ def test_old_design_file_reports_rebuilt_permittivity_without_blocking(parameter
     assert "ε₁₂: в файле 4.50000, по слоям 4.29281" in box.text()
     assert "ε₁₂: в файле 4.50000, по слоям 4.29281" in window._log_view.toPlainText()
     box.close()
+
+
+def test_collapse_and_expand_all_groups_buttons(parameter_window: MainWindow) -> None:
+    """WP-059: △ closes every parameter group and scrolls to the top, ▽ opens them all."""
+    window = parameter_window
+    collapse = window.findChild(QtWidgets.QToolButton, "collapse_all_groups")
+    expand = window.findChild(QtWidgets.QToolButton, "expand_all_groups")
+    assert collapse is window.collapse_all_button and expand is window.expand_all_button
+    assert collapse.toolTip() == "Свернуть все группы" and expand.toolTip() == "Развернуть все группы"
+    assert collapse.focusPolicy() == QtCore.Qt.FocusPolicy.NoFocus
+    groups = window._parameter_groups
+    assert {"General", "Backend Grid", "Dielectrics", "1 · Трансформатор"} <= set(groups)
+
+    window.parameters_scroll.verticalScrollBar().setValue(window.parameters_scroll.verticalScrollBar().maximum())
+    QTest.mouseClick(collapse, QtCore.Qt.MouseButton.LeftButton)
+    QtWidgets.QApplication.processEvents()
+    assert not any(box.isChecked() for box in groups.values())
+    assert not any(box.content.isVisible() for box in groups.values())
+    assert window.parameters_scroll.verticalScrollBar().value() == 0
+
+    QTest.mouseClick(expand, QtCore.Qt.MouseButton.LeftButton)
+    QtWidgets.QApplication.processEvents()
+    assert all(box.isChecked() and box.content.isVisible() for box in groups.values())
+
+    # Collapse again, then add elements: existing groups stay closed, new ones open as usual.
+    QTest.mouseClick(collapse, QtCore.Qt.MouseButton.LeftButton)
+    QtWidgets.QApplication.processEvents()
+    line = next(slot for slot in window._defaults.element_slots() if slot.number == 4)
+    window.insert_elements_after(line.element_id)
+    QtWidgets.QApplication.processEvents()
+    states = {name: box.isChecked() for name, box in window._parameter_groups.items()}
+    assert states["5 · Трансформатор"] and states["6 · Линия"]
+    assert not states["General"] and not states["4 · Линия"] and not states["7 · Трансформатор"]
+
+
+def test_collapse_all_applies_a_typed_value_first(parameter_window: MainWindow) -> None:
+    """A value typed without Enter is applied (schematic redrawn), not lost, when groups close."""
+    window, inputs = parameter_window, parameter_window._config_inputs
+    window._update_svg()
+    length = inputs["mex02_3_length_m"]
+    window._focus_field(length)
+    length.lineEdit().selectAll()
+    QTest.keyClicks(length.lineEdit(), "37")
+    with patch.object(window._view, "set_svg", wraps=window._view.set_svg) as drawn:
+        QTest.mouseClick(window.collapse_all_button, QtCore.Qt.MouseButton.LeftButton)
+        QtWidgets.QApplication.processEvents()
+        assert drawn.call_count == 1
+    assert length.value() == 37
+    assert window._build_config().element("mex02_3").length_m == pytest.approx(37e-6)
+    QTest.mouseClick(window.expand_all_button, QtCore.Qt.MouseButton.LeftButton)
+    QtWidgets.QApplication.processEvents()
+    assert length.value() == 37 and length.text() == "37.0"

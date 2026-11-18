@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from smcapp.infrastructure.trace_files import (
     detect_y_quantity,
     read_data_table,
     read_trace_table,
+    right_axis_span_db,
     right_axis_values,
     select_trace,
 )
@@ -273,26 +275,45 @@ def _trace(values, quantity) -> ComparisonTrace:
     return ComparisonTrace(tuple(range(100, 100 + 10 * len(values), 10)), tuple(values), DATA, quantity=quantity)
 
 
-def test_right_axis_values_are_log10_in_the_axis_unit() -> None:
-    # Plain current: log10, non-positive values cannot be shown on a log scale.
+def test_right_axis_values_are_lg_of_the_squared_current_in_the_axis_unit() -> None:
+    """WP-064: the right axis shows I² (a decade of I² is 10 dB); its coordinate is lg I²."""
+    # Plain current: 2·lg I; I ≤ 0 is dropped (open owner question a).
     frequencies, values, dropped = right_axis_values(_trace([0.01, 0.0, -1.0, 1.0], "mA"), Y_QUANTITIES["mA"])
-    assert frequencies == [100, 130] and values == pytest.approx([-2.0, 0.0]) and dropped == 2
-    # The same current on a µA axis is 1000 times larger.
-    assert right_axis_values(_trace([0.01], "mA"), Y_QUANTITIES["µA"])[1] == pytest.approx([1.0])
-    # "Log" data already is log10 and may be negative; only the unit shift applies.
-    assert right_axis_values(_trace([-2.0, 0.5], "mA log"), Y_QUANTITIES["mA log"])[1] == pytest.approx([-2.0, 0.5])
-    assert right_axis_values(_trace([-2.0], "mA log"), Y_QUANTITIES["A"])[1] == pytest.approx([-5.0])
+    assert frequencies == [100, 130] and values == pytest.approx([-4.0, 0.0]) and dropped == 2
+    # The same current on a µA axis: I is 1000 times larger, I² 10⁶ times (mA² → µA²).
+    assert right_axis_values(_trace([0.01], "mA"), Y_QUANTITIES["µA"])[1] == pytest.approx([2.0])
+    # The owner's example: 38.7…122.5 µA ⇒ I² ≈ 1500…15000 µA², a span of −10 dB.
+    low, high = right_axis_values(_trace([38.7298, 122.474], "µA"), Y_QUANTITIES["µA"])[1]
+    assert 10.0**low == pytest.approx(1500.0, rel=1e-5) and 10.0**high == pytest.approx(15000.0, rel=1e-5)
+    assert right_axis_span_db(low, high) == pytest.approx(-10.0, abs=1e-4)
+    # "Log" data already is lg I and may be negative: 2·lg I = lg I² plus the unit shift (open question b).
+    assert right_axis_values(_trace([-2.0, 0.5], "mA log"), Y_QUANTITIES["mA log"])[1] == pytest.approx([-4.0, 1.0])
+    assert right_axis_values(_trace([-2.0], "mA log"), Y_QUANTITIES["A"])[1] == pytest.approx([-10.0])
     # I/I_g is never moved into a current unit.
-    assert right_axis_values(_trace([10.0], "I/Ig"), Y_QUANTITIES["mA"])[1] == pytest.approx([1.0])
+    assert right_axis_values(_trace([10.0], "I/Ig"), Y_QUANTITIES["mA"])[1] == pytest.approx([2.0])
     with pytest.raises(ValueError, match="левой оси"):
         right_axis_values(_trace([-3.0], "dB"), Y_QUANTITIES["mA"])
 
 
+@pytest.mark.parametrize(
+    "low, high, expected",
+    [
+        (math.log10(1500), math.log10(15000), -10.0),
+        (math.log10(150), math.log10(15000), -20.0),
+        (math.log10(15000), math.log10(15000), 0.0),
+        (3.2, 4.2, -10.0),  # "Log" data: lg I² read linearly, as the owner's lgI^2 chart
+    ],
+)
+def test_right_axis_span_in_db(low, high, expected) -> None:
+    assert right_axis_span_db(low, high) == pytest.approx(expected)
+
+
 def test_quantity_labels_and_placement() -> None:
     assert Y_QUANTITIES["dB"].axis == "left" and Y_QUANTITIES["dB"].axis_label == "S21, dB"
-    assert Y_QUANTITIES["mA"].axis_label == "I, mA" and "логарифмическая" in Y_QUANTITIES["mA"].placement
-    assert Y_QUANTITIES["µA log"].axis_label == "log₁₀(I / µA)" and "линейная" in Y_QUANTITIES["µA log"].placement
-    assert Y_QUANTITIES["I/Ig log"].title == "I/I_g Log" and Y_QUANTITIES["I/Ig"].axis_label == "I/I_g"
+    assert Y_QUANTITIES["mA"].axis_label == "I², mA²" and "I² в логарифмической" in Y_QUANTITIES["mA"].placement
+    assert Y_QUANTITIES["µA log"].axis_label == "lg(I² / µA²)" and "2·lg I" in Y_QUANTITIES["µA log"].placement
+    assert Y_QUANTITIES["I/Ig log"].title == "I/I_g Log" and Y_QUANTITIES["I/Ig"].axis_label == "(I/I_g)²"
+    assert Y_QUANTITIES["I/Ig log"].axis_label == "lg (I/I_g)²" and Y_QUANTITIES["µA"].squared_unit == "µA²"
 
 
 @pytest.mark.parametrize(
