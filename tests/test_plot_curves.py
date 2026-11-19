@@ -684,3 +684,121 @@ def test_right_axis_label_follows_the_theme(window: MainWindow, tmp_path, monkey
     _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "A log")
     assert colour(right) == QtGui.QColor(THEME_COLORS[second].plot_foreground).name()
     assert right.labelStyle["font-size"] == font_size
+
+
+def _drawn_labels(axis) -> list[tuple[QtCore.QRectF, str]]:
+    """Tick and edge texts exactly as the axis would draw them."""
+    image = QtGui.QImage(10, 10, QtGui.QImage.Format.Format_ARGB32)
+    painter = QtGui.QPainter(image)
+    try:
+        specs = axis.generateDrawSpecs(painter)
+    finally:
+        painter.end()
+    return [(rect, text) for rect, _flags, text in specs[2]]
+
+
+def _assert_no_overlap(labels) -> None:
+    for index, (rect, text) in enumerate(labels):
+        for other, other_text in labels[index + 1 :]:
+            assert not rect.intersects(other), f"{text!r} overlaps {other_text!r}"
+
+
+def _edges(axis) -> tuple[str, str]:
+    """(text at the minimum end, text at the maximum end) of a drawn axis."""
+    labels = _drawn_labels(axis)
+    _assert_no_overlap(labels)
+    bounds = axis.mapRectFromParent(axis.geometry())
+    if axis.orientation in ("left", "right"):
+        low = [text for rect, text in labels if rect.bottom() == pytest.approx(bounds.bottom())]
+        high = [text for rect, text in labels if rect.top() == pytest.approx(bounds.top())]
+    else:
+        low = [text for rect, text in labels if rect.left() == pytest.approx(bounds.left())]
+        high = [text for rect, text in labels if rect.right() == pytest.approx(bounds.right())]
+    assert len(low) == 1 and len(high) == 1, labels
+    return low[0], high[0]
+
+
+def test_axis_ends_show_the_visible_min_and_max(window: MainWindow) -> None:
+    """WP-061 (GitHub #12): both ends of X and Y carry their exact values, as precise as the fields."""
+    from smcapp.ui.app import trimmed_number
+
+    assert [trimmed_number(-17.3, 2), trimmed_number(-20.0, 2), trimmed_number(103.0, 0)] == ["-17.3", "-20", "103"]
+    assert trimmed_number(-0.001, 2) == "0"
+    window.resize(1900, 1200)
+    window._update_s21_plot(FREQUENCIES, [-10.0, -4.0, -2.0, -5.0, -12.0])
+    plot_item = window._plot.getPlotItem()
+    bottom, left = plot_item.getAxis("bottom"), plot_item.getAxis("left")
+    QtWidgets.QApplication.processEvents()
+    assert _edges(bottom) == ("100", "900") and _edges(left) == ("-20", "0")
+
+    # Typed limits, as the owner sets them under the plot.
+    for name, value in (("x_min", 103.7), ("x_max", 893.2), ("y_min", -17.3), ("y_max", -1.2)):
+        window._plot_scale_inputs[name].setValue(value)
+    window._apply_plot_scale()
+    QtWidgets.QApplication.processEvents()
+    # Exactly the visible range, with the precision of the fields (X whole GHz, Y 0.01 dB), no trailing zeros.
+    assert _edges(bottom) == ("104", "893") and _edges(left) == ("-17.3", "-1.2")
+
+    # Wheel zoom to non-round values: the same field precision; Home (the typed limits) brings them back.
+    plot_item.vb.scaleBy((0.37, 0.6))
+    QtWidgets.QApplication.processEvents()
+    x_range, y_range = plot_item.vb.viewRange()
+    assert _edges(bottom) == tuple(trimmed_number(value, 0) for value in x_range)
+    assert _edges(left) == tuple(trimmed_number(value, 2) for value in y_range)
+    assert len(_edges(left)[0].split(".")[1]) == 2  # a non-round end keeps its hundredths
+    window._restore_plot_scale()
+    QtWidgets.QApplication.processEvents()
+    assert _edges(bottom) == ("104", "893") and _edges(left) == ("-17.3", "-1.2")
+
+    # From 1 THz the axis is in THz and so are its ends.
+    plot_item.vb.setXRange(200.0, 1000.0, padding=0)
+    QtWidgets.QApplication.processEvents()
+    assert "THz" in bottom.labelString() and _edges(bottom) == ("0.2", "1")
+    plot_item.vb.setXRange(203.4, 1000.0, padding=0)
+    QtWidgets.QApplication.processEvents()
+    assert _edges(bottom) == ("0.203", "1")  # whole GHz like the X fields, written in THz
+    assert not bottom.autoSIPrefix
+
+
+def test_edge_label_wins_over_a_tick_label_it_would_touch(window: MainWindow) -> None:
+    """WP-061: a tick label next to an edge label is dropped (its tick line stays), the edge value is kept."""
+    window.resize(1900, 1200)
+    window._update_s21_plot(FREQUENCIES, [-10.0, -4.0, -2.0, -5.0, -12.0])
+    plot_item = window._plot.getPlotItem()
+    bottom = plot_item.getAxis("bottom")
+    plot_item.vb.setXRange(100.0, 903.0, padding=0)
+    QtWidgets.QApplication.processEvents()
+    texts = [text for _rect, text in _drawn_labels(bottom)]
+    assert _edges(bottom) == ("100", "903") and "900" not in texts and "800" in texts
+
+
+def test_log_right_axis_ends_and_thinned_ticks(window: MainWindow, tmp_path, monkeypatch) -> None:
+    """WP-061: I² ends in the log ticks' notation; crowded minor labels are thinned, none overlap."""
+    from smcapp.ui.app import log_axis_edge_string
+
+    assert log_axis_edge_string(math.log10(1500.0)) == "1.5·10³"
+    assert log_axis_edge_string(4.0) == "10⁴"
+    assert log_axis_edge_string(math.log10(151.3)) == "151"
+    assert log_axis_edge_string(math.log10(1.5e-5)) == "1.5·10⁻⁵"
+
+    window.resize(1900, 1200)
+    _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "µA")
+    right = window._plot.getPlotItem().getAxis("right")
+    window._plot_y2_inputs["y2_min"].setValue(1500.0)
+    window._plot_y2_inputs["y2_max"].setValue(15000.0)
+    window._apply_plot_scale()
+    QtWidgets.QApplication.processEvents()
+    assert _edges(right) == ("1.5·10³", "1.5·10⁴")
+    texts = [text for _rect, text in _drawn_labels(right)]
+    assert "10⁴" in texts  # the decade inside the range keeps its label
+    # Without thinning all of 2·10³ … 9·10³ would be drawn on this short axis.
+    minor = [text for text in texts if text.endswith("·10³") and text != "1.5·10³"]
+    assert 0 < len(minor) < 8
+
+    # The linear "Log" axis: ends like its ticks.
+    _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "µA log")
+    window._plot_y2_inputs["y2_min"].setValue(3.2)
+    window._plot_y2_inputs["y2_max"].setValue(4.2)
+    window._apply_plot_scale()
+    QtWidgets.QApplication.processEvents()
+    assert _edges(right) == ("3.2", "4.2")

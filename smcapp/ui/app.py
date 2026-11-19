@@ -786,7 +786,122 @@ class ScaleSpinBox(SafeDoubleSpinBox):
         return QValidator.State.Acceptable, text, pos
 
 
-class FrequencyAxisItem(pg.AxisItem):
+_SUPERSCRIPT_DIGITS = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
+
+
+def log_axis_edge_string(log_value: float) -> str:
+    """``10**log_value`` with three significant digits, in the log ticks' ``a·10ⁿ`` notation."""
+    text = f"{10.0**log_value:.3g}"
+    if "e" not in text:
+        return text
+    mantissa, exponent = text.split("e")
+    power = "10" + str(int(exponent)).translate(_SUPERSCRIPT_DIGITS)
+    return power if mantissa == "1" else f"{mantissa}·{power}"
+
+
+def trimmed_number(value: float, decimals: int) -> str:
+    """``value`` with at most *decimals* decimals and no trailing zeros: −17.30 → «-17.3», 103.0 → «103»."""
+    text = f"{value:.{max(0, decimals)}f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return "0" if text in ("-0", "") else text
+
+
+class EdgeLabelAxisMixin:
+    """Label the visible minimum and maximum at the ends of a plot axis (WP-061, GitHub #12).
+
+    The owner reads the range off the axis, so its two ends always carry the
+    exact visible values with the precision of the matching field under the
+    plot (``edge_decimals``, or ``edge_significant`` digits like the Y2
+    fields), trailing zeros trimmed; a log axis writes them as ``a·10ⁿ``.
+    Edge labels win over regular tick labels: a tick label that would touch
+    an edge label, or an earlier (coarser) tick label, is not drawn — its
+    tick line stays.  This also thins the 2·10³ … 9·10³ minor labels of a
+    log axis to what fits.
+    """
+
+    EDGE_LABEL_GAP_PX = 4.0
+    edge_decimals: int | None = None
+    edge_significant: int | None = None
+
+    def generateDrawSpecs(self, p):  # noqa: N802 - pyqtgraph API
+        specs = super().generateDrawSpecs(p)
+        if specs is None or not self.style["showValues"]:
+            return specs
+        axis_spec, tick_specs, text_specs = specs
+        if self.logMode:
+            # Whole decades (10ⁿ) before the 2·10ⁿ … 9·10ⁿ in between.
+            text_specs = sorted(text_specs, key=lambda spec: "·" in spec[2])
+        edges = self._edge_text_specs(p)
+        vertical = self.orientation in ("left", "right")
+        gap = self.EDGE_LABEL_GAP_PX
+        kept: list[tuple[QRectF, object, str]] = []
+        for rect, flags, text in [*edges, *text_specs]:
+            grown = rect.adjusted(0, -gap, 0, gap) if vertical else rect.adjusted(-gap, 0, gap, 0)
+            if any(grown.intersects(other) for other, _flags, _text in kept):
+                continue
+            kept.append((rect, flags, text))
+        if edges:
+            # The axis keeps room for its widest label, edge or tick (pyqtgraph
+            # would otherwise shrink it to the last tick level's width).
+            sizes = [rect.width() if vertical else rect.height() for rect, _f, _t in [*edges, *text_specs]]
+            self._updateMaxTextSize(int(math.ceil(max(sizes))))
+        return axis_spec, tick_specs, kept
+
+    def edge_strings(self, low: float, high: float, length_px: float) -> tuple[str, str]:
+        """The two edge labels: the field precision when set, else that of this axis's ticks."""
+        if self.logMode:
+            return log_axis_edge_string(low), log_axis_edge_string(high)
+        if self.edge_decimals is not None:
+            return trimmed_number(low, self.edge_decimals), trimmed_number(high, self.edge_decimals)
+        if self.edge_significant is not None:
+            low_text, high_text = (f"{value:.{self.edge_significant}g}" for value in (low, high))
+            return ("0" if low_text == "-0" else low_text), ("0" if high_text == "-0" else high_text)
+        scale = self.autoSIPrefixScale * self.scale
+        levels = self.tickSpacing(low * self.scale, high * self.scale, length_px)
+        spacing = levels[0][0] / self.scale if levels else abs(high - low)
+        low_text, high_text = self.tickStrings([low, high], scale, spacing)
+        return low_text, high_text
+
+    def _edge_text_specs(self, p) -> list[tuple[QRectF, object, str]]:
+        low, high = sorted(float(value) for value in self.range)
+        if not (math.isfinite(low) and math.isfinite(high)) or high <= low:
+            return []
+        bounds = self.mapRectFromParent(self.geometry())
+        vertical = self.orientation in ("left", "right")
+        length = bounds.height() if vertical else bounds.width()
+        if length <= 0:
+            return []
+        strings = self.edge_strings(low, high, length)
+        offset = max(0, self.style["tickLength"]) + self.style["tickTextOffset"][0 if vertical else 1]
+        specs = []
+        for value_is_max, text in zip((False, True), strings):
+            size = p.boundingRect(QRectF(0, 0, 100, 100), Qt.AlignmentFlag.AlignCenter, text)
+            width, height = size.width(), size.height() * 0.8
+            if vertical:
+                # The maximum is at the top end, the minimum at the bottom end.
+                y = bounds.top() if value_is_max else bounds.bottom() - height
+                vertical_flag = Qt.AlignmentFlag.AlignTop if value_is_max else Qt.AlignmentFlag.AlignBottom
+                if self.orientation == "left":
+                    rect = QRectF(bounds.right() - offset - width, y, width, height)
+                    flags = Qt.AlignmentFlag.AlignRight | vertical_flag
+                else:
+                    rect = QRectF(bounds.left() + offset, y, width, height)
+                    flags = Qt.AlignmentFlag.AlignLeft | vertical_flag
+            else:
+                x = bounds.right() - width if value_is_max else bounds.left()
+                rect = QRectF(x, bounds.top() + offset, width, height)
+                horizontal_flag = Qt.AlignmentFlag.AlignRight if value_is_max else Qt.AlignmentFlag.AlignLeft
+                flags = horizontal_flag | Qt.AlignmentFlag.AlignTop
+            specs.append((rect, flags | Qt.TextFlag.TextDontClip, text))
+        return specs
+
+
+class PlotAxisItem(EdgeLabelAxisMixin, pg.AxisItem):
+    """Left (S21) and right (current) axes of the S21 plot with their ends labelled."""
+
+
+class FrequencyAxisItem(EdgeLabelAxisMixin, pg.AxisItem):
     """Frequency axis that switches from GHz to THz instead of showing kGHz."""
 
     def __init__(self, orientation: str = "bottom") -> None:
@@ -808,6 +923,17 @@ class FrequencyAxisItem(pg.AxisItem):
         self.setLabel("Frequency", units=unit)
         self.picture = None
         self.update()
+
+    def edge_strings(self, low: float, high: float, length_px: float) -> tuple[str, str]:
+        """Ends rounded like the GHz fields, then written in the display unit (203.5 GHz → «0.204» THz)."""
+        if self.edge_decimals is None:
+            return super().edge_strings(low, high, length_px)
+        extra = round(-math.log10(self._display_factor)) if self._display_factor < 1.0 else 0
+        low_text, high_text = (
+            trimmed_number(round(value, self.edge_decimals) * self._display_factor, self.edge_decimals + extra)
+            for value in (low, high)
+        )
+        return low_text, high_text
 
     def tickStrings(self, values, scale, spacing):  # noqa: N802 - Qt/pyqtgraph API
         """Format GHz data coordinates in the selected display unit."""
@@ -906,7 +1032,13 @@ class MainWindow(QMainWindow):
         self._view = SvgGraphicsView()
         self._view.elementClicked.connect(self._open_element_group)
         self._frequency_axis = FrequencyAxisItem()
-        self._plot = pg.PlotWidget(axisItems={"bottom": self._frequency_axis})
+        self._plot = pg.PlotWidget(
+            axisItems={
+                "bottom": self._frequency_axis,
+                "left": PlotAxisItem(orientation="left"),
+                "right": PlotAxisItem(orientation="right"),
+            }
+        )
         self._config_inputs: Dict[str, QDoubleSpinBox] = {}
         self._parameter_groups: Dict[str, CollapsibleParameterGroup] = {}
         self._engineering_orders: Dict[str, QLabel] = {}
@@ -1335,6 +1467,11 @@ class MainWindow(QMainWindow):
             spin.returnPressed.connect(self._apply_plot_scale)
             self._plot_scale_inputs[name] = spin
             controls.addWidget(spin, 0, column * 2 + 1)
+        # WP-061: the axis ends read like these fields (X in whole GHz, Y in dB to 0.01).
+        plot_item = self._plot.getPlotItem()
+        self._frequency_axis.edge_decimals = self._plot_scale_inputs["x_min"].decimals()
+        plot_item.getAxis("left").edge_decimals = self._plot_scale_inputs["y_min"].decimals()
+        plot_item.getAxis("right").edge_significant = 6  # as the Y2 fields (ScaleSpinBox)
         controls.addWidget(QLabel("Y line, dB"), 1, 0)
         self._plot_threshold_input = SafeDoubleSpinBox(panel)
         self._plot_threshold_input.setRange(-1_000_000.0, 1_000_000.0)
