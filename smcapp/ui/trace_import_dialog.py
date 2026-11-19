@@ -349,7 +349,7 @@ class TraceImportDialog(QDialog):
             lines.append(f"Пропущено строк без чисел в X/Y: {selection.skipped_rows}{where}.")
         usable = True
         if quantity.axis == "right" and not quantity.logarithmic:
-            # I ≤ 0 is not drawn as I² (WP-064, awaits owner confirmation: see _current_on_right_axis).
+            # I ≤ 0 is not drawn as I² (owner 19.11.2026, WP-067: see _right_axis_point).
             non_positive = sum(value <= 0 for value in values)
             if non_positive == len(values):
                 lines.append("Все значения ≤ 0: на логарифмической шкале I² показать нечего. Выберите «Log» или dB.")
@@ -360,3 +360,26 @@ class TraceImportDialog(QDialog):
                 )
         self.y_result_label.setText("\n".join(lines))
         ok_button.setEnabled(unit is not None and usable)
+        self._fit_height()
+
+    def _fit_height(self) -> None:
+        """Give the Y note the height of all its wrapped lines, so it is not cut off (WP-067).
+
+        The form lays a word-wrapped label out at one line's height; the
+        preview table above gives up the rest, the dialog grows only if needed.
+        """
+        label = self.y_result_label
+        if label.width() <= 0:
+            return
+        needed = label.heightForWidth(label.width())
+        if needed > 0 and needed != label.minimumHeight():
+            label.setMinimumHeight(needed)
+            layout = self.layout()
+            if layout is not None and self.isVisible():
+                layout.activate()
+                if layout.minimumSize().height() > self.height():
+                    self.resize(self.width(), layout.minimumSize().height())
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        self._fit_height()

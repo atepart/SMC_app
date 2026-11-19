@@ -56,8 +56,10 @@ class YQuantity:
     ``axis`` is ``"left"`` (S21 in dB, with the calculation) or ``"right"``
     (current).  The right axis shows the *square* of the current (WP-064,
     owner 18.11.2026): a decade of I² is 10 dB, like S21.  Plain current is
-    drawn as I² on a log-scale axis; ``logarithmic`` values are already
-    log10 of the current and are drawn as 2·lg I = lg I² on a linear axis.
+    drawn as I² on a log-scale axis; ``squared`` values are already I² (only
+    (I/I_g)²) and go on the same axis without squaring again; ``logarithmic``
+    values are already lg I² or lg (I/I_g)² and are drawn as they are on a
+    linear axis (WP-067, owner 19.11.2026: no «Log» of I without the square).
     """
 
     key: str
@@ -67,6 +69,7 @@ class YQuantity:
     unit: str
     factor: float = 1.0
     logarithmic: bool = False
+    squared: bool = False
 
     @property
     def squared_unit(self) -> str:
@@ -86,13 +89,17 @@ class YQuantity:
         if self.axis == "left":
             return "левая ось, вместе с остальными кривыми"
         if self.logarithmic:
-            # Awaits owner confirmation (WP-064 open question b): "Log" data as 2·lg I.
-            return "правая ось, линейная шкала: 2·lg I = lg I² (значения уже логарифм)"
+            return f"правая ось, линейная шкала: значения уже {self.axis_label}, рисуются как есть"
+        if self.squared:
+            return f"правая ось, значения уже {self.squared_unit}, логарифмическая шкала без возведения в квадрат"
         return "правая ось, квадрат I² в логарифмической шкале"
 
 
-def _current(key: str, unit: str, factor: float, logarithmic: bool) -> YQuantity:
-    title = f"I, {unit}" if unit else "I/I_g"
+def _current(key: str, unit: str, factor: float, logarithmic: bool = False, squared: bool = False) -> YQuantity:
+    if unit:
+        title = f"I², {unit}²" if squared else f"I, {unit}"
+    else:
+        title = "(I/I_g)²" if squared else "I/I_g"
     return YQuantity(
         key=key,
         title=f"{title} Log" if logarithmic else title,
@@ -101,19 +108,22 @@ def _current(key: str, unit: str, factor: float, logarithmic: bool) -> YQuantity
         unit=unit,
         factor=factor,
         logarithmic=logarithmic,
+        squared=squared,
     )
 
 
 Y_QUANTITIES: dict[str, YQuantity] = {
     "dB": YQuantity(key="dB", title="S21, dB", axis="left", family="s21", unit="dB"),
-    "A": _current("A", "A", 1.0, False),
-    "mA": _current("mA", "mA", 1e-3, False),
-    "µA": _current("µA", "µA", 1e-6, False),
-    "I/Ig": _current("I/Ig", "", 1.0, False),
-    "A log": _current("A log", "A", 1.0, True),
-    "mA log": _current("mA log", "mA", 1e-3, True),
-    "µA log": _current("µA log", "µA", 1e-6, True),
-    "I/Ig log": _current("I/Ig log", "", 1.0, True),
+    "A": _current("A", "A", 1.0),
+    "mA": _current("mA", "mA", 1e-3),
+    "µA": _current("µA", "µA", 1e-6),
+    "I/Ig": _current("I/Ig", "", 1.0),
+    "(I/Ig)²": _current("(I/Ig)²", "", 1.0, squared=True),
+    # «Log» columns already hold lg I² (owner 19.11.2026: mA → mA², drawn as they are).
+    "A² log": _current("A² log", "A", 1.0, logarithmic=True, squared=True),
+    "mA² log": _current("mA² log", "mA", 1e-3, logarithmic=True, squared=True),
+    "µA² log": _current("µA² log", "µA", 1e-6, logarithmic=True, squared=True),
+    "(I/Ig)² log": _current("(I/Ig)² log", "", 1.0, logarithmic=True, squared=True),
 }
 
 
@@ -259,22 +269,34 @@ def detect_frequency_unit(header: str | None) -> tuple[str | None, str]:
 _CURRENT_UNITS = {"a": "A", "ma": "mA", "µa": "µA", "μa": "µA", "ua": "µA", "а": "A", "ма": "mA", "мка": "µA"}
 
 
+_SQUARE = re.compile(r"\^\s*2|²|\*\*\s*2")
+
+
 def detect_y_quantity(column: str | None) -> str | None:
-    """Guess the Y quantity from a column header ("S21 [dB]", "I (mA)", "lg I/Ig"); ``None`` if unclear."""
+    """Guess the Y quantity from a column header ("S21 [dB]", "I (mA)", "lg (I/Ig)^2"); ``None`` if unclear.
+
+    A logarithm is offered only of a square (WP-067): «lg I [mA]» is ``None``,
+    «lg I^2 [mA^2]» is ``"mA² log"``.
+    """
     if not column:
         return None
     text = column.strip().lower()
+    squared = _SQUARE.search(text) is not None
+    text = _SQUARE.sub("", text)
     logarithmic = re.search(r"(?<![a-z])(log|lg|log10)(?![a-z])", text) is not None
-    suffix = " log" if logarithmic else ""
     if re.search(r"(?<![a-z])i\s*/\s*i_?g(?![a-z])", text):
-        return "I/Ig" + suffix
+        if logarithmic:
+            return "(I/Ig)² log" if squared else None
+        return "(I/Ig)²" if squared else "I/Ig"
     if re.search(r"(?<![a-z])db(?![a-z])", text):
         return "dB"
     candidates = _BRACKETS.findall(text) + [part.strip() for part in re.split(r"[,_]", text)[1:]]
     for candidate in candidates:
         unit = _CURRENT_UNITS.get(candidate.strip())
         if unit is not None:
-            return unit + suffix
+            if logarithmic != squared:  # lg I without the square, or I² as such: no such quantity
+                return None
+            return unit + ("² log" if logarithmic else "")
     return None
 
 
@@ -539,25 +561,19 @@ def convert_trace(table: TraceTable, unit: str, unit_source: str, quantity: str 
 RIGHT_AXIS_POWER = 2
 
 
-def _log_data_on_right_axis(lg_current: float) -> float:
-    """Data marked «Log» (the file holds lg I) → lg I² = 2·lg I, drawn linearly.
+def _right_axis_point(quantity: YQuantity, value: float) -> float | None:
+    """One Y value → lg I² (or lg (I/I_g)²); ``None`` drops the point.
 
-    Awaits owner confirmation (WP-064 open question b); the alternative is
-    to keep lg I as it is (``return lg_current``) — change it only here.
+    «Log» data already is lg I² and is kept as it is; (I/I_g)² is not squared
+    again; plain I and I/I_g are squared, 2·lg I.  I ≤ 0 is not shown
+    (owner 19.11.2026): squaring would lose the sign and lg 0 does not exist.
     """
-    return RIGHT_AXIS_POWER * lg_current
-
-
-def _current_on_right_axis(current: float) -> float | None:
-    """Plain current → lg I²; ``None`` drops the point.
-
-    I ≤ 0 is not shown: squaring would lose the sign and lg 0 does not exist.
-    Awaits owner confirmation (WP-064 open question a); the alternative is
-    |I|² — change it only here (and the ≤ 0 note of the import dialog).
-    """
-    if current <= 0:
+    if quantity.logarithmic:
+        return value
+    if value <= 0:
         return None
-    return RIGHT_AXIS_POWER * math.log10(current)
+    power = 1 if quantity.squared else RIGHT_AXIS_POWER
+    return power * math.log10(value)
 
 
 def right_axis_values(trace: ComparisonTrace, axis: YQuantity) -> tuple[list[float], list[float], int]:
@@ -578,7 +594,7 @@ def right_axis_values(trace: ComparisonTrace, axis: YQuantity) -> tuple[list[flo
     values: list[float] = []
     dropped = 0
     for frequency, value in zip(trace.frequencies, trace.coefficients):
-        point = _log_data_on_right_axis(value) if quantity.logarithmic else _current_on_right_axis(value)
+        point = _right_axis_point(quantity, value)
         if point is None:
             dropped += 1
             continue

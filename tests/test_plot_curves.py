@@ -395,10 +395,10 @@ def test_import_dialog_reads_decimal_commas_and_offers_columns_and_quantities(wi
     dialog.select_columns(0, 2)
     assert dialog.selected_quantity() == "mA"
     assert "правая ось, квадрат I² в логарифмической шкале" in dialog.y_result_label.text()
-    dialog.select_quantity("mA log")
-    assert "правая ось, линейная шкала: 2·lg I = lg I²" in dialog.y_result_label.text()
+    dialog.select_quantity("mA² log")
+    assert "правая ось, линейная шкала: значения уже lg(I² / mA²), рисуются как есть" in dialog.y_result_label.text()
     trace = dialog.comparison_trace()
-    assert trace.quantity == "mA log" and trace.coefficients == (0.01, 0.1, 1.0)
+    assert trace.quantity == "mA² log" and trace.coefficients == (0.01, 0.1, 1.0)
 
     # A wrong separator: the error is shown and OK is off until it is set back.
     dialog.select_format("space", ".")
@@ -421,8 +421,34 @@ def test_log_scale_needs_positive_values(window: MainWindow, tmp_path) -> None:
     assert dialog.selected_quantity() == "mA"
     assert "Все значения ≤ 0" in dialog.y_result_label.text()
     assert not dialog.button_box.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).isEnabled()
-    dialog.select_quantity("mA log")
+    dialog.select_quantity("mA² log")
     assert dialog.button_box.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).isEnabled()
+
+
+def test_wrapped_quantity_note_is_not_cut_off(window: MainWindow, tmp_path) -> None:
+    """WP-067: a note that wraps onto more lines gets their height instead of being clipped."""
+    from smcapp.infrastructure.trace_files import read_data_table
+    from smcapp.ui.trace_import_dialog import TraceImportDialog
+
+    path = tmp_path / "ratio.txt"
+    path.write_text("Freq [GHz]\tI/Ig\t(I/Ig)^2\n100\t0.5\t0.25\n200\t0.7\t0.49\n", encoding="utf-8")
+    dialog = TraceImportDialog("Experiment", read_data_table(path), window)
+    dialog.show()
+    dialog.resize(480, dialog.height())
+    QtWidgets.QApplication.processEvents()
+    dialog.select_columns(0, 2)
+    assert dialog.selected_quantity() == "(I/Ig)²"
+    QtWidgets.QApplication.processEvents()
+    label = dialog.y_result_label
+    one_line = label.fontMetrics().height()
+    assert label.heightForWidth(label.width()) > one_line * 1.5  # the note really wraps here
+    assert label.height() >= label.heightForWidth(label.width())
+    assert dialog.rect().contains(label.geometry().translated(label.parentWidget().mapTo(dialog, QtCore.QPoint())))
+    # Back to a short note: the label shrinks again.
+    dialog.select_quantity("dB")
+    QtWidgets.QApplication.processEvents()
+    assert label.minimumHeight() == label.heightForWidth(label.width())
+    dialog.close()
 
 
 DASHES_EXAMPLE = Path(__file__).resolve().parent / "data" / "exp_hd34_11_12_dashes.tab"
@@ -632,21 +658,23 @@ def test_right_axis_hover_shows_the_square_and_the_current(window: MainWindow, t
 
     assert format_right_axis_value(Y_QUANTITIES["µA"], math.log10(1500.0)) == "I² = 1.5e+03 µA²; I = 38.7 µA"
     assert format_right_axis_value(Y_QUANTITIES["I/Ig"], 2.0) == "(I/I_g)² = 100; I/I_g = 10"
-    assert format_right_axis_value(Y_QUANTITIES["µA log"], 3.2) == "lg(I² / µA²) = 3.200; I = 39.8 µA"
+    assert format_right_axis_value(Y_QUANTITIES["(I/Ig)²"], 2.0) == "(I/I_g)² = 100; I/I_g = 10"
+    assert format_right_axis_value(Y_QUANTITIES["µA² log"], 3.2) == "lg(I² / µA²) = 3.200; I = 39.8 µA"
+    assert format_right_axis_value(Y_QUANTITIES["(I/Ig)² log"], 2.0) == "lg (I/I_g)² = 2.000; I/I_g = 10"
     assert format_right_axis_span(-9.99999) == "ΔY2 = -10.0 dB" and format_right_axis_span(-0.01) == "ΔY2 = 0.0 dB"
 
 
 def test_log_values_use_a_linear_right_axis_and_db_goes_back_left(window: MainWindow, tmp_path, monkeypatch) -> None:
     path = tmp_path / "log.txt"
-    path.write_text("Freq [GHz]; lg I [uA]\n100; -1,5\n500; 0,25\n", encoding="utf-8")
-    _import_choosing(window, "HFSS", path, monkeypatch, 1, "µA log")
+    path.write_text("Freq [GHz]; lg I^2 [uA^2]\n100; -1,5\n500; 0,25\n", encoding="utf-8")
+    _import_choosing(window, "HFSS", path, monkeypatch, 1, "µA² log")
 
     right = window._plot.getPlotItem().getAxis("right")
     assert right.isVisible() and not right.logMode and right.labelText == "lg(I² / µA²)"
     [hfss] = window._right_curve_items
-    assert hfss.yData.tolist() == pytest.approx([-3.0, 0.5])  # WP-064: 2·lg I (open owner question b)
+    assert hfss.yData.tolist() == pytest.approx([-1.5, 0.25])  # WP-067: lg I² as it is in the file
     assert window._plot_y2_labels["y2_max"].text() == "Y2 max, lg µA²"
-    assert window._plot_y2_inputs["y2_min"].value() < -3.0
+    assert window._plot_y2_inputs["y2_min"].value() < -1.5
     # Linear lg I² axis: the span is 10·(Y2 min − Y2 max).
     window._plot_y2_inputs["y2_min"].setValue(3.2)
     window._plot_y2_inputs["y2_max"].setValue(4.2)
@@ -666,7 +694,7 @@ def test_log_values_use_a_linear_right_axis_and_db_goes_back_left(window: MainWi
 def test_right_axis_label_follows_the_theme(window: MainWindow, tmp_path, monkeypatch, first, second) -> None:
     """BUG-028: the right axis label kept Qt's default black instead of the theme colour."""
     window.set_theme(first)
-    _import_choosing(window, "HFSS", _origin_file(tmp_path), monkeypatch, 2, "A log")
+    _import_choosing(window, "HFSS", _origin_file(tmp_path), monkeypatch, 2, "A² log")
     plot_item = window._plot.getPlotItem()
     right, left = plot_item.getAxis("right"), plot_item.getAxis("left")
 
@@ -681,7 +709,7 @@ def test_right_axis_label_follows_the_theme(window: MainWindow, tmp_path, monkey
     window.set_theme(second)
     assert colour(right) == QtGui.QColor(THEME_COLORS[second].plot_foreground).name()
     # A new import of a current keeps the theme colour and the label size.
-    _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "A log")
+    _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "A² log")
     assert colour(right) == QtGui.QColor(THEME_COLORS[second].plot_foreground).name()
     assert right.labelStyle["font-size"] == font_size
 
@@ -798,7 +826,7 @@ def test_log_right_axis_ends_and_thinned_ticks(window: MainWindow, tmp_path, mon
     assert 0 < len(minor) < 8
 
     # The linear "Log" axis: ends like its ticks.
-    _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "µA log")
+    _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "µA² log")
     window._plot_y2_inputs["y2_min"].setValue(3.2)
     window._plot_y2_inputs["y2_max"].setValue(4.2)
     window._apply_plot_scale()

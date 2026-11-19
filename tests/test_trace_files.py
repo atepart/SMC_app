@@ -251,8 +251,14 @@ def test_trailing_comma_is_a_separator_not_a_decimal_mark(tmp_path) -> None:
         ("I, µA", "µA"),
         ("I_A", "A"),
         ("I/Ig", "I/Ig"),
-        ("lg I/I_g", "I/Ig log"),
-        ("log I [mA]", "mA log"),
+        ("(I/Ig)^2", "(I/Ig)²"),
+        ("lg (I/I_g)²", "(I/Ig)² log"),
+        ("log I^2 [mA^2]", "mA² log"),
+        ("lg I² (µA²)", "µA² log"),
+        # WP-067: a logarithm only of a square; lg I and I² alone are no quantity.
+        ("lg I/I_g", None),
+        ("log I [mA]", None),
+        ("I^2 [mA^2]", None),
         ("Signal", None),
         (None, None),
         ("Amplitude", None),
@@ -286,11 +292,16 @@ def test_right_axis_values_are_lg_of_the_squared_current_in_the_axis_unit() -> N
     low, high = right_axis_values(_trace([38.7298, 122.474], "µA"), Y_QUANTITIES["µA"])[1]
     assert 10.0**low == pytest.approx(1500.0, rel=1e-5) and 10.0**high == pytest.approx(15000.0, rel=1e-5)
     assert right_axis_span_db(low, high) == pytest.approx(-10.0, abs=1e-4)
-    # "Log" data already is lg I and may be negative: 2·lg I = lg I² plus the unit shift (open question b).
-    assert right_axis_values(_trace([-2.0, 0.5], "mA log"), Y_QUANTITIES["mA log"])[1] == pytest.approx([-4.0, 1.0])
-    assert right_axis_values(_trace([-2.0], "mA log"), Y_QUANTITIES["A"])[1] == pytest.approx([-10.0])
-    # I/I_g is never moved into a current unit.
+    # WP-067: "Log" data already is lg I² and may be negative: drawn as it is, plus the unit shift (mA² → A² is −6).
+    assert right_axis_values(_trace([-2.0, 0.5], "mA² log"), Y_QUANTITIES["mA² log"])[1] == pytest.approx([-2.0, 0.5])
+    assert right_axis_values(_trace([-2.0], "mA² log"), Y_QUANTITIES["A"])[1] == pytest.approx([-8.0])
+    # I/I_g is never moved into a current unit; I/I_g is squared, (I/I_g)² is not squared again.
     assert right_axis_values(_trace([10.0], "I/Ig"), Y_QUANTITIES["mA"])[1] == pytest.approx([2.0])
+    frequencies, values, dropped = right_axis_values(_trace([100.0, 0.0, -4.0], "(I/Ig)²"), Y_QUANTITIES["I/Ig"])
+    assert frequencies == [100] and values == pytest.approx([2.0]) and dropped == 2
+    assert right_axis_values(_trace([2.0, -1.0], "(I/Ig)² log"), Y_QUANTITIES["(I/Ig)²"])[1] == pytest.approx(
+        [2.0, -1.0]
+    )
     with pytest.raises(ValueError, match="левой оси"):
         right_axis_values(_trace([-3.0], "dB"), Y_QUANTITIES["mA"])
 
@@ -311,9 +322,28 @@ def test_right_axis_span_in_db(low, high, expected) -> None:
 def test_quantity_labels_and_placement() -> None:
     assert Y_QUANTITIES["dB"].axis == "left" and Y_QUANTITIES["dB"].axis_label == "S21, dB"
     assert Y_QUANTITIES["mA"].axis_label == "I², mA²" and "I² в логарифмической" in Y_QUANTITIES["mA"].placement
-    assert Y_QUANTITIES["µA log"].axis_label == "lg(I² / µA²)" and "2·lg I" in Y_QUANTITIES["µA log"].placement
-    assert Y_QUANTITIES["I/Ig log"].title == "I/I_g Log" and Y_QUANTITIES["I/Ig"].axis_label == "(I/I_g)²"
-    assert Y_QUANTITIES["I/Ig log"].axis_label == "lg (I/I_g)²" and Y_QUANTITIES["µA"].squared_unit == "µA²"
+    assert Y_QUANTITIES["µA² log"].title == "I², µA² Log" and Y_QUANTITIES["µA² log"].axis_label == "lg(I² / µA²)"
+    assert "уже lg(I² / µA²), рисуются как есть" in Y_QUANTITIES["µA² log"].placement
+    assert Y_QUANTITIES["I/Ig"].title == "I/I_g" and Y_QUANTITIES["I/Ig"].axis_label == "(I/I_g)²"
+    assert Y_QUANTITIES["(I/Ig)²"].title == "(I/I_g)²" and Y_QUANTITIES["(I/Ig)²"].axis_label == "(I/I_g)²"
+    assert "без возведения в квадрат" in Y_QUANTITIES["(I/Ig)²"].placement
+    assert (
+        Y_QUANTITIES["(I/Ig)² log"].title == "(I/I_g)² Log" and Y_QUANTITIES["(I/Ig)² log"].axis_label == "lg (I/I_g)²"
+    )
+    assert Y_QUANTITIES["µA"].squared_unit == "µA²"
+    # Owner 19.11.2026: no «Log» without the square.
+    assert [quantity.title for quantity in Y_QUANTITIES.values()] == [
+        "S21, dB",
+        "I, A",
+        "I, mA",
+        "I, µA",
+        "I/I_g",
+        "(I/I_g)²",
+        "I², A² Log",
+        "I², mA² Log",
+        "I², µA² Log",
+        "(I/I_g)² Log",
+    ]
 
 
 @pytest.mark.parametrize(
