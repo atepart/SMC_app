@@ -23,10 +23,16 @@ class GenerateStructureUseCase:
     renderer: SvgRenderer
 
     def draw(
-        self, config: S21Config, *, show_details: bool = True, scheme: SvgColorScheme | None = None
+        self,
+        config: S21Config,
+        *,
+        show_details: bool = True,
+        scheme: SvgColorScheme | None = None,
+        label_scale: float = 1.0,
     ) -> SchematicDrawing:
+        """*label_scale* enlarges the element numbers, «SIS» and «50 Ω» (WP-065)."""
         config.validate()
-        geometry = self.calculator.calculate(config)
+        geometry = self.calculator.calculate(config, label_scale=label_scale)
         if not show_details and geometry.overview is not None:
             geometry = geometry.overview
         return SchematicDrawing(self.renderer.render(geometry, scheme), geometry)

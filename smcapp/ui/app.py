@@ -27,6 +27,7 @@ from PySide6.QtGui import (
     QIcon,
     QImage,
     QImageWriter,
+    QKeySequence,
     QPainter,
     QPainterPath,
     QPainterPathStroker,
@@ -105,6 +106,15 @@ from smcapp.ui.theme import (
     save_theme,
 )
 from smcapp.ui.trace_import_dialog import TraceImportDialog
+from smcapp.ui.ui_scale import (
+    AREA_SCALE_STEPS,
+    UI_SCALE_AREAS,
+    UI_SCALE_PRESETS,
+    UiScale,
+    apply_application_font,
+    load_ui_scale,
+    save_ui_scale,
+)
 from smcapp.ui.update_dialogs import DownloadReleaseWorker, FetchReleasesWorker, ReleasePickerDialog
 
 CURRENT_DOCK_LAYOUT_VERSION = 1
@@ -142,6 +152,8 @@ PLOT_TICK_SCALE = 1.15
 PLOT_LEGEND_SCALE = 1.2
 LEGEND_SINGLE_COLUMN_MAX = 3
 PLOT_HOVER_SCALE = 1.2
+# Width of the X/Y/Y2 fields under the plot at «Обычный», in px (WP-065 scales it).
+PLOT_FIELD_WIDTH = 90
 # Default parameter panel width above its content's minimum, in px.
 PARAMETERS_WIDTH_RESERVE = 24
 
@@ -959,13 +971,15 @@ class CollapsibleParameterGroup(QWidget):
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Maximum)
         self.toggle_button.toggled.connect(self._set_expanded)
 
-    def apply_field_font(self) -> None:
-        """Enlarge labels, numbers and units of the fields (GitHub #11).
+    def apply_field_font(self, area_scale: float = 1.0) -> None:
+        """Enlarge the heading and the labels, numbers and units of the fields (GitHub #11).
 
         Set on every widget: under the QtAds style sheet Qt does not pass a
-        parent's font on to its children.
+        parent's font on to its children.  *area_scale* is the parameter
+        panel's own factor (WP-065).
         """
-        font = scaled_font(PARAMETER_FIELD_SCALE)
+        self.toggle_button.setFont(scaled_font(PARAMETER_TITLE_SCALE * area_scale, bold=True))
+        font = scaled_font(PARAMETER_FIELD_SCALE * area_scale)
         for widget in self.content.findChildren(QWidget):
             widget.setFont(font)
 
@@ -991,7 +1005,12 @@ class MainWindow(QMainWindow):
     }
 
     def __init__(self, use_case: GenerateStructureUseCase, s21_use_case: CalculateS21UseCase) -> None:
+        # WP-065 (#13): the preset scales the application font before the window
+        # and any child exist, so all of them start from it.
+        ui_scale = load_ui_scale()
+        apply_application_font(ui_scale)
         super().__init__()
+        self._ui_scale = ui_scale
         self._use_case = use_case
         self._s21_use_case = s21_use_case
         self.setWindowTitle(f"smcapp {__version__}")
@@ -1074,6 +1093,9 @@ class MainWindow(QMainWindow):
         self._apply_material_sync()
         self._update_svg()
         self._apply_theme(self._theme)
+        if self._ui_scale.factor != 1.0:
+            # A saved preset: the theme's style reset the class fonts of widgets built before it.
+            self._apply_ui_scale(redraw_schematic=False)
 
     def _build_menu(self) -> None:
         view_menu = self.menuBar().addMenu("Вид")
@@ -1090,6 +1112,8 @@ class MainWindow(QMainWindow):
             self.theme_menu.addAction(action)
             self._theme_actions[theme] = action
 
+        self._build_scale_menu(view_menu)
+
         help_menu = self.menuBar().addMenu("Справка")
 
         about_action = QAction("О программе", self)
@@ -1099,6 +1123,130 @@ class MainWindow(QMainWindow):
         update_action = QAction("Проверить обновления", self)
         update_action.triggered.connect(self.check_updates)
         help_menu.addAction(update_action)
+
+    def _build_scale_menu(self, view_menu: QtWidgets.QMenu) -> None:
+        """«Вид → Масштаб»: presets, Ctrl+= / Ctrl+− / Ctrl+0 and a factor per area (WP-065, #13)."""
+        self.scale_menu = view_menu.addMenu("Масштаб")
+        self._ui_scale_actions: dict[str, QAction] = {}
+        preset_group = QActionGroup(self)
+        preset_group.setExclusive(True)
+        for key, (title, factor) in UI_SCALE_PRESETS.items():
+            action = QAction(f"{title} ({factor:.0%})", self)
+            action.setCheckable(True)
+            action.triggered.connect(lambda _checked, current=key: self.set_ui_scale(current))
+            preset_group.addAction(action)
+            self.scale_menu.addAction(action)
+            self._ui_scale_actions[key] = action
+        self.scale_menu.addSeparator()
+        # Ctrl is Cmd on macOS; «+» is Shift+= on most layouts, so both are bound.
+        for title, shortcuts, step in (
+            ("Крупнее", ("Ctrl+=", "Ctrl++"), 1),
+            ("Мельче", ("Ctrl+-",), -1),
+            ("Обычный размер", ("Ctrl+0",), 0),
+        ):
+            action = QAction(title, self)
+            action.setShortcuts([QKeySequence(shortcut) for shortcut in shortcuts])
+            action.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+            action.triggered.connect(lambda _checked, current=step: self._step_ui_scale(current))
+            self.scale_menu.addAction(action)
+            # Shortcuts work while the menu bar is hidden by a dock or dialog focus too.
+            self.addAction(action)
+        self.scale_menu.addSeparator()
+        self._area_scale_actions: dict[tuple[str, float], QAction] = {}
+        for area, title in UI_SCALE_AREAS.items():
+            area_menu = self.scale_menu.addMenu(title)
+            area_menu.setObjectName(f"area_scale_{area}")
+            group = QActionGroup(self)
+            group.setExclusive(True)
+            for factor in AREA_SCALE_STEPS:
+                action = QAction(f"{factor:.0%}", self)
+                action.setCheckable(True)
+                action.triggered.connect(
+                    lambda _checked, current=area, value=factor: self.set_area_scale(current, value)
+                )
+                group.addAction(action)
+                area_menu.addAction(action)
+                self._area_scale_actions[(area, factor)] = action
+        self._sync_scale_actions()
+
+    def _sync_scale_actions(self) -> None:
+        self._ui_scale_actions[self._ui_scale.preset].setChecked(True)
+        for area in UI_SCALE_AREAS:
+            self._area_scale_actions[(area, self._ui_scale.area(area))].setChecked(True)
+
+    @property
+    def ui_scale(self) -> UiScale:
+        return self._ui_scale
+
+    def set_ui_scale(self, preset: str) -> None:
+        """Switch the interface preset on the fly and remember it (WP-065)."""
+        self._change_ui_scale(self._ui_scale.with_preset(preset))
+
+    def set_area_scale(self, area: str, factor: float) -> None:
+        """Enlarge one area — parameter panel, plot or schematic numbers — on top of the preset."""
+        self._change_ui_scale(self._ui_scale.with_area(area, factor))
+
+    def _step_ui_scale(self, step: int) -> None:
+        scale = self._ui_scale.stepped(step) if step else self._ui_scale.with_preset("normal")
+        self._change_ui_scale(scale)
+
+    def _change_ui_scale(self, scale: UiScale) -> None:
+        save_ui_scale(scale)
+        if scale == self._ui_scale:
+            self._sync_scale_actions()
+            return
+        redraw = scale.area("schematic") != self._ui_scale.area("schematic")
+        self._ui_scale = scale
+        self._sync_scale_actions()
+        self._apply_ui_scale(redraw_schematic=redraw)
+
+    def _apply_ui_scale(self, redraw_schematic: bool) -> None:
+        """Re-apply every font that depends on the scale, keeping the data, curves and view."""
+        # The theme pass sets the application and class fonts (after its style)
+        # and the headings and plot title.
+        self._apply_theme(self._theme)
+        # Under the QtAds and theme style sheets a widget does not take the new
+        # application font from its parent: give every widget its class font
+        # here; the scaled texts below are set again on top.
+        for widget in (self, *self.findChildren(QWidget)):
+            font = QFont(QApplication.font(widget))
+            # An explicit size: a font with nothing marked as set would only
+            # make the widget inherit again, which is what fails here.
+            font.setPointSizeF(font.pointSizeF())
+            widget.setFont(font)
+        parameters = self._ui_scale.area("parameters")
+        for box in self.findChildren(CollapsibleParameterGroup):
+            box.apply_field_font(parameters)
+        for button in (self.collapse_all_button, self.expand_all_button):
+            self._apply_group_toggle_font(button)
+        self._apply_run_button_font()
+        self._apply_plot_fonts()
+        if redraw_schematic:
+            with contextlib.suppress(ValueError, OSError):
+                self._render_svg()
+        self._reserve_plot_label_widths()
+        self._relayout_plot_controls(self._plot_controls_widget.width())
+        self._sync_parameters_minimum_width()
+        QtCore.QTimer.singleShot(0, self._sync_parameters_minimum_width)
+
+    def _apply_plot_fonts(self) -> None:
+        """Plot axis labels, ticks, legend and cursor plate at the current scale (the title is themed)."""
+        plot_item = self._plot.getPlotItem()
+        size = f"{self._plot_points(PLOT_AXIS_LABEL_SCALE)}pt"
+        tick_font = self._plot_font(PLOT_TICK_SCALE)
+        for name in ("left", "bottom", "right"):
+            axis = plot_item.getAxis(name)
+            axis.setStyle(tickFont=tick_font)
+            if axis.labelText:
+                axis.setLabel(axis.labelText, units=axis.labelUnits or None, **{**axis.labelStyle, "font-size": size})
+        legend_size = f"{self._plot_points(PLOT_LEGEND_SCALE)}pt"
+        self._plot_legend.opts["labelTextSize"] = legend_size
+        for _sample, label in self._plot_legend.items:
+            label.setAttr("size", legend_size)
+            label.setText(label.text)
+        self._plot_legend.updateSize()
+        self._plot_hover_label.setFont(self._plot_font(PLOT_HOVER_SCALE))
+        self._plot_hover_label.adjustSize()
 
     def _build_ui(self) -> None:
         """Create the same movable dock workspace pattern used by RnSApp."""
@@ -1254,11 +1402,9 @@ class MainWindow(QMainWindow):
         run_button = QPushButton("Run S21")
         run_button.setObjectName("run_s21_button")
         # Much larger than the other buttons (GitHub #11); colours come from the theme.
-        run_font = scaled_font(RUN_BUTTON_SCALE, bold=True)
-        run_button.setFont(run_font)
-        run_button.setMinimumHeight(round(QFontMetrics(run_font).height() * RUN_BUTTON_HEIGHT_LINES))
         run_button.clicked.connect(self._run_s21)
         self._run_s21_button = run_button
+        self._apply_run_button_font()
         controls_layout.addWidget(run_button)
 
         self._s21_status = QLabel("The grouped preview mirrors the new backend parameter model.")
@@ -1291,11 +1437,19 @@ class MainWindow(QMainWindow):
         button.setToolTip(tooltip)
         button.setAccessibleName(tooltip)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # Tab and Ctrl+↓ stay on the fields
-        font = scaled_font(PARAMETER_TITLE_SCALE, bold=True)
+        self._apply_group_toggle_font(button)
+        return button
+
+    def _apply_group_toggle_font(self, button: QtWidgets.QToolButton) -> None:
+        font = scaled_font(PARAMETER_TITLE_SCALE * self._ui_scale.area("parameters"), bold=True)
         button.setFont(font)
         side = round(QFontMetrics(font).height() * 1.6)
         button.setFixedSize(side, side)
-        return button
+
+    def _apply_run_button_font(self) -> None:
+        run_font = scaled_font(RUN_BUTTON_SCALE * self._ui_scale.area("parameters"), bold=True)
+        self._run_s21_button.setFont(run_font)
+        self._run_s21_button.setMinimumHeight(round(QFontMetrics(run_font).height() * RUN_BUTTON_HEIGHT_LINES))
 
     def _set_all_groups_expanded(self, expanded: bool) -> None:
         """Open or close every parameter group; typed values are applied first, as Ctrl+↓ does."""
@@ -1376,7 +1530,7 @@ class MainWindow(QMainWindow):
                 for info in group_fields:
                     self._config_inputs[info.name].valueChanged.connect(self._refresh_transformer_status)
 
-            box.apply_field_font()
+            box.apply_field_font(self._ui_scale.area("parameters"))
             self._groups_layout.addWidget(box)
 
     def _build_schematic_panel(self) -> QWidget:
@@ -1419,50 +1573,40 @@ class MainWindow(QMainWindow):
         controls = QtWidgets.QGridLayout()
         self._plot_scale_inputs: dict[str, QDoubleSpinBox] = {}
         self._plot_scale_labels: dict[str, QLabel] = {}
-        for column, (name, label, value) in enumerate(
-            (
-                ("x_min", "X min, GHz", 100.0),
-                ("x_max", "X max, GHz", 900.0),
-                ("y_min", "Y min, dB", -20.0),
-                ("y_max", "Y max, dB", 0.0),
-            )
+        for name, label, value in (
+            ("x_min", "X min, GHz", 100.0),
+            ("x_max", "X max, GHz", 900.0),
+            ("y_min", "Y min, dB", -20.0),
+            ("y_max", "Y max, dB", 0.0),
         ):
             self._plot_scale_labels[name] = QLabel(label, panel)
-            controls.addWidget(self._plot_scale_labels[name], 0, column * 2)
             spin = SafeDoubleSpinBox(panel)
             spin.setRange(-1_000_000.0, 1_000_000.0)
             spin.setDecimals(0 if name.startswith("x_") else 2)  # frequencies: 1 GHz
             spin.setValue(value)
             spin.setSingleStep(10.0 if name.startswith("x_") else 5.0)
-            spin.setFixedWidth(90)
             spin.returnPressed.connect(self._apply_plot_scale)
             self._plot_scale_inputs[name] = spin
-            controls.addWidget(spin, 0, column * 2 + 1)
         # WP-061: the axis ends read like these fields (X in whole GHz, Y in dB to 0.01).
         plot_item = self._plot.getPlotItem()
         self._frequency_axis.edge_decimals = self._plot_scale_inputs["x_min"].decimals()
         plot_item.getAxis("left").edge_decimals = self._plot_scale_inputs["y_min"].decimals()
         plot_item.getAxis("right").edge_significant = 6  # as the Y2 fields (ScaleSpinBox)
-        controls.addWidget(QLabel("Y line, dB"), 1, 0)
+        self._plot_threshold_label = QLabel("Y line, dB", panel)
         self._plot_threshold_input = SafeDoubleSpinBox(panel)
         self._plot_threshold_input.setRange(-1_000_000.0, 1_000_000.0)
         self._plot_threshold_input.setDecimals(2)
         self._plot_threshold_input.setValue(-5.0)
         self._plot_threshold_input.setSingleStep(1.0)
-        self._plot_threshold_input.setFixedWidth(90)
         self._plot_threshold_input.valueChanged.connect(self._plot_threshold_line.setValue)
-        controls.addWidget(self._plot_threshold_input, 1, 1)
-        apply_scale = QPushButton("Задать Home", panel)
-        apply_scale.clicked.connect(self._apply_plot_scale)
-        controls.addWidget(apply_scale, 1, 2, 1, 2)
-        home = QPushButton(panel)
-        home.setIcon(self.style().standardIcon(QStyle.SP_DirHomeIcon))
-        home.setToolTip("Вернуть заданный исходный масштаб графика")
-        home.clicked.connect(self._restore_plot_scale)
-        controls.addWidget(home, 1, 4)
-        export = QPushButton("Экспорт PNG", panel)
-        export.clicked.connect(self._export_plot_dialog)
-        controls.addWidget(export, 1, 5, 1, 3)
+        self._plot_apply_scale_button = QPushButton("Задать Home", panel)
+        self._plot_apply_scale_button.clicked.connect(self._apply_plot_scale)
+        self._plot_home_button = QPushButton(panel)
+        self._plot_home_button.setIcon(self.style().standardIcon(QStyle.SP_DirHomeIcon))
+        self._plot_home_button.setToolTip("Вернуть заданный исходный масштаб графика")
+        self._plot_home_button.clicked.connect(self._restore_plot_scale)
+        self._plot_export_button = QPushButton("Экспорт PNG", panel)
+        self._plot_export_button.clicked.connect(self._export_plot_dialog)
         # WP-055/WP-060: the right (current) axis, in the first row after Y max as on
         # the owner's screenshot (GitHub #12); always there, disabled and empty
         # without a curve on that axis, so the row does not jump.
@@ -1471,13 +1615,10 @@ class MainWindow(QMainWindow):
         for name, value in (("y2_min", 0.001), ("y2_max", 1.0)):
             label = QLabel(panel)
             label.setObjectName(f"plot_{name}_label")
-            # Room for the longest unit, so a current arriving does not move the row.
-            label.setMinimumWidth(label.fontMetrics().horizontalAdvance("Y2 max, lg (I/I_g)²") + 2)
             spin = ScaleSpinBox(panel)
             spin.setObjectName(f"plot_{name}")
             spin.setRange(-1e12, 1e12)
             spin.setValue(value)
-            spin.setFixedWidth(90)
             spin.returnPressed.connect(self._apply_plot_scale)
             spin.valueChanged.connect(self._update_right_axis_span_from_fields)
             self._plot_y2_labels[name] = label
@@ -1486,71 +1627,105 @@ class MainWindow(QMainWindow):
         self._plot_y2_span_label = QLabel(panel)
         self._plot_y2_span_label.setObjectName("plot_y2_span")
         self._plot_y2_span_label.setToolTip("Размах правой оси: 10·lg(Y2 min / Y2 max) для I² — декада I² = 10 dB")
-        self._plot_y2_span_label.setMinimumWidth(
-            self._plot_y2_span_label.fontMetrics().horizontalAdvance("ΔY2 = -100.0 dB") + 2
-        )
+        self._reserve_plot_label_widths()
         self._plot_controls = controls
-        self._plot_y2_wide: bool | None = None
-        self._place_plot_y2_fields(wide=True)
+        self._plot_controls_mode: str | None = None
+        self._place_plot_controls(self._PLOT_MODE_WIDE)
         self._set_plot_y2_fields_enabled(False)
         controls_widget = QWidget(panel)
         controls_widget.setObjectName("plot_controls")
         controls_widget.setLayout(controls)
         # The first row with Y2 must not dictate the dock's minimum width: the
-        # widget takes what it is given (never less than the row without Y2)
-        # and moves Y2 under Y min/Y max when that is not enough.
+        # widget takes what it is given (never less than the compact rows) and
+        # moves Y2 under Y min/Y max, or the fields into two-field rows (WP-065),
+        # when that is not enough.
         controls_widget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
         self._plot_controls_widget = controls_widget
-        controls_widget.setMinimumWidth(self._plot_controls_row_width(with_y2=False))
+        controls_widget.setMinimumWidth(self._plot_controls_mode_width(self._PLOT_MODE_COMPACT))
         controls_widget.installEventFilter(self)
         layout.addWidget(controls_widget)
         return panel
 
-    # Column 12 of the first row: the dB span of the Y2 range (WP-064).
-    _PLOT_Y2_STRETCH_COLUMN = 13
+    # Placements of the fields under the plot, widest first.
+    _PLOT_MODE_WIDE = "wide"  # one row X/Y/Y2, then Y line… (WP-060)
+    _PLOT_MODE_UNDER = "under"  # Y2 under Y min/Y max
+    _PLOT_MODE_COMPACT = "compact"  # X min/X max, Y min/Y max, Y line…, Y2 (WP-065, large scales)
+    _PLOT_CONTROLS_LAST_COLUMN = 13
 
-    def _place_plot_y2_fields(self, wide: bool) -> None:
-        """Y2 min/max after Y max in the first row; under Y min/Y max when the panel is narrow."""
-        if wide == self._plot_y2_wide:
+    def _place_plot_controls(self, mode: str) -> None:
+        """Put the fields and buttons under the plot into the grid for the given placement."""
+        if mode == self._plot_controls_mode:
             return
-        self._plot_y2_wide = wide
+        self._plot_controls_mode = mode
         controls = self._plot_controls
-        for column, name in enumerate(("y2_min", "y2_max")):
-            label, spin = self._plot_y2_labels[name], self._plot_y2_inputs[name]
-            controls.removeWidget(label)
-            controls.removeWidget(spin)
-            row, first = (0, 8) if wide else (2, 4)
-            controls.addWidget(label, row, first + column * 2)
-            controls.addWidget(spin, row, first + column * 2 + 1)
-        controls.removeWidget(self._plot_y2_span_label)
-        controls.addWidget(self._plot_y2_span_label, *((0, 12) if wide else (2, 8)))
-        for column in range(self._PLOT_Y2_STRETCH_COLUMN + 1):
+        compact = mode == self._PLOT_MODE_COMPACT
+        # (widget, row, column, column span)
+        cells: list[tuple[QWidget, int, int, int]] = []
+        for index, name in enumerate(("x_min", "x_max", "y_min", "y_max")):
+            row, column = (index // 2, index % 2 * 2) if compact else (0, index * 2)
+            cells.append((self._plot_scale_labels[name], row, column, 1))
+            cells.append((self._plot_scale_inputs[name], row, column + 1, 1))
+        tools_row = 2 if compact else 1
+        cells += [
+            (self._plot_threshold_label, tools_row, 0, 1),
+            (self._plot_threshold_input, tools_row, 1, 1),
+            (self._plot_apply_scale_button, tools_row, 2, 1 if compact else 2),
+            (self._plot_home_button, tools_row, 3 if compact else 4, 1),
+            (self._plot_export_button, tools_row, 4 if compact else 5, 1 if compact else 3),
+        ]
+        # Y2 after Y max in the first row; under Y min/Y max; or in a row of its own.
+        y2_row, y2_first = {self._PLOT_MODE_WIDE: (0, 8), self._PLOT_MODE_UNDER: (2, 4)}.get(mode, (3, 0))
+        for index, name in enumerate(("y2_min", "y2_max")):
+            cells.append((self._plot_y2_labels[name], y2_row, y2_first + index * 2, 1))
+            cells.append((self._plot_y2_inputs[name], y2_row, y2_first + index * 2 + 1, 1))
+        cells.append((self._plot_y2_span_label, y2_row, y2_first + 4, 1))
+        for widget, *_cell in cells:
+            controls.removeWidget(widget)
+        for widget, row, column, span in cells:
+            controls.addWidget(widget, row, column, 1, span)
+        for column in range(self._PLOT_CONTROLS_LAST_COLUMN + 1):
             controls.setColumnStretch(column, 0)
-        controls.setColumnStretch(self._PLOT_Y2_STRETCH_COLUMN if wide else 9, 1)
+        controls.setColumnStretch(y2_first + 5, 1)
         self._update_plot_y2_visibility()
 
     def _update_plot_y2_visibility(self) -> None:
-        """In the first row the Y2 fields are always there; a third row only with a current.
+        """In the first row the Y2 fields are always there; a row of their own only with a current.
 
-        A third row of greyed-out fields would take height from the plot (the
+        A row of greyed-out fields would take height from the plot (the
         1440×920 legend check) for nothing.
         """
+        wide = self._plot_controls_mode == self._PLOT_MODE_WIDE
         for name in ("y2_min", "y2_max"):
             spin = self._plot_y2_inputs[name]
-            visible = bool(self._plot_y2_wide) or spin.isEnabled()
+            visible = wide or spin.isEnabled()
             spin.setVisible(visible)
             self._plot_y2_labels[name].setVisible(visible)
-        self._plot_y2_span_label.setVisible(bool(self._plot_y2_wide) or self._plot_y2_inputs["y2_min"].isEnabled())
+        self._plot_y2_span_label.setVisible(wide or self._plot_y2_inputs["y2_min"].isEnabled())
 
-    def _plot_controls_row_width(self, with_y2: bool) -> int:
-        """Minimum width of the controls with the Y2 fields in the first row or under it."""
-        current = self._plot_y2_wide
-        self._place_plot_y2_fields(wide=with_y2)
+    def _plot_controls_mode_width(self, mode: str) -> int:
+        """Minimum width of the controls in the given placement."""
+        current = self._plot_controls_mode
+        self._place_plot_controls(mode)
         self._plot_controls.invalidate()
         width = self._plot_controls.minimumSize().width()
         if current is not None:
-            self._place_plot_y2_fields(wide=current)
+            self._place_plot_controls(current)
         return width
+
+    def _plot_controls_row_width(self, with_y2: bool) -> int:
+        """Minimum width of the controls with the Y2 fields in the first row or under it."""
+        return self._plot_controls_mode_width(self._PLOT_MODE_WIDE if with_y2 else self._PLOT_MODE_UNDER)
+
+    def _reserve_plot_label_widths(self) -> None:
+        """Field and label widths under the plot from the current font (WP-065: they follow the scale)."""
+        field_width = round(PLOT_FIELD_WIDTH * self._ui_scale.factor)
+        for spin in (*self._plot_scale_inputs.values(), self._plot_threshold_input, *self._plot_y2_inputs.values()):
+            spin.setFixedWidth(field_width)
+        for label in self._plot_y2_labels.values():
+            # Room for the longest unit, so a current arriving does not move the row.
+            label.setMinimumWidth(label.fontMetrics().horizontalAdvance("Y2 max, lg (I/I_g)²") + 2)
+        span = self._plot_y2_span_label
+        span.setMinimumWidth(span.fontMetrics().horizontalAdvance("ΔY2 = -100.0 dB") + 2)
 
     def _relayout_plot_controls(self, width: int) -> None:
         # The trial placements below resize the widget (rows appear and go): no re-entry.
@@ -1558,11 +1733,16 @@ class MainWindow(QMainWindow):
             return
         self._plot_relayout_busy = True
         try:
-            narrow = self._plot_controls_row_width(with_y2=False)
-            wide = width >= self._plot_controls_row_width(with_y2=True)
-            self._place_plot_y2_fields(wide=wide)
-            if self._plot_controls_widget.minimumWidth() != narrow:
-                self._plot_controls_widget.setMinimumWidth(narrow)
+            compact = self._plot_controls_mode_width(self._PLOT_MODE_COMPACT)
+            if width >= self._plot_controls_mode_width(self._PLOT_MODE_WIDE):
+                mode = self._PLOT_MODE_WIDE
+            elif width >= self._plot_controls_mode_width(self._PLOT_MODE_UNDER):
+                mode = self._PLOT_MODE_UNDER
+            else:
+                mode = self._PLOT_MODE_COMPACT
+            self._place_plot_controls(mode)
+            if self._plot_controls_widget.minimumWidth() != compact:
+                self._plot_controls_widget.setMinimumWidth(compact)
         finally:
             self._plot_relayout_busy = False
 
@@ -1579,7 +1759,7 @@ class MainWindow(QMainWindow):
         self._plot_y2_span_label.setEnabled(enabled)
         if not enabled:
             self._plot_y2_span_label.setText("ΔY2, dB")
-        if self._plot_y2_wide is not None:
+        if self._plot_controls_mode is not None:
             self._update_plot_y2_visibility()
         # Longer labels ("Y2 min, lg µA") may no longer fit the first row.
         controls_widget = getattr(self, "_plot_controls_widget", None)
@@ -1644,6 +1824,17 @@ class MainWindow(QMainWindow):
         dock_widgets_button.setMenu(self.dock_widgets_menu)
         toolbar.addWidget(dock_widgets_button)
         toolbar.addSeparator()
+
+        # WP-065 (#13): the same menu as «Вид → Масштаб», left of «Тема» («Буфер» stays right of it, #11).
+        scale_button = QtWidgets.QToolButton(self)
+        scale_button.setObjectName("scale_button")
+        scale_button.setText("Масштаб")
+        scale_button.setToolTip(
+            "Размер интерфейса: Мелкий … Максимальный (Ctrl+= / Ctrl+− / Ctrl+0) и отдельно по областям"
+        )
+        scale_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        scale_button.setMenu(self.scale_menu)
+        toolbar.addWidget(scale_button)
 
         theme_button = QtWidgets.QToolButton(self)
         theme_button.setObjectName("theme_button")
@@ -1785,10 +1976,12 @@ class MainWindow(QMainWindow):
         colors = THEME_COLORS[self._theme]
         assets = _resource_path("assets")
         apply_application_theme(QApplication.instance(), self._theme, assets)
+        # setStyle restores the platform's class fonts (QToolButton …): scale them again (WP-065).
+        apply_application_font(self._ui_scale)
         self.dock_manager.setStyleSheet(dock_stylesheet(self._theme, self._default_dock_stylesheet, assets))
         for label in self._muted_labels:
             label.setStyleSheet(f"color: {colors.muted_text};")
-        heading = "font-weight: bold; font-size: 16px;"
+        heading = f"font-weight: bold; font-size: {round(16 * self._ui_scale.factor)}px;"
         if colors.heading_text:
             heading += f" color: {colors.heading_text};"
         for label in self._heading_labels:
@@ -2352,24 +2545,31 @@ class MainWindow(QMainWindow):
         layout.addWidget(order)
         return editor
 
+    def _plot_points(self, scale: float) -> float:
+        """Point size of a plot text: WP-043 multiple × the plot's own factor (WP-065)."""
+        return scaled_point_size(scale * self._ui_scale.area("plot"))
+
+    def _plot_font(self, scale: float, bold: bool = False) -> QFont:
+        return scaled_font(scale * self._ui_scale.area("plot"), bold=bold)
+
     def _set_plot_title(self, color: str | None = None) -> None:
-        options = {"size": f"{scaled_point_size(PLOT_TITLE_SCALE)}pt", "bold": True}
+        options = {"size": f"{self._plot_points(PLOT_TITLE_SCALE)}pt", "bold": True}
         if color is not None:
             options["color"] = color
         plot_item = self._plot.getPlotItem()
         plot_item.setTitle("S21 vs Frequency", **options)
         # setTitle fixes the title row at 30 px, which would clip the larger title.
-        title_height = max(30, round(QFontMetrics(scaled_font(PLOT_TITLE_SCALE, bold=True)).height() * 1.5))
+        title_height = max(30, round(QFontMetrics(self._plot_font(PLOT_TITLE_SCALE, bold=True)).height() * 1.5))
         plot_item.titleLabel.setMaximumHeight(title_height)
         plot_item.layout.setRowFixedHeight(0, title_height)
 
     def _configure_plot(self) -> None:
         self._set_plot_title()
         plot_item = self._plot.getPlotItem()
-        axis_label_style = {"font-size": f"{scaled_point_size(PLOT_AXIS_LABEL_SCALE)}pt"}
+        axis_label_style = {"font-size": f"{self._plot_points(PLOT_AXIS_LABEL_SCALE)}pt"}
         self._plot.setLabel("left", "S21", units="dB", **axis_label_style)
         self._plot.setLabel("bottom", "Frequency", units="GHz", **axis_label_style)
-        tick_font = scaled_font(PLOT_TICK_SCALE)
+        tick_font = self._plot_font(PLOT_TICK_SCALE)
         for axis_name in ("left", "bottom"):
             plot_item.getAxis(axis_name).setStyle(tickFont=tick_font)
         self._plot.showGrid(x=True, y=True, alpha=0.10)
@@ -2377,7 +2577,7 @@ class MainWindow(QMainWindow):
         self._plot_legend = self._plot.addLegend(
             offset=(10, 10),
             sampleType=CheckableItemSample,
-            labelTextSize=f"{scaled_point_size(PLOT_LEGEND_SCALE)}pt",
+            labelTextSize=f"{self._plot_points(PLOT_LEGEND_SCALE)}pt",
         )
         self._plot_legend.sigSampleClicked.connect(self._on_legend_sample_clicked)
         self._plot_threshold_line = pg.InfiniteLine(pos=-5.0, angle=0)
@@ -2408,7 +2608,7 @@ class MainWindow(QMainWindow):
         self._plot_hover_label.setStyleSheet(
             "QLabel { background: rgba(30, 30, 30, 150); color: white; padding: 3px 6px; border-radius: 3px; }"
         )
-        self._plot_hover_label.setFont(scaled_font(PLOT_HOVER_SCALE))
+        self._plot_hover_label.setFont(self._plot_font(PLOT_HOVER_SCALE))
         self._plot_hover_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._plot_hover_label.hide()
         self._plot.scene().sigMouseMoved.connect(self._on_plot_mouse_moved)
@@ -2818,7 +3018,9 @@ class MainWindow(QMainWindow):
         """Draw the current parameters in the colours of the current theme."""
         scheme = THEME_COLORS[self._theme].schematic_scheme
         details = self._schematic_details.isChecked()
-        drawing = self._use_case.draw(self._build_config(), show_details=details, scheme=scheme)
+        drawing = self._use_case.draw(
+            self._build_config(), show_details=details, scheme=scheme, label_scale=self._ui_scale.area("schematic")
+        )
         self._svg_scheme = scheme
         anchor = QPointF(SIGNAL_INPUT.x, SIGNAL_INPUT.y)
         hit_map = ElementHitMap.from_geometry(drawing.geometry)
@@ -3005,7 +3207,7 @@ class MainWindow(QMainWindow):
         axis = plot_item.getAxis("right")
         plot_item.showAxis("right")
         # setLabel replaces the whole label style: keep the theme colour from setTextPen (BUG-028).
-        label_style = {**axis.labelStyle, "font-size": f"{scaled_point_size(PLOT_AXIS_LABEL_SCALE)}pt"}
+        label_style = {**axis.labelStyle, "font-size": f"{self._plot_points(PLOT_AXIS_LABEL_SCALE)}pt"}
         axis.setLabel(quantity.axis_label, **label_style)
         # Plain current: I² on a log scale (ticks 10^y); "Log" data: y = lg I² as it is.
         axis.setLogMode(y=not quantity.logarithmic)

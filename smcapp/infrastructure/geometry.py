@@ -202,7 +202,10 @@ class _Canvas:
 class IntegratedStructureCalculator(StructureCalculator):
     """Place each section at its predecessor's output X, on one centre line."""
 
-    def calculate(self, config: S21Config) -> StructureGeometry:
+    def calculate(self, config: S21Config, *, label_scale: float = 1.0) -> StructureGeometry:
+        """Lay out the structure; *label_scale* enlarges the numbers, «SIS» and «50 Ω» (WP-065)."""
+        if not isfinite(label_scale) or label_scale <= 0:
+            raise ValueError("Масштаб номеров схемы должен быть положительным")
         for name in (
             "w_slot_m",
             "l_slot_m",
@@ -272,11 +275,12 @@ class IntegratedStructureCalculator(StructureCalculator):
         self._metal_outline(canvas)
         # Numbers with arrows, "SIS" and "50 Ω" are always on the drawing; the
         # «Пояснения» checkbox adds only the dimensioned views below it.
-        port_label = TextLabel(Point(x - 34, -24), "50 Ω", 11, anchor="middle")
+        port_size = 11 * label_scale
+        port_label = TextLabel(Point(x - 34, -24), "50 Ω", port_size, anchor="middle")
         canvas.labels.append(port_label)
-        # Cap height of the 11 px "50 Ω" label above its baseline.
-        canvas.bounds_points.append(Point(x - 34, -24 - 11))
-        self._number_labels(canvas, port_label)
+        # Cap height of the "50 Ω" label above its baseline.
+        canvas.bounds_points.append(Point(x - 34, -24 - port_size))
+        self._number_labels(canvas, port_label, label_scale)
         overview = canvas.snapshot()
         self._dimensioned_views(canvas, dw)
         return replace(canvas.snapshot(), overview=overview)
@@ -661,7 +665,7 @@ class IntegratedStructureCalculator(StructureCalculator):
         canvas.paths.append(PathShape(" ".join(chains), bounds_from_points(canvas.bounds_points), "metal-outline"))
 
     @staticmethod
-    def _number_labels(canvas: _Canvas, port_label: TextLabel) -> None:
+    def _number_labels(canvas: _Canvas, port_label: TextLabel, label_scale: float = 1.0) -> None:
         """Number every element right next to it, with an arrow to its edge.
 
         Labels keep clear of metal, the slot, each other and other arrows
@@ -702,10 +706,10 @@ class IntegratedStructureCalculator(StructureCalculator):
         placer = CalloutPlacer(shapes + canvas.shapes, [port_label], soft_owners={"Radial"})
         # The SIS symbol sits on line 14: its arrows may cross that metal.
         requests = [
-            (element.element_id, str(element.number), 10.0, "bold")
+            (element.element_id, str(element.number), 10.0 * label_scale, "bold")
             for element in sorted(canvas.elements, key=lambda e: e.number or 0)
             if element.number is not None
-        ] + [("SIS", "SIS", 11.0, "normal")]
+        ] + [("SIS", "SIS", 11.0 * label_scale, "normal")]
         for element_id, text, size, weight in requests:
             transparent = {"SIS": {"SIS-line"}, "DC": {"DC-slot"}}.get(element_id, set())
             placed = placer.place(element_id, text, font_size=size, font_weight=weight, transparent=transparent)

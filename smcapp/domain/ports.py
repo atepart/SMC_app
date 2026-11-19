@@ -10,7 +10,7 @@ from .s21_models import S21Config, S21Result
 
 
 class StructureCalculator(Protocol):
-    def calculate(self, config: S21Config) -> StructureGeometry:
+    def calculate(self, config: S21Config, *, label_scale: float = 1.0) -> StructureGeometry:
         ...
 
 

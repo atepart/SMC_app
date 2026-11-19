@@ -565,6 +565,16 @@ def _grid_position(window: MainWindow, widget) -> tuple[int, int]:
     return row, column
 
 
+def _narrow_until_y2_leaves_the_first_row(window: MainWindow) -> None:
+    """Narrow the window in small steps until Y2 no longer fits the first row (platform fonts differ)."""
+    for width in range(1900, 700, -20):
+        window.resize(width, 920)
+        QtWidgets.QApplication.processEvents()
+        if window._plot_controls_mode != "wide":
+            return
+    raise AssertionError("Y2 never left the first row")
+
+
 def test_y2_fields_sit_after_y_max_and_wrap_under_it_when_narrow(window: MainWindow, tmp_path, monkeypatch) -> None:
     """WP-060 (GitHub #12): Y2 min/max in the first row after Y max, as on the owner's screenshot."""
     # Wide enough for one row whatever the platform font (macOS 13 pt needs more than Windows 9 pt).
@@ -588,8 +598,8 @@ def test_y2_fields_sit_after_y_max_and_wrap_under_it_when_narrow(window: MainWin
     assert _grid_position(window, window._plot_y2_inputs["y2_min"]) == (y_max_row, y_max_column + 2)
 
     # Too narrow for one row: under Y min/Y max, the first row is not clipped.
-    window.resize(900, 920)
-    QtWidgets.QApplication.processEvents()
+    _narrow_until_y2_leaves_the_first_row(window)
+    assert window._plot_controls_mode == "under"
     assert window._plot_y2_inputs["y2_max"].isVisible()
     assert controls.width() < window._plot_controls_row_width(with_y2=True)
     y_min_row, y_min_column = _grid_position(window, window._plot_scale_inputs["y_min"])
@@ -599,6 +609,17 @@ def test_y2_fields_sit_after_y_max_and_wrap_under_it_when_narrow(window: MainWin
     for widget in (window._plot_scale_inputs["y_max"], window._plot_y2_inputs["y2_max"]):
         assert widget.geometry().right() <= controls.width()
 
+    # WP-065: narrower than the row without Y2 — two fields per row, nothing past the panel edge.
+    window.resize(900, 920)
+    QtWidgets.QApplication.processEvents()
+    assert window._plot_controls_mode == "compact"
+    assert controls.width() < window._plot_controls_row_width(with_y2=False)
+    assert controls.width() >= controls.minimumWidth()
+    assert _grid_position(window, window._plot_scale_inputs["y_min"]) == (1, 1)
+    assert _grid_position(window, window._plot_y2_inputs["y2_max"]) == (3, 3)
+    for widget in (window._plot_scale_inputs["x_max"], window._plot_export_button, window._plot_y2_span_label):
+        assert widget.geometry().right() <= controls.width()
+
     # Wide again: back in the first row.
     window.resize(1900, 920)
     QtWidgets.QApplication.processEvents()
@@ -606,8 +627,8 @@ def test_y2_fields_sit_after_y_max_and_wrap_under_it_when_narrow(window: MainWin
 
     # Without a current a narrow panel keeps two rows: no third row of greyed-out fields.
     _import_choosing(window, "Experiment", _origin_file(tmp_path), monkeypatch, 2, "dB")
-    window.resize(900, 920)
-    QtWidgets.QApplication.processEvents()
+    _narrow_until_y2_leaves_the_first_row(window)
+    assert window._plot_controls_mode == "under"
     assert not window._plot_y2_inputs["y2_min"].isEnabled() and not window._plot_y2_inputs["y2_min"].isVisible()
     window.resize(1900, 920)
     QtWidgets.QApplication.processEvents()
@@ -647,9 +668,12 @@ def test_y2_span_in_db_follows_fields_zoom_and_pan(window: MainWindow, tmp_path,
     assert span.text() == "ΔY2 = -20.0 dB"
 
     # Narrow panel: the span follows the fields under Y min/Y max.
+    _narrow_until_y2_leaves_the_first_row(window)
+    assert span.isVisible() and _grid_position(window, span) == (_grid_position(window, y2_max)[0], 8)
+    # WP-065: narrower still — the Y2 row of its own, the span after Y2 max.
     window.resize(900, 920)
     QtWidgets.QApplication.processEvents()
-    assert span.isVisible() and _grid_position(window, span) == (_grid_position(window, y2_max)[0], 8)
+    assert span.isVisible() and _grid_position(window, span) == (_grid_position(window, y2_max)[0], 4)
 
 
 def test_right_axis_hover_shows_the_square_and_the_current(window: MainWindow, tmp_path, monkeypatch) -> None:
