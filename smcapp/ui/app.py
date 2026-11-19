@@ -156,6 +156,18 @@ PLOT_HOVER_SCALE = 1.2
 PLOT_FIELD_WIDTH = 90
 # Default parameter panel width above its content's minimum, in px.
 PARAMETERS_WIDTH_RESERVE = 24
+# WP-068: the plot's data area is kept at least this high at «Обычный» (×
+# the preset; the default 1440×920 layout gives 126 px) and tall enough for
+# the legend plus the gap of its top offset, so the legend never reaches the X
+# axis.  The plot dock takes the missing height (and the width its fields
+# need) from its neighbours, as a drag of the splitter would.
+PLOT_DATA_MIN_HEIGHT = 100
+PLOT_LEGEND_OFFSET = 10
+# Above this parameter text factor (preset × panel factor: «Максимальный»
+# with the panel at 100 %) the «same material» check box wraps onto two
+# lines; on one line it alone set the panel's minimum width (WP-068).
+SAME_MATERIAL_ONE_LINE_MAX_FACTOR = 1.5
+SAME_MATERIAL_TEXT = "Use the same material as EL1 (Tc, α, σ)"
 
 
 def scaled_point_size(scale: float) -> float:
@@ -925,6 +937,21 @@ class FrequencyAxisItem(EdgeLabelAxisMixin, pg.AxisItem):
         self.setLabel("Frequency", units="GHz")
 
 
+class UnitLabel(QLabel):
+    """Unit or power of ten after a field: one column at least 78 px wide, never narrower than its text.
+
+    A fixed minimum width (78 px) would let the layout squeeze longer units
+    such as «×10^-6 m» at the larger texts once the panel is at its minimum
+    width (WP-068).
+    """
+
+    MINIMUM_WIDTH = 78
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt API
+        hint = super().minimumSizeHint()
+        return QSize(max(hint.width(), self.MINIMUM_WIDTH), hint.height())
+
+
 class ParameterScrollArea(QScrollArea):
     """Vertical-only scroll area that is never narrower than its form.
 
@@ -1096,6 +1123,8 @@ class MainWindow(QMainWindow):
         if self._ui_scale.factor != 1.0:
             # A saved preset: the theme's style reset the class fonts of widgets built before it.
             self._apply_ui_scale(redraw_schematic=False)
+        # WP-068: the restored or default docks may leave the plot too little room at this scale.
+        self._schedule_plot_room()
 
     def _build_menu(self) -> None:
         view_menu = self.menuBar().addMenu("Вид")
@@ -1217,6 +1246,8 @@ class MainWindow(QMainWindow):
         parameters = self._ui_scale.area("parameters")
         for box in self.findChildren(CollapsibleParameterGroup):
             box.apply_field_font(parameters)
+        if self._same_materials_checkbox is not None:
+            self._same_materials_checkbox.setText(self._same_material_text())
         for button in (self.collapse_all_button, self.expand_all_button):
             self._apply_group_toggle_font(button)
         self._apply_run_button_font()
@@ -1228,6 +1259,97 @@ class MainWindow(QMainWindow):
         self._relayout_plot_controls(self._plot_controls_widget.width())
         self._sync_parameters_minimum_width()
         QtCore.QTimer.singleShot(0, self._sync_parameters_minimum_width)
+        self._schedule_plot_room()  # after the panel's new minimum width
+
+    def _same_material_text(self) -> str:
+        """The check box text, on two lines when its single line would widen the panel (WP-068)."""
+        if self._ui_scale.factor * self._ui_scale.area("parameters") > SAME_MATERIAL_ONE_LINE_MAX_FACTOR:
+            return SAME_MATERIAL_TEXT.replace(" as EL1", "\nas EL1")
+        return SAME_MATERIAL_TEXT
+
+    def _schedule_plot_room(self) -> None:
+        """Check the plot's room once the posted layout changes are done (WP-068)."""
+        if getattr(self, "_plot_room_pending", False):
+            return
+        self._plot_room_pending = True
+        QtCore.QTimer.singleShot(0, self._ensure_plot_room)
+
+    def _ensure_plot_room(self, attempts: int = 4) -> None:
+        """Give the plot dock the width its fields need and a data area that holds the legend.
+
+        At the larger presets the texts, the legend and the rows of fields
+        under the plot grow while the docks keep their sizes: the dock takes
+        what is missing from its neighbours down to their minimum, as a drag
+        of the splitter would; it never shrinks itself.  The width comes first,
+        because it decides how many rows of fields the plot shares its height with.
+        """
+        self._plot_room_pending = False
+        try:
+            area = self.plot_dock.dockAreaWidget()
+        except RuntimeError:  # the deferred call came after the window was closed
+            return
+        if area is None or not self.plot_dock.widget().isVisible():
+            return
+        panel = self.plot_dock.widget()
+        panel.layout().activate()
+        scroll = panel.parentWidget()
+        while scroll is not None and not isinstance(scroll, QtWidgets.QScrollArea):
+            scroll = scroll.parentWidget()
+        missing_width = panel.minimumSizeHint().width() - scroll.viewport().width() if scroll is not None else 0
+        grown = missing_width > 0 and self._grow_in_splitter(area, Qt.Orientation.Horizontal, missing_width)
+        if not grown:
+            missing_height = self.plot_height_shortfall()
+            grown = missing_height > 0 and self._grow_in_splitter(area, Qt.Orientation.Vertical, missing_height)
+        if grown and attempts > 1:
+            # Check again once the fields have refolded and the plot has its new size.
+            QtCore.QTimer.singleShot(0, self, lambda: self._ensure_plot_room(attempts - 1))
+
+    def plot_height_shortfall(self) -> int:
+        """Pixels the data area lacks for the WP-068 minimum and the legend with its gap."""
+        plot_item = self._plot.getPlotItem()
+        plot_item.layout.activate()
+        needed = PLOT_DATA_MIN_HEIGHT * self._ui_scale.factor
+        legend = self._plot_legend
+        if legend.items and legend.isVisible():
+            # The legend lies in the view box, anchored at its top left corner.
+            bottom = legend.mapRectToParent(legend.boundingRect()).bottom()
+            needed = max(needed, bottom + PLOT_LEGEND_OFFSET)
+        return math.ceil(needed - plot_item.vb.height())
+
+    @staticmethod
+    def _grow_in_splitter(widget: QWidget, orientation: Qt.Orientation, extra: int) -> bool:
+        """Enlarge *widget* in the nearest splitter along *orientation*, taking from the others above their minimum."""
+        child, splitter = widget, widget.parentWidget()
+        while splitter is not None and not (
+            isinstance(splitter, QtWidgets.QSplitter) and splitter.orientation() == orientation
+        ):
+            child, splitter = splitter, splitter.parentWidget()
+        if splitter is None:
+            return False
+        horizontal = orientation == Qt.Orientation.Horizontal
+        index = splitter.indexOf(child)
+        sizes = splitter.sizes()
+        spare = []
+        for position in range(splitter.count()):
+            other = splitter.widget(position)
+            if position == index or other.isHidden():
+                spare.append(0)
+                continue
+            hint, own = other.minimumSizeHint(), other.minimumSize()
+            minimum = max(hint.width(), own.width()) if horizontal else max(hint.height(), own.height())
+            spare.append(max(0, sizes[position] - minimum))
+        available = sum(spare)
+        take = min(extra, available)
+        if take <= 0:
+            return False
+        taken = 0
+        for position, room in enumerate(spare):
+            part = min(room, math.ceil(take * room / available), take - taken)
+            sizes[position] -= part
+            taken += part
+        sizes[index] += taken
+        splitter.setSizes(sizes)
+        return True
 
     def _apply_plot_fonts(self) -> None:
         """Plot axis labels, ticks, legend and cursor plate at the current scale (the title is themed)."""
@@ -1486,7 +1608,7 @@ class MainWindow(QMainWindow):
                 # not mistaken for a field the checkbox forgot (owner, 09.11.2026).
                 synced = set(self._material_sync_map.values())
                 group_fields = sorted(group_fields, key=lambda info: info.name in synced)
-                checkbox = QCheckBox("Use the same material as EL1 (Tc, α, σ)")
+                checkbox = QCheckBox(self._same_material_text())
                 checkbox.setChecked(True)
                 checkbox.toggled.connect(self._on_same_materials_toggled)
                 self._same_materials_checkbox = checkbox
@@ -1701,6 +1823,7 @@ class MainWindow(QMainWindow):
             spin.setVisible(visible)
             self._plot_y2_labels[name].setVisible(visible)
         self._plot_y2_span_label.setVisible(wide or self._plot_y2_inputs["y2_min"].isEnabled())
+        self._schedule_plot_room()  # a row of Y2 fields takes height from the plot (WP-068)
 
     def _plot_controls_mode_width(self, mode: str) -> int:
         """Minimum width of the controls in the given placement."""
@@ -1959,6 +2082,7 @@ class MainWindow(QMainWindow):
                 dock.toggleView(True)
         self._sync_parameters_minimum_width()
         self._apply_default_dock_sizes()
+        self._schedule_plot_room()
         self.save_settings()
 
     @property
@@ -2020,6 +2144,10 @@ class MainWindow(QMainWindow):
                 previous.setMinimumWidth(0)
         self._parameters_minimum_area = area
         panel = self.parameters_dock.widget()
+        # The panel's layout caches the scroll area's minimum, which follows the
+        # form inside it without telling that layout (WP-068: the wrapped check
+        # box left a stale, too small minimum at the largest texts).
+        self.parameters_scroll.updateGeometry()
         panel.layout().activate()
         # The area's own border (1 px each side in the styled themes) and margins.
         frame = 2 * area.frameWidth() + area.contentsMargins().left() + area.contentsMargins().right()
@@ -2537,8 +2665,7 @@ class MainWindow(QMainWindow):
         else:
             text = suffix.strip().replace("Ohm", "Ω").replace("um", "µm").replace("^2", "²").replace("*", "·")
             text = text.replace("deg", "°")
-        order = QLabel(text, editor)
-        order.setMinimumWidth(78)
+        order = UnitLabel(text, editor)
         self._parameter_units[name] = order
         if scaled:
             self._engineering_orders[name] = order
@@ -2575,7 +2702,7 @@ class MainWindow(QMainWindow):
         self._plot.showGrid(x=True, y=True, alpha=0.10)
         self._plot.setMenuEnabled(False)
         self._plot_legend = self._plot.addLegend(
-            offset=(10, 10),
+            offset=(PLOT_LEGEND_OFFSET, PLOT_LEGEND_OFFSET),
             sampleType=CheckableItemSample,
             labelTextSize=f"{self._plot_points(PLOT_LEGEND_SCALE)}pt",
         )
@@ -3252,6 +3379,7 @@ class MainWindow(QMainWindow):
         legend.rowCount = math.ceil(len(legend.items) / columns)
         legend.updateSize()
         legend.layout.activate()
+        self._schedule_plot_room()  # more rows may no longer fit the data area (WP-068)
 
     def _set_log_messages(self, messages: list[str]) -> None:
         if self._log_view is None:

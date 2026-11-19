@@ -16,7 +16,8 @@ from smcapp.application.use_cases import GenerateStructureUseCase
 from smcapp.domain.s21_models import S21Config
 from smcapp.infrastructure.geometry import IntegratedStructureCalculator
 from smcapp.infrastructure.svg_renderer import SvgRendererImpl
-from smcapp.ui.app import MainWindow
+from smcapp.infrastructure.trace_files import ComparisonTrace
+from smcapp.ui.app import PARAMETERS_WIDTH_RESERVE, PLOT_DATA_MIN_HEIGHT, MainWindow
 from smcapp.ui.theme import Theme, apply_application_theme
 from smcapp.ui.ui_scale import (
     AREA_SCALE_STEPS,
@@ -378,3 +379,104 @@ def test_plot_controls_fold_into_compact_rows_at_the_largest_scale(window: MainW
     assert {_row(window, inputs[name]) for name in ("x_min", "x_max", "y_min", "y_max")} == {0}
     assert _row(window, window._plot_threshold_input) == 1
     _assert_plot_controls_fit(window)
+
+
+FREQUENCIES = tuple(100.0 + 5 * index for index in range(161))
+
+
+def _settle() -> None:
+    """Let the deferred minimum widths, refolded fields and dock sizes (WP-068) take effect."""
+    for _ in range(8):
+        QtWidgets.QApplication.processEvents()
+
+
+def _show_curves(window: MainWindow, current: bool) -> None:
+    """SMC, its previous run and HFSS (three legend rows); with *current* also exp on the right axis."""
+    window._update_s21_plot(list(FREQUENCIES), [-4.0 - 6.0 * (index % 40) / 40 for index in range(161)])
+    window._update_s21_plot(list(FREQUENCIES), [-5.0 - 6.0 * (index % 40) / 40 for index in range(161)])
+    window.add_comparison_trace("HFSS", ComparisonTrace(FREQUENCIES, (-6.0,) * 161, Path("hfss.tab")))
+    if current:
+        trace = ComparisonTrace(
+            FREQUENCIES, tuple(0.01 + 0.002 * (i % 20) for i in range(161)), Path("exp.txt"), quantity="mA"
+        )
+        window.add_comparison_trace("Experiment", trace)
+    _settle()
+
+
+def _assert_plot_usable(window: MainWindow) -> None:
+    """The data area keeps its WP-068 minimum and holds the whole legend above the X axis."""
+    plot_item = window._plot.getPlotItem()
+    view = plot_item.vb.sceneBoundingRect()
+    factor = window.ui_scale.factor
+    assert view.height() >= PLOT_DATA_MIN_HEIGHT * factor - 1
+    legend = window._plot_legend.sceneBoundingRect()
+    axis = plot_item.getAxis("bottom")
+    axis_rect = axis.mapRectToScene(QtCore.QRectF(QtCore.QPointF(0, 0), axis.size()))
+    assert not legend.intersects(axis_rect)
+    assert legend.bottom() <= view.bottom()
+    assert window.plot_height_shortfall() <= 0
+
+
+@pytest.mark.parametrize("current", [False, True], ids=["three-curves", "with-current"])
+@pytest.mark.parametrize("preset", list(UI_SCALE_PRESETS))
+def test_plot_keeps_a_usable_data_area_at_every_preset(window: MainWindow, preset: str, current: bool) -> None:
+    """WP-068: at «Максимальный» in 1440×920 the plot was 169 px high (133 px with a current), the legend over the X axis."""
+    _show_curves(window, current)
+    window.set_ui_scale(preset)
+    _settle()
+    _assert_plot_usable(window)
+    _assert_plot_controls_fit(window)
+    if preset == "max":
+        # Title, axes and three legend rows at 150 % still leave room for the curves.
+        assert window._plot.height() >= 250
+    # «Восстановить виджеты» gives the default docks, again with room for the plot.
+    window.restore_default_layout()
+    _settle()
+    _assert_plot_usable(window)
+
+
+def test_largest_scale_with_a_larger_parameter_panel_needs_no_horizontal_scroll(window: MainWindow) -> None:
+    """WP-068: «Максимальный» + parameters 150 % left the plot dock narrower than its compact fields."""
+    _show_curves(window, current=True)
+    one_line = window._same_materials_checkbox.text()
+    window.set_ui_scale("max")
+    _settle()
+    assert window._same_materials_checkbox.text() == one_line  # parameters at 100 %: one line as before
+    window.set_area_scale("parameters", 1.5)
+    _settle()
+    checkbox = window._same_materials_checkbox
+    assert checkbox.text() == "Use the same material\nas EL1 (Tc, α, σ)"
+    assert checkbox.width() >= checkbox.sizeHint().width() and checkbox.height() >= checkbox.sizeHint().height()
+    panel = window.parameters_dock.widget()
+    assert panel.width() >= panel.minimumSizeHint().width()
+    assert window._plot_y2_inputs["y2_max"].isVisible()
+    _assert_plot_controls_fit(window)
+    _assert_plot_usable(window)
+    for _ in range(2):  # from the default docks too
+        window.restore_default_layout()
+        _settle()
+        _assert_plot_controls_fit(window)
+        _assert_plot_usable(window)
+        assert panel.width() >= panel.minimumSizeHint().width()
+    window.set_area_scale("parameters", 1.0)
+    _settle()
+    assert window._same_materials_checkbox.text() == one_line
+
+
+def test_normal_layout_is_unchanged(window: MainWindow) -> None:
+    """WP-068 must not move the docks of the default «Обычный» 1440×920 layout."""
+    _settle()
+    root = window.dock_manager.dockContainers()[0].rootSplitter()
+    right = window.schematic_dock.dockAreaWidget().parentSplitter()
+    root_sizes, right_sizes = root.sizes(), right.sizes()
+    total = sum(right_sizes)
+    # The original 50/38/12 split of the right column and the parameter panel width.
+    for size, percent in zip(right_sizes, (50, 38, 12)):
+        assert size == pytest.approx(total * percent / 100, abs=2)
+    minimum = window.parameters_dock.widget().minimumSizeHint().width() + PARAMETERS_WIDTH_RESERVE
+    assert root_sizes[0] == pytest.approx(max(280, sum(root_sizes) // 4, minimum), abs=2)
+    assert window.plot_height_shortfall() <= 0
+    window._ensure_plot_room()
+    _settle()
+    assert (root.sizes(), right.sizes()) == (root_sizes, right_sizes)
+    assert "\n" not in window._same_materials_checkbox.text()
