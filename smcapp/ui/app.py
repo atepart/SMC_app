@@ -245,6 +245,9 @@ class S21Worker(QObject):
 
 
 class SvgGraphicsView(QGraphicsView):
+    # WP-062: a click (not a pan) on a numbered element of the drawing.
+    elementClicked = Signal(str)  # noqa: N815 - Qt signal naming
+
     def __init__(self) -> None:
         super().__init__()
         self.setScene(QGraphicsScene(self))
@@ -266,6 +269,10 @@ class SvgGraphicsView(QGraphicsView):
         self._highlight_items: tuple[QGraphicsPathItem, QGraphicsPathItem] | None = None
         self._hovered: NumberMark | None = None
         self._hover_position: QPointF | None = None
+        # WP-062: the clicked element stays highlighted while the cursor is
+        # elsewhere; its id survives redraws of the same composition.
+        self._selected: str | None = None
+        self._press_position: QPointF | None = None
         self._redrawing = False
         self.viewport().setMouseTracking(True)
 
@@ -421,8 +428,19 @@ class SvgGraphicsView(QGraphicsView):
         box, rect = self._renderer.viewBoxF(), self._svg_item.boundingRect()
         return rect.width() / max(box.width(), 1e-9)
 
+    @property
+    def selected_element(self) -> str | None:
+        """The element last clicked (WP-062), highlighted when nothing is hovered."""
+        return self._selected
+
+    def set_selected_element(self, element_id: str | None) -> None:
+        self._selected = element_id
+        self._show_highlight(self._hovered)
+
     def _show_highlight(self, mark: NumberMark | None) -> None:
         self._hovered = mark
+        if mark is None and self._selected is not None and self._hit_map is not None:
+            mark = self._hit_map.mark(self._selected)
         if self._highlight_items is None:
             return
         plate, arrow = self._highlight_items
@@ -470,13 +488,42 @@ class SvgGraphicsView(QGraphicsView):
         if self._hit_map is None or self._svg_item is None or self._renderer is None:
             self._show_highlight(None)
             return
+        mark = self._mark_at(position)
+        if mark != self._hovered:
+            self._show_highlight(mark)
+
+    def _mark_at(self, position: QPointF) -> NumberMark | None:
+        """The numbered element under the viewport *position*, as the hover finds it."""
+        if self._hit_map is None or self._svg_item is None or self._renderer is None:
+            return None
         inverse, _ok = self.viewportTransform().inverted()
         svg = self._scene_to_svg(inverse.map(QPointF(position)))
         pixels_per_unit = abs(self.transform().m11()) * self._svg_scale()
         tolerance = self.HOVER_TOLERANCE_PX / max(pixels_per_unit, 1e-9)
-        mark = self._hit_map.mark_at(Point(svg.x(), svg.y()), tolerance)
-        if mark != self._hovered:
-            self._show_highlight(mark)
+        return self._hit_map.mark_at(Point(svg.x(), svg.y()), tolerance)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API
+        self._press_position = event.position() if event.button() == Qt.MouseButton.LeftButton else None
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt API
+        """A left click that did not pan the drawing selects the element under it (WP-062).
+
+        The press and release must lie within the platform drag distance, so a
+        hand-drag pan never opens a group.  A click on an empty place clears
+        the selection.
+        """
+        super().mouseReleaseEvent(event)
+        press, self._press_position = self._press_position, None
+        if press is None or event.button() != Qt.MouseButton.LeftButton:
+            return
+        if (event.position() - press).manhattanLength() > QApplication.startDragDistance():
+            return
+        mark = self._mark_at(event.position())
+        if mark is None:
+            self.set_selected_element(None)
+            return
+        self.elementClicked.emit(mark.element_id)
 
     def _refresh_hover(self) -> None:
         if self._hover_position is None:
@@ -857,6 +904,7 @@ class MainWindow(QMainWindow):
         self.resize(1440, 920)
 
         self._view = SvgGraphicsView()
+        self._view.elementClicked.connect(self._open_element_group)
         self._frequency_axis = FrequencyAxisItem()
         self._plot = pg.PlotWidget(axisItems={"bottom": self._frequency_axis})
         self._config_inputs: Dict[str, QDoubleSpinBox] = {}
@@ -1927,6 +1975,8 @@ class MainWindow(QMainWindow):
             registry.clear()
         self._same_materials_checkbox = None
         self._dielectric_hint = None
+        # Element ids follow positions, so a new composition drops the selection (WP-062).
+        self._view.set_selected_element(None)
         self._defaults = config
         self._populate_parameter_groups()
         keys = self._group_keys(config)
@@ -2101,6 +2151,39 @@ class MainWindow(QMainWindow):
         self.parameters_scroll.ensureWidgetVisible(spin)
         spin.setFocus(Qt.FocusReason.TabFocusReason)  # selects the value, as Tab does
         spin.selectAll()
+        # Leaving the clicked element's group drops its highlight (WP-062).
+        selected = self._view.selected_element
+        if selected is not None and not any(
+            spin in spins for box, spins in self._parameter_blocks() if box.element_id == selected
+        ):
+            self._view.set_selected_element(None)
+
+    def _open_element_group(self, element_id: str) -> None:
+        """A click on the schematic opens the element's group at its first field (WP-062).
+
+        Text typed but not applied is applied first, as Ctrl+↓ does (WP-054).
+        The group is expanded and scrolled to the top of the panel, its first
+        field gets the focus with the value selected, and the element stays
+        highlighted on the drawing.
+        """
+        self._redraw_if_edited()
+        box = next((box for box in self._parameter_groups.values() if box.element_id == element_id), None)
+        if box is None:
+            return
+        if self.parameters_dock.isClosed():
+            self.parameters_dock.toggleView(True)
+        else:
+            self.parameters_dock.setAsCurrentTab()
+        box.setChecked(True)
+        self.parameters_scroll.widget().layout().activate()
+        QApplication.processEvents()
+        top = box.mapTo(self.parameters_scroll.widget(), QtCore.QPoint(0, 0)).y()
+        scroll_bar = self.parameters_scroll.verticalScrollBar()
+        scroll_bar.setValue(min(top, scroll_bar.maximum()))
+        spins = next((spins for current, spins in self._parameter_blocks() if current is box), [])
+        self._view.set_selected_element(element_id)
+        if spins:
+            self._focus_field(spins[0])
 
     def _input_values(self) -> dict[str, float]:
         """Every parameter field's value, with text typed but not yet applied."""

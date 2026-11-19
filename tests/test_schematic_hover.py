@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import gc
 from typing import cast
 from unittest.mock import Mock
@@ -235,3 +236,157 @@ def test_highlight_survives_redraw_theme_and_explanations(window: MainWindow) ->
     _assert_highlight_at(view, full, "7")
     QtWidgets.QApplication.sendEvent(view.viewport(), QtCore.QEvent(QtCore.QEvent.Type.Leave))
     assert not view.highlight_items[0].isVisible()
+
+
+# WP-062: a click on an element opens its parameter group --------------------
+
+
+def _click(view, svg_point: Point, drag_px: float = 0.0) -> None:
+    """Press on *svg_point* and release *drag_px* to the right of it."""
+    press = _move(view, svg_point)
+    release = press + QtCore.QPointF(drag_px, 0)
+    for kind, position in (
+        (QtCore.QEvent.Type.MouseButtonPress, press),
+        (QtCore.QEvent.Type.MouseButtonRelease, release),
+    ):
+        event = QtGui.QMouseEvent(
+            kind,
+            position,
+            QtCore.QPointF(view.viewport().mapToGlobal(position.toPoint())),
+            QtCore.Qt.MouseButton.LeftButton,
+            (
+                QtCore.Qt.MouseButton.LeftButton
+                if kind == QtCore.QEvent.Type.MouseButtonPress
+                else QtCore.Qt.MouseButton.NoButton
+            ),
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+        QtWidgets.QApplication.sendEvent(view.viewport(), event)
+    QtWidgets.QApplication.processEvents()
+
+
+def _target(geometry: StructureGeometry, element_id: str) -> Point:
+    """A point the hit test gives to *element_id*: its metal, else a grid point of its contours."""
+    hit_map = ElementHitMap.from_geometry(geometry)
+    with contextlib.suppress(ZeroDivisionError, StopIteration):
+        point = _inside(geometry, element_id)
+        if hit_map.element_at(point) == element_id:
+            return point
+    for owner, points in geometry.hit_areas:
+        if owner != element_id:
+            continue
+        xs, ys = [p.x for p in points], [p.y for p in points]
+        for i in range(1, 20):
+            for j in range(1, 20):
+                point = Point(min(xs) + (max(xs) - min(xs)) * i / 20, min(ys) + (max(ys) - min(ys)) * j / 20)
+                if hit_map.element_at(point) == element_id:
+                    return point
+    raise AssertionError(f"no point of {element_id}")
+
+
+def _group_of(window: MainWindow, element_id: str):
+    return next(box for box in window._parameter_groups.values() if box.element_id == element_id)
+
+
+def _first_field(window: MainWindow, box):
+    return next(spins for current, spins in window._parameter_blocks() if current is box)[0]
+
+
+def _assert_opened(window: MainWindow, element_id: str) -> None:
+    box = _group_of(window, element_id)
+    assert box.isChecked()
+    spin = _first_field(window, box)
+    focused = QtWidgets.QApplication.focusWidget()
+    assert focused in (spin, spin.lineEdit()), f"{element_id}: focus on {focused!r}"
+    assert spin.lineEdit().selectedText() == spin.text()
+    # The group header is in the visible part of the panel.
+    scroll = window.parameters_scroll
+    header = box.toggle_button.mapTo(scroll.viewport(), QtCore.QPoint(0, 0))
+    assert 0 <= header.y() < scroll.viewport().height()
+    assert window._view.selected_element == element_id
+
+
+def test_click_on_every_element_opens_its_group_at_the_first_field(window: MainWindow) -> None:
+    view = window._view
+    window._set_all_groups_expanded(False)
+    geometry = _overview(window._build_config())
+    hit_map = ElementHitMap.from_geometry(geometry)
+    slots = window._build_config().element_slots()
+    assert len(slots) == 18
+    for slot in slots:
+        point = _target(geometry, slot.element_id)
+        assert hit_map.element_at(point) == slot.element_id
+        _click(view, point)
+        _assert_opened(window, slot.element_id)
+        assert _group_of(window, slot.element_id).toggle_button.text() == slot.group
+    # The clicked element stays highlighted after the cursor leaves the drawing.
+    QtWidgets.QApplication.sendEvent(view.viewport(), QtCore.QEvent(QtCore.QEvent.Type.Leave))
+    assert view.hovered_element is None
+    _assert_highlight_at(view, geometry, "18")
+
+
+def test_click_on_a_number_label_opens_the_element(window: MainWindow) -> None:
+    geometry = _overview(window._build_config())
+    six = next(c for c in geometry.callouts if c.label.text == "6").label.position
+    _click(window._view, Point(six.x, six.y - 2))
+    _assert_opened(window, "MSL2.3")
+
+
+def test_drag_and_background_click_do_not_open_groups(window: MainWindow) -> None:
+    view = window._view
+    window._set_all_groups_expanded(False)
+    geometry = _overview(window._build_config())
+    # A hand-drag pan that starts on element 6 is not a click.
+    _click(view, _inside(geometry, "MSL2.3"), drag_px=QtWidgets.QApplication.startDragDistance() + 5)
+    assert not any(box.isChecked() for box in window._parameter_groups.values())
+    assert view.selected_element is None
+    # A click on element 6, then on an empty place: nothing opens, the highlight goes.
+    _click(view, _inside(geometry, "MSL2.3"))
+    _assert_opened(window, "MSL2.3")
+    line_4 = _element(geometry, "MSL2.1").bounds
+    window._set_all_groups_expanded(False)
+    _click(view, Point(_centre(line_4).x, line_4.bottom + 15))
+    assert not any(box.isChecked() for box in window._parameter_groups.values())
+    assert view.selected_element is None
+    QtWidgets.QApplication.sendEvent(view.viewport(), QtCore.QEvent(QtCore.QEvent.Type.Leave))
+    assert not view.highlight_items[0].isVisible()
+
+
+def test_typed_value_is_applied_before_the_jump_and_ctrl_down_continues(window: MainWindow) -> None:
+    view = window._view
+    # The drawing on screen, before the typed value lengthens element 4.
+    geometry = _overview(window._build_config())
+    spin = window._config_inputs["mex02_1_length_m"]  # element 4
+    window._focus_field(spin)
+    spin.lineEdit().selectAll()
+    QTest.keyClicks(spin.lineEdit(), "37")
+    with pytest.MonkeyPatch.context() as patch:
+        drawn = []
+        patch.setattr(view, "set_svg", lambda *args, **kwargs: drawn.append(kwargs))
+        _click(view, _inside(geometry, "MSL2.3"))
+    assert len(drawn) == 1  # the typed 37 was applied, as Enter would
+    assert window._build_config().mex02[0].length_m == pytest.approx(37e-6)
+    _assert_opened(window, "MSL2.3")
+    width = window._config_inputs["mex02_3_width_m"]
+    QTest.keyClick(width.lineEdit(), QtCore.Qt.Key.Key_Down, QtCore.Qt.KeyboardModifier.ControlModifier)
+    QtWidgets.QApplication.processEvents()
+    length = window._config_inputs["mex02_3_length_m"]
+    assert QtWidgets.QApplication.focusWidget() in (length, length.lineEdit())
+    assert view.selected_element == "MSL2.3"  # still inside the clicked element's group
+    QTest.keyClick(length.lineEdit(), QtCore.Qt.Key.Key_Down, QtCore.Qt.KeyboardModifier.ControlModifier)
+    QtWidgets.QApplication.processEvents()
+    assert view.selected_element is None  # left for element 7
+
+
+def test_click_after_removing_an_element_follows_the_new_numbers(window: MainWindow) -> None:
+    window._view.set_selected_element("MSL2.3")
+    window.remove_element("MSL1.2")  # element 2
+    QtWidgets.QApplication.processEvents()
+    assert window._view.selected_element is None
+    geometry = _overview(window._build_config())
+    slots = {slot.element_id: slot for slot in window._build_config().element_slots()}
+    # The former 6 is now 5; clicking it opens «5 · Линия».
+    six = next(slot for slot in slots.values() if slot.kind == "line" and slot.number == 5)
+    _click(window._view, _inside(geometry, six.element_id))
+    _assert_opened(window, six.element_id)
+    assert _group_of(window, six.element_id).toggle_button.text() == "5 · Линия"
