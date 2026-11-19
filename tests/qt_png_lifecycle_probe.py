@@ -61,7 +61,7 @@ def main() -> None:
                 colors = dict((color, count) for count, color in png.convert("RGB").getcolors(png.width * png.height))
                 assert colors.get((31, 119, 180), 0) > 100
             assert vb.viewRange() == original_range
-            assert window._frequency_axis.labelUnits == "THz"
+            assert window._frequency_axis.labelUnits == "GHz"
         window.close()
         window.deleteLater()
         QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete.value)

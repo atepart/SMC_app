@@ -750,13 +750,15 @@ def test_axis_ends_show_the_visible_min_and_max(window: MainWindow) -> None:
     QtWidgets.QApplication.processEvents()
     assert _edges(bottom) == ("104", "893") and _edges(left) == ("-17.3", "-1.2")
 
-    # From 1 THz the axis is in THz and so are its ends.
+    # WP-066: 200…1000 GHz (the owner's #12 screenshot) and beyond stay in GHz, like the X fields.
     plot_item.vb.setXRange(200.0, 1000.0, padding=0)
     QtWidgets.QApplication.processEvents()
-    assert "THz" in bottom.labelString() and _edges(bottom) == ("0.2", "1")
-    plot_item.vb.setXRange(203.4, 1000.0, padding=0)
+    assert "GHz" in bottom.labelString() and "THz" not in bottom.labelString()
+    assert _edges(bottom) == ("200", "1000")
+    plot_item.vb.setXRange(203.4, 2000.0, padding=0)
     QtWidgets.QApplication.processEvents()
-    assert _edges(bottom) == ("0.203", "1")  # whole GHz like the X fields, written in THz
+    assert _edges(bottom) == ("203", "2000") and "THz" not in bottom.labelString()
+    assert all("." not in text for text in bottom.tickStrings([500.0, 1000.0, 1500.0], 1.0, 500.0))
     assert not bottom.autoSIPrefix
 
 

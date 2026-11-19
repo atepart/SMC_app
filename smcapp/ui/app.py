@@ -902,44 +902,15 @@ class PlotAxisItem(EdgeLabelAxisMixin, pg.AxisItem):
 
 
 class FrequencyAxisItem(EdgeLabelAxisMixin, pg.AxisItem):
-    """Frequency axis that switches from GHz to THz instead of showing kGHz."""
+    """Frequency axis, always in GHz like the X min / X max fields (WP-066).
+
+    pyqtgraph's SI prefix is off, so 2000 GHz stays «2000» rather than «2 kGHz».
+    """
 
     def __init__(self, orientation: str = "bottom") -> None:
         super().__init__(orientation=orientation)
-        self._display_factor = 1.0
-        self._display_unit = "GHz"
         self.enableAutoSIPrefix(False)
-        self.setLabel("Frequency", units=self._display_unit)
-
-    def set_display_range(self, lower_ghz: float, upper_ghz: float) -> None:
-        """Choose the engineering unit from the visible data range."""
-        use_thz = max(abs(lower_ghz), abs(upper_ghz)) >= 1000.0
-        factor = 1e-3 if use_thz else 1.0
-        unit = "THz" if use_thz else "GHz"
-        if factor == self._display_factor:
-            return
-        self._display_factor = factor
-        self._display_unit = unit
-        self.setLabel("Frequency", units=unit)
-        self.picture = None
-        self.update()
-
-    def edge_strings(self, low: float, high: float, length_px: float) -> tuple[str, str]:
-        """Ends rounded like the GHz fields, then written in the display unit (203.5 GHz → «0.204» THz)."""
-        if self.edge_decimals is None:
-            return super().edge_strings(low, high, length_px)
-        extra = round(-math.log10(self._display_factor)) if self._display_factor < 1.0 else 0
-        low_text, high_text = (
-            trimmed_number(round(value, self.edge_decimals) * self._display_factor, self.edge_decimals + extra)
-            for value in (low, high)
-        )
-        return low_text, high_text
-
-    def tickStrings(self, values, scale, spacing):  # noqa: N802 - Qt/pyqtgraph API
-        """Format GHz data coordinates in the selected display unit."""
-        display_spacing = abs(spacing * scale * self._display_factor)
-        decimals = 0 if display_spacing <= 0 else max(0, min(6, math.ceil(-math.log10(display_spacing))))
-        return [f"{value * scale * self._display_factor:.{decimals}f}" for value in values]
+        self.setLabel("Frequency", units="GHz")
 
 
 class ParameterScrollArea(QScrollArea):
@@ -2443,7 +2414,6 @@ class MainWindow(QMainWindow):
         self._plot.scene().sigMouseMoved.connect(self._on_plot_mouse_moved)
         # Leaving the widget sends no further moves, so hide the label on leave.
         self._plot.viewport().installEventFilter(self)
-        self._plot.getPlotItem().vb.sigXRangeChanged.connect(self._sync_frequency_axis_unit)
         self._restore_plot_scale()
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt API
@@ -2608,11 +2578,6 @@ class MainWindow(QMainWindow):
 
     def _sync_right_view_x(self, *_args) -> None:
         self._right_view.setXRange(*self._plot.getPlotItem().vb.viewRange()[0], padding=0)
-
-    def _sync_frequency_axis_unit(self, *_args) -> None:
-        """Keep the bottom-axis unit aligned with the visible GHz range."""
-        x_range = self._plot.getPlotItem().vb.viewRange()[0]
-        self._frequency_axis.set_display_range(x_range[0], x_range[1])
 
     def _on_plot_mouse_moved(self, scene_position) -> None:
         """Show frequency and S21 coordinates next to the cursor."""

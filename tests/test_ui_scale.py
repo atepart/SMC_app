@@ -188,7 +188,7 @@ def test_plot_title_axes_ticks_and_legend_are_larger(window: MainWindow) -> None
         assert label.opts["size"] == legend.opts["labelTextSize"]
 
 
-def test_theme_change_keeps_larger_plot_fonts_and_bottom_unit_switch_keeps_style(window: MainWindow) -> None:
+def test_theme_change_keeps_larger_plot_fonts_and_wide_x_range_keeps_style(window: MainWindow) -> None:
     window.set_theme(Theme.DARK)
     plot_item = window._plot.getPlotItem()
     assert _points(plot_item.titleLabel.opts["size"]) > _base_points() * 1.3
@@ -196,7 +196,7 @@ def test_theme_change_keeps_larger_plot_fonts_and_bottom_unit_switch_keeps_style
     window._plot.setXRange(100.0, 2000.0, padding=0)
     QtWidgets.QApplication.processEvents()
     bottom = plot_item.getAxis("bottom")
-    assert "THz" in bottom.labelString()
+    assert "GHz" in bottom.labelString() and "THz" not in bottom.labelString()  # WP-066: always GHz
     assert _points(bottom.labelStyle["font-size"]) > _base_points() * 1.2
 
 

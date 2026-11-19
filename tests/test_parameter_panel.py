@@ -532,8 +532,9 @@ def test_plot_home_hover_and_png_export(parameter_window: MainWindow, tmp_path) 
     parameter_window._plot_scale_inputs["x_max"].setValue(1100.0)
     parameter_window._apply_plot_scale()
     app.processEvents()
-    assert parameter_window._frequency_axis.labelUnits == "THz"
-    assert parameter_window._frequency_axis.tickStrings([1000.0], 1.0, 100.0) == ["1.0"]
+    # WP-066: the axis stays in GHz like the X fields, also beyond 1000 GHz.
+    assert parameter_window._frequency_axis.labelUnits == "GHz"
+    assert parameter_window._frequency_axis.tickStrings([1000.0], 1.0, 100.0) == ["1000"]
 
     destination = tmp_path / "plot.png"
     assert parameter_window.export_plot_to_path(destination) == destination
